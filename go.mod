@@ -51,4 +51,4 @@ replace github.com/gogo/protobuf => github.com/ElrondNetwork/protobuf v1.3.2
 
 replace github.com/ElrondNetwork/arwen-wasm-vm/v1_3 v1.3.19 => github.com/ElrondNetwork/arwen-wasm-vm v1.3.20-0.20210709090429-e03405ee6e0b
 
-replace github.com/ElrondNetwork/elastic-indexer-go => github.com/ElrondNetwork/elastic-indexer-go v1.0.8-0.20210706161443-2e5fd92de302
+replace github.com/ElrondNetwork/elastic-indexer-go => github.com/ElrondNetwork/elastic-indexer-go v1.0.8-0.20210712072335-596c6d1cdc69
