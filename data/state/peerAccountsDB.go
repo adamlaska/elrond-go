@@ -3,6 +3,7 @@ package state
 import (
 	"sync"
 
+	"github.com/ElrondNetwork/elrond-go/core"
 	"github.com/ElrondNetwork/elrond-go/core/check"
 	"github.com/ElrondNetwork/elrond-go/data"
 	"github.com/ElrondNetwork/elrond-go/hashing"
@@ -59,11 +60,17 @@ func NewPeerAccountsDB(
 
 // SnapshotState triggers the snapshotting process of the state trie
 func (adb *PeerAccountsDB) SnapshotState(rootHash []byte) {
-	log.Trace("peerAccountsDB.SnapshotState", "root hash", rootHash)
+	log.Debug("peerAccountsDB.SnapshotState", "root hash", rootHash)
 	trieStorageManager := adb.mainTrie.GetStorageManager()
 
 	trieStorageManager.EnterPruningBufferingMode()
+
+	stopWatch := core.NewStopWatch()
+	stopWatch.Start("snapshotState")
 	trieStorageManager.TakeSnapshot(rootHash, true, nil)
+	stopWatch.Stop("snapshotState")
+	log.Debug("snapshotState peer trie", stopWatch.GetMeasurements()...)
+
 	trieStorageManager.ExitPruningBufferingMode()
 
 	adb.increaseNumCheckpoints()
@@ -71,11 +78,17 @@ func (adb *PeerAccountsDB) SnapshotState(rootHash []byte) {
 
 // SetStateCheckpoint triggers the checkpointing process of the state trie
 func (adb *PeerAccountsDB) SetStateCheckpoint(rootHash []byte) {
-	log.Trace("peerAccountsDB.SetStateCheckpoint", "root hash", rootHash)
+	log.Debug("peerAccountsDB.SetStateCheckpoint", "root hash", rootHash)
 	trieStorageManager := adb.mainTrie.GetStorageManager()
 
 	trieStorageManager.EnterPruningBufferingMode()
+
+	stopWatch := core.NewStopWatch()
+	stopWatch.Start("setStateCheckpoint")
 	trieStorageManager.SetCheckpoint(rootHash, nil)
+	stopWatch.Stop("setStateCheckpoint")
+	log.Debug("setStateCheckpoint peer trie", stopWatch.GetMeasurements()...)
+
 	trieStorageManager.ExitPruningBufferingMode()
 
 	adb.increaseNumCheckpoints()
