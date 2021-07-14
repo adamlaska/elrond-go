@@ -97,7 +97,7 @@
     IncrementSCRNonceInMultiTransferEnableEpoch = 1000000
 
     # ESDTMultiTransferEnableEpoch represents the epoch when esdt multitransfer built in function is enabled
-    ESDTMultiTransferEnableEpoch = 5
+    ESDTMultiTransferEnableEpoch = 1000000
 
     # MaxNodesChangeEnableEpoch holds configuration for changing the maximum number of nodes and the enabling epoch
     MaxNodesChangeEnableEpoch = [
