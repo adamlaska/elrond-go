@@ -477,7 +477,7 @@ func processConfigImportDBMode(log logger.Logger, configs *config.Configs) error
 
 	generalConfigs.StoragePruning.NumActivePersisters = generalConfigs.StoragePruning.NumEpochsToKeep
 	generalConfigs.TrieStorageManagerConfig.KeepSnapshots = true
-	generalConfigs.StateTriesConfig.CheckpointsEnabled = false
+	generalConfigs.StateTriesConfig.CheckpointsEnabled = true //should not merge this in dev branch
 	p2pConfigs.Node.ThresholdMinConnectedPeers = 0
 	p2pConfigs.KadDhtPeerDiscovery.Enabled = false
 
