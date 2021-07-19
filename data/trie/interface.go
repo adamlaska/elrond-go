@@ -43,7 +43,6 @@ type node interface {
 	getNumNodes() data.NumNodesDTO
 
 	commitDirty(level byte, maxTrieLevelInMemory uint, originDb data.DBWriteCacher, targetDb data.DBWriteCacher) error
-	commitCheckpoint(originDb data.DBWriteCacher, targetDb data.DBWriteCacher, checkpointHashes data.CheckpointHashesHolder, leavesChan chan core.KeyValueHolder) error
 	commitSnapshot(originDb data.DBWriteCacher, targetDb data.DBWriteCacher, leavesChan chan core.KeyValueHolder) error
 
 	getMarshalizer() marshal.Marshalizer
@@ -56,7 +55,6 @@ type node interface {
 }
 
 type snapshotNode interface {
-	commitCheckpoint(originDb data.DBWriteCacher, targetDb data.DBWriteCacher, checkpointHashes data.CheckpointHashesHolder, leavesChan chan core.KeyValueHolder) error
 	commitSnapshot(originDb data.DBWriteCacher, targetDb data.DBWriteCacher, leavesChan chan core.KeyValueHolder) error
 }
 

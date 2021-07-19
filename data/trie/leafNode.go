@@ -125,41 +125,6 @@ func (ln *leafNode) commitDirty(_ byte, _ uint, _ data.DBWriteCacher, targetDb d
 
 	return err
 }
-func (ln *leafNode) commitCheckpoint(
-	_ data.DBWriteCacher,
-	targetDb data.DBWriteCacher,
-	checkpointHashes data.CheckpointHashesHolder,
-	leavesChan chan core.KeyValueHolder,
-) error {
-	err := ln.isEmptyOrNil()
-	if err != nil {
-		return fmt.Errorf("commit checkpoint error %w", err)
-	}
-
-	hash, err := computeAndSetNodeHash(ln)
-	if err != nil {
-		return err
-	}
-
-	shouldCommit := checkpointHashes.ShouldCommit(hash)
-	if !shouldCommit {
-		return nil
-	}
-
-	err = writeNodeOnChannel(ln, leavesChan)
-	if err != nil {
-		return err
-	}
-
-	checkpointHashes.Remove(hash)
-
-	_, err = encodeNodeAndCommitToDB(ln, targetDb)
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
 
 func (ln *leafNode) commitSnapshot(
 	_ data.DBWriteCacher,

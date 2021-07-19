@@ -196,9 +196,9 @@ func (spm *storagePruningManager) removeFromDb(
 	}()
 
 	for key := range hashes {
-		shouldKeepHash, err := spm.dbEvictionWaitingList.ShouldKeepHash(key, identifier)
-		if err != nil {
-			return err
+		shouldKeepHash, errShouldKeep := spm.dbEvictionWaitingList.ShouldKeepHash(key, identifier)
+		if errShouldKeep != nil {
+			return errShouldKeep
 		}
 		if shouldKeepHash {
 			continue

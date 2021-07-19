@@ -285,47 +285,6 @@ func (bn *branchNode) commitDirty(level byte, maxTrieLevelInMemory uint, originD
 	return nil
 }
 
-func (bn *branchNode) commitCheckpoint(
-	originDb data.DBWriteCacher,
-	targetDb data.DBWriteCacher,
-	checkpointHashes data.CheckpointHashesHolder,
-	leavesChan chan core.KeyValueHolder,
-) error {
-	err := bn.isEmptyOrNil()
-	if err != nil {
-		return fmt.Errorf("commit checkpoint error %w", err)
-	}
-
-	hash, err := computeAndSetNodeHash(bn)
-	if err != nil {
-		return err
-	}
-
-	shouldCommit := checkpointHashes.ShouldCommit(hash)
-	if !shouldCommit {
-		return nil
-	}
-
-	for i := range bn.children {
-		err = resolveIfCollapsed(bn, byte(i), originDb)
-		if err != nil {
-			return err
-		}
-
-		if bn.children[i] == nil {
-			continue
-		}
-
-		err = bn.children[i].commitCheckpoint(originDb, targetDb, checkpointHashes, leavesChan)
-		if err != nil {
-			return err
-		}
-	}
-
-	checkpointHashes.Remove(hash)
-	return bn.saveToStorage(targetDb)
-}
-
 func (bn *branchNode) commitSnapshot(
 	originDb data.DBWriteCacher,
 	targetDb data.DBWriteCacher,
