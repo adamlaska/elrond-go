@@ -1,6 +1,8 @@
 package vm
 
-import "errors"
+import (
+	"errors"
+)
 
 // ErrUnknownSystemSmartContract signals that there is no system smart contract on the provided address
 var ErrUnknownSystemSmartContract = errors.New("missing system smart contract on selected address")
@@ -95,9 +97,6 @@ var ErrNilValidatorSmartContractAddress = errors.New("nil validator smart contra
 // ErrInvalidStakingAccessAddress signals that invalid staking access address was provided
 var ErrInvalidStakingAccessAddress = errors.New("invalid staking access address")
 
-// ErrInvalidGovernanceSCAddress signals that invalid governance address was provided
-var ErrInvalidGovernanceSCAddress = errors.New("invalid governance smart contract address")
-
 // ErrInvalidJailAccessAddress signals that invalid jailing access address was provided
 var ErrInvalidJailAccessAddress = errors.New("invalid jailing access address")
 
@@ -131,14 +130,20 @@ var ErrNilSystemSCConfig = errors.New("nil system sc config")
 // ErrNilValidatorAccountsDB signals that nil validator accounts DB was provided
 var ErrNilValidatorAccountsDB = errors.New("nil validator accounts DB")
 
-// ErrInvalidStartEndVoteNonce signals that invalid arguments where passed for start or end vote nonce
-var ErrInvalidStartEndVoteNonce = errors.New("invalid start/end vote nonce")
+// ErrNilUserAccountsDB signals that nil user accounts DB was provided
+var ErrNilUserAccountsDB = errors.New("nil user accounts DB")
+
+// ErrInvalidStartEndVoteEpoch signals that invalid arguments where passed for start or end vote epoch
+var ErrInvalidStartEndVoteEpoch = errors.New("invalid start/end vote epoch")
 
 // ErrEmptyStorage signals that the storage is empty for given key
 var ErrEmptyStorage = errors.New("storage is nil for given key")
 
 // ErrVotedForAnExpiredProposal signals that voting was done for an expired proposal
 var ErrVotedForAnExpiredProposal = errors.New("voting period is over for this proposal")
+
+// ErrDoubleVote signals that user is voting for the second time for the same proposal
+var ErrDoubleVote = errors.New("double vote is not allowed")
 
 // ErrVotingNotStartedForProposal signals that voting was done for a proposal that not begins yet
 var ErrVotingNotStartedForProposal = errors.New("voting has not yet started for this proposal")
@@ -167,7 +172,7 @@ var ErrNegativeMaximumPercentageToBleed = errors.New("negative maximum percentag
 // ErrInvalidMaxNumberOfNodes signals that invalid number of max number of nodes has been provided
 var ErrInvalidMaxNumberOfNodes = errors.New("invalid number of max number of nodes")
 
-// ErrTokenNameNotHumanReadable signals that token name is not human readable
+// ErrTokenNameNotHumanReadable signals that token name is not human-readable
 var ErrTokenNameNotHumanReadable = errors.New("token name is not human readable")
 
 // ErrTickerNameNotValid signals that ticker name is not valid
@@ -185,13 +190,10 @@ var ErrInvalidEndOfEpochAccessAddress = errors.New("invalid end of epoch access 
 // ErrNilChanceComputer signals that nil chance computer has been provided
 var ErrNilChanceComputer = errors.New("nil chance computer")
 
-// ErrNilEpochNotifier signals that the provided EpochNotifier is nil
-var ErrNilEpochNotifier = errors.New("nil EpochNotifier")
-
 // ErrNilAddressPubKeyConverter signals that the provided public key converter is nil
 var ErrNilAddressPubKeyConverter = errors.New("nil address public key converter")
 
-// ErrNoTickerWithGivenName signals that ticker does not exists with given name
+// ErrNoTickerWithGivenName signals that ticker does not exist with given name
 var ErrNoTickerWithGivenName = errors.New("no ticker with given name")
 
 // ErrInvalidAddress signals that invalid address has been provided
@@ -245,5 +247,35 @@ var ErrNilShardCoordinator = errors.New("nil shard coordinator")
 // ErrProposalNotFound signals that the storage is empty for given key
 var ErrProposalNotFound = errors.New("proposal was not found in storage")
 
-// ErrInvalidNumOfInitialWhiteListedAddress signals that 0 initial whiteListed addresses were provided to the governance contract
-var ErrInvalidNumOfInitialWhiteListedAddress = errors.New("0 initial whiteListed addresses provided to the governance contract")
+// ErrNilEnableEpochsHandler signals that a nil enable epochs handler has been provided
+var ErrNilEnableEpochsHandler = errors.New("nil enable epochs handler")
+
+// ErrNotEnoughStakeToVote signals that the stake/delegation is not enough to vote
+var ErrNotEnoughStakeToVote = errors.New("not enough stake/delegate to vote")
+
+// ErrNotEnoughVotingPower signals that there is not enough voting power to cast the vote
+var ErrNotEnoughVotingPower = errors.New("not enough voting power to cast this vote")
+
+// ErrWrongTypeAssertion signals that a wrong type assertion occurred.
+var ErrWrongTypeAssertion = errors.New("wrong type assertion")
+
+// ErrWrongNewOwnerAddress signals that a wrong new owner address was provided
+var ErrWrongNewOwnerAddress = errors.New("wrong new owner address")
+
+// ErrInternalErrorWhileSettingNewOwner signals that an error occurred when setting the new contract owner
+var ErrInternalErrorWhileSettingNewOwner = errors.New("internal error when setting new contract owner")
+
+// ErrInvalidStakeLimitPercentage signals the invalid stake limit percentage was provided
+var ErrInvalidStakeLimitPercentage = errors.New("invalid stake limit percentage")
+
+// ErrInvalidNodeLimitPercentage signals the invalid node limit percentage was provided
+var ErrInvalidNodeLimitPercentage = errors.New("invalid node limit percentage")
+
+// ErrNilNodesCoordinator signals that nil nodes coordinator was provided
+var ErrNilNodesCoordinator = errors.New("nil nodes coordinator")
+
+// ErrWaitingListDisabled signals that waiting list has been disabled, since staking v4 is active
+var ErrWaitingListDisabled = errors.New("waiting list is disabled since staking v4 activation")
+
+// ErrCannotChangeToDynamic signals that tokenID cannot be change to type dynamic
+var ErrCannotChangeToDynamic = errors.New("cannot change to dynamic because of duplicated roles")

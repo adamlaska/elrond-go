@@ -3,23 +3,28 @@ package state
 import (
 	"encoding/hex"
 	"errors"
+	"fmt"
+
+	"github.com/multiversx/mx-chain-go/common"
 )
 
-// ErrMissingTrie is an error-compatible struct holding the root hash of the trie that is missing
-type ErrMissingTrie struct {
-	rootHash []byte
+// ErrAccountNotFoundAtBlock is an error-compatible struct holding the block info at which an account was not found
+type ErrAccountNotFoundAtBlock struct {
+	BlockInfo common.BlockInfo
 }
 
-// ------- ErrMissingTrie
-
-// NewErrMissingTrie  returns a new instantiated struct
-func NewErrMissingTrie(rootHash []byte) *ErrMissingTrie {
-	return &ErrMissingTrie{rootHash: rootHash}
+// NewErrAccountNotFoundAtBlock returns a new error (custom struct)
+func NewErrAccountNotFoundAtBlock(blockInfo common.BlockInfo) *ErrAccountNotFoundAtBlock {
+	return &ErrAccountNotFoundAtBlock{BlockInfo: blockInfo}
 }
 
 // Error returns the error as string
-func (e *ErrMissingTrie) Error() string {
-	return "trie was not found for hash " + hex.EncodeToString(e.rootHash)
+func (e *ErrAccountNotFoundAtBlock) Error() string {
+	return fmt.Sprintf("account was not found at block: nonce = %d, hash = %s, rootHash = %s",
+		e.BlockInfo.GetNonce(),
+		hex.EncodeToString(e.BlockInfo.GetHash()),
+		hex.EncodeToString(e.BlockInfo.GetRootHash()),
+	)
 }
 
 // ErrNilAccountsAdapter defines the error when trying to revert on nil accounts
@@ -27,9 +32,6 @@ var ErrNilAccountsAdapter = errors.New("nil AccountsAdapter")
 
 // ErrNilAddress defines the error when trying to work with a nil address
 var ErrNilAddress = errors.New("nil address")
-
-// ErrEmptyAddress defines the error when trying to work with an empty address
-var ErrEmptyAddress = errors.New("empty Address")
 
 // ErrNilTrie signals that a trie is nil and no operation can be made
 var ErrNilTrie = errors.New("trie is nil")
@@ -39,9 +41,6 @@ var ErrNilHasher = errors.New("nil hasher")
 
 // ErrNilMarshalizer signals that an operation has been attempted to or with a nil marshalizer implementation
 var ErrNilMarshalizer = errors.New("nil marshalizer")
-
-// ErrNegativeValue signals that an operation has been attempted with a negative value
-var ErrNegativeValue = errors.New("negative values are not permited")
 
 // ErrNilAccountFactory signals that a nil account factory was provided
 var ErrNilAccountFactory = errors.New("account factory is nil")
@@ -58,14 +57,8 @@ var ErrNilShardCoordinator = errors.New("shard coordinator is nil")
 // ErrWrongTypeAssertion signals that a wrong type assertion occurred
 var ErrWrongTypeAssertion = errors.New("wrong type assertion")
 
-// ErrNilTrackableDataTrie signals that a nil trackable data trie has been provided
-var ErrNilTrackableDataTrie = errors.New("nil trackable data trie")
-
 // ErrAccNotFound signals that account was not found in state trie
 var ErrAccNotFound = errors.New("account was not found")
-
-// ErrNilBLSPublicKey signals that the provided BLS public key is nil
-var ErrNilBLSPublicKey = errors.New("bls public key is nil")
 
 // ErrNilOrEmptyDataTrieUpdates signals that there are no data trie updates
 var ErrNilOrEmptyDataTrieUpdates = errors.New("no data trie updates")
@@ -119,8 +112,56 @@ var ErrInvalidKey = errors.New("invalid key")
 // ErrNilRootHash signals that a nil root hash was provided
 var ErrNilRootHash = errors.New("nil root hash")
 
-// ErrNilChainHandler signals that a nil chain handler was provided
-var ErrNilChainHandler = errors.New("nil chain handler")
-
 // ErrNilProcessStatusHandler signals that a nil process status handler was provided
 var ErrNilProcessStatusHandler = errors.New("nil process status handler")
+
+// ErrNilAppStatusHandler signals that a nil app status handler was provided
+var ErrNilAppStatusHandler = errors.New("nil app status handler")
+
+// ErrNilBlockInfo signals that a nil block info was provided
+var ErrNilBlockInfo = errors.New("nil block info")
+
+// ErrNilBlockInfoProvider signals that a nil block info provider was provided
+var ErrNilBlockInfoProvider = errors.New("nil block info provider")
+
+// ErrFunctionalityNotImplemented signals that the functionality has not been implemented yet
+var ErrFunctionalityNotImplemented = errors.New("functionality not implemented yet")
+
+// ErrNilTrieSyncer signals that the trie syncer is nil
+var ErrNilTrieSyncer = errors.New("trie syncer is nil")
+
+// ErrNilSyncStatisticsHandler signals that a nil sync statistics handler was provided
+var ErrNilSyncStatisticsHandler = errors.New("nil sync statistics handler")
+
+// ErrNilAddressConverter signals that a nil address converter was provided
+var ErrNilAddressConverter = errors.New("nil address converter")
+
+// ErrNilEnableEpochsHandler signals that a nil enable epochs handler has been provided
+var ErrNilEnableEpochsHandler = errors.New("nil enable epochs handler")
+
+// ErrNilStateMetrics signals that a nil state metrics has been provided
+var ErrNilStateMetrics = errors.New("nil sstate metrics")
+
+// ErrNilChannelsProvider signals that a nil channels provider has been given
+var ErrNilChannelsProvider = errors.New("nil channels provider")
+
+// ErrNilRootHashHolder signals that a nil root hash holder was provided
+var ErrNilRootHashHolder = errors.New("nil root hash holder provided")
+
+// ErrNilStatsHandler signals that a nil stats handler provider has been given
+var ErrNilStatsHandler = errors.New("nil stats handler")
+
+// ErrNilLastSnapshotMarker signals that a nil last snapshot marker has been given
+var ErrNilLastSnapshotMarker = errors.New("nil last snapshot marker")
+
+// ErrNilSnapshotsManager signals that a nil snapshots manager has been given
+var ErrNilSnapshotsManager = errors.New("nil snapshots manager")
+
+// ErrNilValidatorInfo signals that a nil value for the validator info has been provided
+var ErrNilValidatorInfo = errors.New("validator info is nil")
+
+// ErrValidatorsDifferentShards signals that validators are not in the same shard
+var ErrValidatorsDifferentShards = errors.New("validators are not in the same shard")
+
+// ErrValidatorNotFound signals that a validator was not found
+var ErrValidatorNotFound = errors.New("validator not found")

@@ -1,16 +1,16 @@
 package interceptorscontainer
 
 import (
-	"github.com/ElrondNetwork/elrond-go-core/core"
-	"github.com/ElrondNetwork/elrond-go-core/core/check"
-	"github.com/ElrondNetwork/elrond-go-core/core/throttler"
-	"github.com/ElrondNetwork/elrond-go-core/marshal"
-	"github.com/ElrondNetwork/elrond-go/process"
-	"github.com/ElrondNetwork/elrond-go/process/factory"
-	"github.com/ElrondNetwork/elrond-go/process/factory/containers"
-	processInterceptors "github.com/ElrondNetwork/elrond-go/process/interceptors"
-	interceptorFactory "github.com/ElrondNetwork/elrond-go/process/interceptors/factory"
-	"github.com/ElrondNetwork/elrond-go/process/interceptors/processor"
+	"github.com/multiversx/mx-chain-core-go/core"
+	"github.com/multiversx/mx-chain-core-go/core/check"
+	"github.com/multiversx/mx-chain-core-go/core/throttler"
+	"github.com/multiversx/mx-chain-core-go/marshal"
+	"github.com/multiversx/mx-chain-go/process"
+	"github.com/multiversx/mx-chain-go/process/factory"
+	"github.com/multiversx/mx-chain-go/process/factory/containers"
+	processInterceptors "github.com/multiversx/mx-chain-go/process/interceptors"
+	interceptorFactory "github.com/multiversx/mx-chain-go/process/interceptors/factory"
+	"github.com/multiversx/mx-chain-go/process/interceptors/processor"
 )
 
 var _ process.InterceptorsContainerFactory = (*metaInterceptorsContainerFactory)(nil)
@@ -31,7 +31,8 @@ func NewMetaInterceptorsContainerFactory(
 		args.Accounts,
 		args.Store,
 		args.DataPool,
-		args.Messenger,
+		args.MainMessenger,
+		args.FullArchiveMessenger,
 		args.NodesCoordinator,
 		args.BlockBlackList,
 		args.AntifloodHandler,
@@ -39,6 +40,9 @@ func NewMetaInterceptorsContainerFactory(
 		args.WhiteListerVerifiedTxs,
 		args.PreferredPeersHolder,
 		args.RequestHandler,
+		args.MainPeerShardMapper,
+		args.FullArchivePeerShardMapper,
+		args.HardforkTrigger,
 	)
 	if err != nil {
 		return nil, err
@@ -69,40 +73,57 @@ func NewMetaInterceptorsContainerFactory(
 	if check.IfNil(args.ValidityAttester) {
 		return nil, process.ErrNilValidityAttester
 	}
-
-	argInterceptorFactory := &interceptorFactory.ArgInterceptedDataFactory{
-		CoreComponents:            args.CoreComponents,
-		CryptoComponents:          args.CryptoComponents,
-		ShardCoordinator:          args.ShardCoordinator,
-		NodesCoordinator:          args.NodesCoordinator,
-		FeeHandler:                args.TxFeeHandler,
-		HeaderSigVerifier:         args.HeaderSigVerifier,
-		HeaderIntegrityVerifier:   args.HeaderIntegrityVerifier,
-		ValidityAttester:          args.ValidityAttester,
-		EpochStartTrigger:         args.EpochStartTrigger,
-		WhiteListerVerifiedTxs:    args.WhiteListerVerifiedTxs,
-		ArgsParser:                args.ArgumentsParser,
-		EnableSignTxWithHashEpoch: args.EnableSignTxWithHashEpoch,
+	if check.IfNil(args.SignaturesHandler) {
+		return nil, process.ErrNilSignaturesHandler
+	}
+	if check.IfNil(args.PeerSignatureHandler) {
+		return nil, process.ErrNilPeerSignatureHandler
+	}
+	if args.HeartbeatExpiryTimespanInSec < minTimespanDurationInSec {
+		return nil, process.ErrInvalidExpiryTimespan
 	}
 
-	container := containers.NewInterceptorsContainer()
+	argInterceptorFactory := &interceptorFactory.ArgInterceptedDataFactory{
+		CoreComponents:               args.CoreComponents,
+		CryptoComponents:             args.CryptoComponents,
+		ShardCoordinator:             args.ShardCoordinator,
+		NodesCoordinator:             args.NodesCoordinator,
+		FeeHandler:                   args.TxFeeHandler,
+		WhiteListerVerifiedTxs:       args.WhiteListerVerifiedTxs,
+		HeaderSigVerifier:            args.HeaderSigVerifier,
+		ValidityAttester:             args.ValidityAttester,
+		HeaderIntegrityVerifier:      args.HeaderIntegrityVerifier,
+		EpochStartTrigger:            args.EpochStartTrigger,
+		ArgsParser:                   args.ArgumentsParser,
+		PeerSignatureHandler:         args.PeerSignatureHandler,
+		SignaturesHandler:            args.SignaturesHandler,
+		HeartbeatExpiryTimespanInSec: args.HeartbeatExpiryTimespanInSec,
+		PeerID:                       args.MainMessenger.ID(),
+	}
+
 	base := &baseInterceptorsContainerFactory{
-		container:              container,
-		shardCoordinator:       args.ShardCoordinator,
-		messenger:              args.Messenger,
-		store:                  args.Store,
-		dataPool:               args.DataPool,
-		nodesCoordinator:       args.NodesCoordinator,
-		blockBlackList:         args.BlockBlackList,
-		argInterceptorFactory:  argInterceptorFactory,
-		maxTxNonceDeltaAllowed: args.MaxTxNonceDeltaAllowed,
-		accounts:               args.Accounts,
-		antifloodHandler:       args.AntifloodHandler,
-		whiteListHandler:       args.WhiteListHandler,
-		whiteListerVerifiedTxs: args.WhiteListerVerifiedTxs,
-		preferredPeersHolder:   args.PreferredPeersHolder,
-		hasher:                 args.CoreComponents.Hasher(),
-		requestHandler:         args.RequestHandler,
+		mainContainer:              containers.NewInterceptorsContainer(),
+		fullArchiveContainer:       containers.NewInterceptorsContainer(),
+		shardCoordinator:           args.ShardCoordinator,
+		mainMessenger:              args.MainMessenger,
+		fullArchiveMessenger:       args.FullArchiveMessenger,
+		store:                      args.Store,
+		dataPool:                   args.DataPool,
+		nodesCoordinator:           args.NodesCoordinator,
+		blockBlackList:             args.BlockBlackList,
+		argInterceptorFactory:      argInterceptorFactory,
+		maxTxNonceDeltaAllowed:     args.MaxTxNonceDeltaAllowed,
+		accounts:                   args.Accounts,
+		antifloodHandler:           args.AntifloodHandler,
+		whiteListHandler:           args.WhiteListHandler,
+		whiteListerVerifiedTxs:     args.WhiteListerVerifiedTxs,
+		preferredPeersHolder:       args.PreferredPeersHolder,
+		hasher:                     args.CoreComponents.Hasher(),
+		requestHandler:             args.RequestHandler,
+		mainPeerShardMapper:        args.MainPeerShardMapper,
+		fullArchivePeerShardMapper: args.FullArchivePeerShardMapper,
+		hardforkTrigger:            args.HardforkTrigger,
+		nodeOperationMode:          args.NodeOperationMode,
 	}
 
 	icf := &metaInterceptorsContainerFactory{
@@ -118,43 +139,63 @@ func NewMetaInterceptorsContainerFactory(
 }
 
 // Create returns an interceptor container that will hold all interceptors in the system
-func (micf *metaInterceptorsContainerFactory) Create() (process.InterceptorsContainer, error) {
+func (micf *metaInterceptorsContainerFactory) Create() (process.InterceptorsContainer, process.InterceptorsContainer, error) {
 	err := micf.generateMetachainHeaderInterceptors()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	err = micf.generateShardHeaderInterceptors()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	err = micf.generateTxInterceptors()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	err = micf.generateUnsignedTxsInterceptors()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	err = micf.generateRewardTxInterceptors()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	err = micf.generateMiniBlocksInterceptors()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	err = micf.generateTrieNodesInterceptors()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
-	return micf.container, nil
+	err = micf.generatePeerAuthenticationInterceptor()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	err = micf.generateHeartbeatInterceptor()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	err = micf.generatePeerShardInterceptor()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	err = micf.generateValidatorInfoInterceptor()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return micf.mainContainer, micf.fullArchiveContainer, nil
 }
 
 // AddShardTrieNodeInterceptors will add the shard trie node interceptors into the existing container
@@ -202,7 +243,7 @@ func (micf *metaInterceptorsContainerFactory) generateShardHeaderInterceptors() 
 		interceptorsSlice[int(idx)] = interceptor
 	}
 
-	return micf.container.AddMultiple(keys, interceptorsSlice)
+	return micf.addInterceptorsToContainers(keys, interceptorsSlice)
 }
 
 func (micf *metaInterceptorsContainerFactory) createOneShardHeaderInterceptor(topic string) (process.Interceptor, error) {
@@ -228,7 +269,7 @@ func (micf *metaInterceptorsContainerFactory) createOneShardHeaderInterceptor(to
 			Throttler:            micf.globalThrottler,
 			AntifloodHandler:     micf.antifloodHandler,
 			WhiteListRequest:     micf.whiteListHandler,
-			CurrentPeerId:        micf.messenger.ID(),
+			CurrentPeerId:        micf.mainMessenger.ID(),
 			PreferredPeersHolder: micf.preferredPeersHolder,
 		},
 	)
@@ -261,7 +302,7 @@ func (micf *metaInterceptorsContainerFactory) generateTrieNodesInterceptors() er
 	keys = append(keys, identifierTrieNodes)
 	trieInterceptors = append(trieInterceptors, interceptor)
 
-	return micf.container.AddMultiple(keys, trieInterceptors)
+	return micf.addInterceptorsToContainers(keys, trieInterceptors)
 }
 
 //------- Reward transactions interceptors
@@ -285,7 +326,7 @@ func (micf *metaInterceptorsContainerFactory) generateRewardTxInterceptors() err
 		interceptorSlice[int(idx)] = interceptor
 	}
 
-	return micf.container.AddMultiple(keys, interceptorSlice)
+	return micf.addInterceptorsToContainers(keys, interceptorSlice)
 }
 
 // IsInterfaceNil returns true if there is no value under the interface

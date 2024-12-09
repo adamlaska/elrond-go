@@ -4,16 +4,16 @@ import (
 	"encoding/hex"
 	"sync"
 
-	"github.com/ElrondNetwork/elrond-go-core/core"
-	"github.com/ElrondNetwork/elrond-go-core/core/check"
-	"github.com/ElrondNetwork/elrond-go-core/data"
-	"github.com/ElrondNetwork/elrond-go-core/data/transaction"
-	"github.com/ElrondNetwork/elrond-go-core/marshal"
-	logger "github.com/ElrondNetwork/elrond-go-logger"
-	"github.com/ElrondNetwork/elrond-go/process"
-	"github.com/ElrondNetwork/elrond-go/storage"
-	"github.com/ElrondNetwork/elrond-go/storage/storageUnit"
-	vmcommon "github.com/ElrondNetwork/elrond-vm-common"
+	"github.com/multiversx/mx-chain-core-go/core"
+	"github.com/multiversx/mx-chain-core-go/core/check"
+	"github.com/multiversx/mx-chain-core-go/data"
+	"github.com/multiversx/mx-chain-core-go/data/transaction"
+	"github.com/multiversx/mx-chain-core-go/marshal"
+	"github.com/multiversx/mx-chain-go/process"
+	"github.com/multiversx/mx-chain-go/storage"
+	"github.com/multiversx/mx-chain-go/storage/storageunit"
+	logger "github.com/multiversx/mx-chain-logger-go"
+	vmcommon "github.com/multiversx/mx-chain-vm-common-go"
 )
 
 var _ process.TransactionLogProcessor = (*txLogProcessor)(nil)
@@ -36,7 +36,7 @@ type txLogProcessor struct {
 }
 
 // NewTxLogProcessor creates a transaction log processor capable of parsing logs from the VM
-//  and saving them into the injected storage
+// and saving them into the injected storage
 func NewTxLogProcessor(args ArgTxLogProcessor) (*txLogProcessor, error) {
 	storer := args.Storer
 	if check.IfNil(storer) && args.SaveInStorageEnabled {
@@ -44,7 +44,7 @@ func NewTxLogProcessor(args ArgTxLogProcessor) (*txLogProcessor, error) {
 	}
 
 	if !args.SaveInStorageEnabled {
-		storer = storageUnit.NewNilStorer()
+		storer = storageunit.NewNilStorer()
 	}
 
 	if check.IfNil(args.Marshalizer) {
@@ -153,10 +153,11 @@ func (tlp *txLogProcessor) SaveLog(txHash []byte, tx data.TransactionHandler, lo
 
 	for _, logEntry := range logEntries {
 		txLog.Events = append(txLog.Events, &transaction.Event{
-			Identifier: logEntry.Identifier,
-			Address:    logEntry.Address,
-			Topics:     logEntry.Topics,
-			Data:       logEntry.Data,
+			Identifier:     logEntry.Identifier,
+			Address:        logEntry.Address,
+			Topics:         logEntry.Topics,
+			Data:           logEntry.GetFirstDataItem(),
+			AdditionalData: logEntry.Data,
 		})
 	}
 
@@ -178,7 +179,6 @@ func (tlp *txLogProcessor) saveLogToCache(txHash []byte, log *transaction.Log) {
 	})
 	tlp.logsIndices[string(txHash)] = len(tlp.logs) - 1
 	tlp.mut.Unlock()
-
 }
 
 // For SC deployment transactions, we use the sender address

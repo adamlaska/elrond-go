@@ -10,12 +10,13 @@ import (
 	"runtime/pprof"
 	"testing"
 
-	"github.com/ElrondNetwork/elrond-go-core/core"
-	"github.com/ElrondNetwork/elrond-go-core/data/transaction"
-	"github.com/ElrondNetwork/elrond-go/dataRetriever"
-	"github.com/ElrondNetwork/elrond-go/dataRetriever/txpool"
-	"github.com/ElrondNetwork/elrond-go/storage/storageUnit"
-	"github.com/ElrondNetwork/elrond-go/testscommon/txcachemocks"
+	"github.com/multiversx/mx-chain-core-go/core"
+	"github.com/multiversx/mx-chain-core-go/data/transaction"
+	"github.com/multiversx/mx-chain-core-go/marshal"
+	"github.com/multiversx/mx-chain-go/dataRetriever"
+	"github.com/multiversx/mx-chain-go/dataRetriever/txpool"
+	"github.com/multiversx/mx-chain-go/storage/storageunit"
+	"github.com/multiversx/mx-chain-go/testscommon/txcachemocks"
 	"github.com/stretchr/testify/require"
 )
 
@@ -35,26 +36,26 @@ func TestShardedTxPool_MemoryFootprint(t *testing.T) {
 
 	journals = append(journals, runScenario(t, newScenario(200, 1, core.MegabyteSize, "0"), memoryAssertion{200, 200}, memoryAssertion{0, 1}))
 	journals = append(journals, runScenario(t, newScenario(10, 1000, 20480, "0"), memoryAssertion{190, 205}, memoryAssertion{1, 4}))
-	journals = append(journals, runScenario(t, newScenario(10000, 1, 1024, "0"), memoryAssertion{10, 16}, memoryAssertion{4, 10}))
-	journals = append(journals, runScenario(t, newScenario(1, 60000, 256, "0"), memoryAssertion{30, 32}, memoryAssertion{10, 16}))
-	journals = append(journals, runScenario(t, newScenario(10, 10000, 100, "0"), memoryAssertion{36, 40}, memoryAssertion{16, 24}))
-	journals = append(journals, runScenario(t, newScenario(100000, 1, 1024, "0"), memoryAssertion{120, 128}, memoryAssertion{56, 60}))
+	journals = append(journals, runScenario(t, newScenario(10000, 1, 1024, "0"), memoryAssertion{10, 16}, memoryAssertion{0, 10}))
+	journals = append(journals, runScenario(t, newScenario(1, 60000, 256, "0"), memoryAssertion{30, 40}, memoryAssertion{10, 24}))
+	journals = append(journals, runScenario(t, newScenario(10, 10000, 100, "0"), memoryAssertion{36, 52}, memoryAssertion{16, 36}))
+	journals = append(journals, runScenario(t, newScenario(100000, 1, 1024, "0"), memoryAssertion{120, 138}, memoryAssertion{32, 60}))
 
 	// With larger memory footprint
 
-	journals = append(journals, runScenario(t, newScenario(100000, 3, 650, "0"), memoryAssertion{290, 310}, memoryAssertion{95, 110}))
-	journals = append(journals, runScenario(t, newScenario(150000, 2, 650, "0"), memoryAssertion{290, 310}, memoryAssertion{120, 130}))
-	journals = append(journals, runScenario(t, newScenario(300000, 1, 650, "0"), memoryAssertion{290, 310}, memoryAssertion{170, 190}))
-	journals = append(journals, runScenario(t, newScenario(30, 10000, 650, "0"), memoryAssertion{290, 310}, memoryAssertion{60, 70}))
-	journals = append(journals, runScenario(t, newScenario(300, 1000, 650, "0"), memoryAssertion{290, 310}, memoryAssertion{60, 70}))
+	journals = append(journals, runScenario(t, newScenario(100000, 3, 650, "0"), memoryAssertion{290, 335}, memoryAssertion{80, 148}))
+	journals = append(journals, runScenario(t, newScenario(150000, 2, 650, "0"), memoryAssertion{290, 335}, memoryAssertion{90, 160}))
+	journals = append(journals, runScenario(t, newScenario(300000, 1, 650, "0"), memoryAssertion{290, 335}, memoryAssertion{100, 190}))
+	journals = append(journals, runScenario(t, newScenario(30, 10000, 650, "0"), memoryAssertion{290, 335}, memoryAssertion{60, 132}))
+	journals = append(journals, runScenario(t, newScenario(300, 1000, 650, "0"), memoryAssertion{290, 335}, memoryAssertion{60, 148}))
 
 	// Scenarios where destination == me
 
 	journals = append(journals, runScenario(t, newScenario(100, 1, core.MegabyteSize, "1_0"), memoryAssertion{90, 100}, memoryAssertion{0, 1}))
 	journals = append(journals, runScenario(t, newScenario(10000, 1, 10240, "1_0"), memoryAssertion{96, 128}, memoryAssertion{0, 4}))
-	journals = append(journals, runScenario(t, newScenario(10, 10000, 1000, "1_0"), memoryAssertion{96, 128}, memoryAssertion{16, 24}))
-	journals = append(journals, runScenario(t, newScenario(150000, 1, 128, "1_0"), memoryAssertion{50, 65}, memoryAssertion{30, 36}))
-	journals = append(journals, runScenario(t, newScenario(1, 150000, 128, "1_0"), memoryAssertion{50, 65}, memoryAssertion{30, 36}))
+	journals = append(journals, runScenario(t, newScenario(10, 10000, 1000, "1_0"), memoryAssertion{96, 140}, memoryAssertion{16, 25}))
+	journals = append(journals, runScenario(t, newScenario(150000, 1, 128, "1_0"), memoryAssertion{50, 80}, memoryAssertion{30, 40}))
+	journals = append(journals, runScenario(t, newScenario(1, 150000, 128, "1_0"), memoryAssertion{50, 80}, memoryAssertion{30, 40}))
 
 	for _, journal := range journals {
 		journal.displayFootprintsSummary()
@@ -101,7 +102,7 @@ type memoryAssertion struct {
 }
 
 func newPool() dataRetriever.ShardedDataCacherNotifier {
-	config := storageUnit.CacheConfig{
+	config := storageunit.CacheConfig{
 		Capacity:             600000,
 		SizePerSender:        60000,
 		SizeInBytes:          400 * core.MegabyteSize,
@@ -110,12 +111,9 @@ func newPool() dataRetriever.ShardedDataCacherNotifier {
 	}
 
 	args := txpool.ArgShardedTxPool{
-		Config: config,
-		TxGasHandler: &txcachemocks.TxGasHandlerMock{
-			MinimumGasMove:       50000,
-			MinimumGasPrice:      200000000000,
-			GasProcessingDivisor: 100,
-		},
+		Config:         config,
+		TxGasHandler:   txcachemocks.NewTxGasHandlerMock(),
+		Marshalizer:    &marshal.GogoProtoMarshalizer{},
 		NumberOfShards: 2,
 		SelfShardID:    0,
 	}
@@ -187,9 +185,10 @@ func createTxWithPayload(senderTag int, nonce int, payloadLength int) *dummyTx {
 
 	return &dummyTx{
 		Transaction: transaction.Transaction{
-			SndAddr: sender,
-			Nonce:   uint64(nonce),
-			Data:    make([]byte, payloadLength),
+			SndAddr:  sender,
+			Nonce:    uint64(nonce),
+			Data:     make([]byte, payloadLength),
+			GasLimit: uint64(50000 + 1500*payloadLength),
 		},
 		hash: hash,
 	}
@@ -229,7 +228,9 @@ func pprofHeap(scenario *scenario, step string) {
 
 	defer func() {
 		errClose := file.Close()
-		panic(fmt.Sprintf("cannot close file: %s", errClose.Error()))
+		if errClose != nil {
+			panic(fmt.Sprintf("cannot close file: %s", errClose.Error()))
+		}
 	}()
 
 	err = pprof.WriteHeapProfile(file)

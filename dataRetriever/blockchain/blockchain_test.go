@@ -1,20 +1,20 @@
-package blockchain_test
+package blockchain
 
 import (
 	"fmt"
 	"testing"
 
-	"github.com/ElrondNetwork/elrond-go-core/core/check"
-	"github.com/ElrondNetwork/elrond-go-core/data/block"
-	"github.com/ElrondNetwork/elrond-go-core/data/mock"
-	"github.com/ElrondNetwork/elrond-go/dataRetriever/blockchain"
+	"github.com/multiversx/mx-chain-core-go/core/check"
+	"github.com/multiversx/mx-chain-core-go/data"
+	"github.com/multiversx/mx-chain-core-go/data/block"
+	"github.com/multiversx/mx-chain-core-go/data/mock"
 	"github.com/stretchr/testify/assert"
 )
 
 func TestNewBlockChain_ShouldWork(t *testing.T) {
 	t.Parallel()
 
-	bc, _ := blockchain.NewBlockChain(&mock.AppStatusHandlerStub{})
+	bc, _ := NewBlockChain(&mock.AppStatusHandlerStub{})
 
 	assert.False(t, check.IfNil(bc))
 }
@@ -22,16 +22,16 @@ func TestNewBlockChain_ShouldWork(t *testing.T) {
 func TestBlockChain_NilAppStatusHandlerShouldErr(t *testing.T) {
 	t.Parallel()
 
-	bc, err := blockchain.NewBlockChain(nil)
+	bc, err := NewBlockChain(nil)
 
-	assert.Equal(t, blockchain.ErrNilAppStatusHandler, err)
+	assert.Equal(t, ErrNilAppStatusHandler, err)
 	assert.Nil(t, bc)
 }
 
 func TestBlockChain_SettersAndGetters(t *testing.T) {
 	t.Parallel()
 
-	bc, _ := blockchain.NewBlockChain(&mock.AppStatusHandlerStub{})
+	bc, _ := NewBlockChain(&mock.AppStatusHandlerStub{})
 
 	hdr := &block.Header{
 		Nonce: 4,
@@ -68,7 +68,7 @@ func TestBlockChain_SettersAndGetters(t *testing.T) {
 func TestBlockChain_SettersAndGettersNilValues(t *testing.T) {
 	t.Parallel()
 
-	bc, _ := blockchain.NewBlockChain(&mock.AppStatusHandlerStub{})
+	bc, _ := NewBlockChain(&mock.AppStatusHandlerStub{})
 	_ = bc.SetGenesisHeader(&block.Header{})
 	_ = bc.SetCurrentBlockHeaderAndRootHash(&block.Header{}, []byte("root hash"))
 
@@ -81,4 +81,15 @@ func TestBlockChain_SettersAndGettersNilValues(t *testing.T) {
 	assert.Nil(t, bc.GetGenesisHeader())
 	assert.Nil(t, bc.GetCurrentBlockHeader())
 	assert.Empty(t, bc.GetCurrentBlockRootHash())
+}
+
+func TestBlockChain_SettersInvalidValues(t *testing.T) {
+	t.Parallel()
+
+	bc, _ := NewBlockChain(&mock.AppStatusHandlerStub{})
+	err := bc.SetGenesisHeader(&block.MetaBlock{})
+	assert.Equal(t, err, data.ErrInvalidHeaderType)
+
+	err = bc.SetCurrentBlockHeaderAndRootHash(&block.MetaBlock{}, []byte("root hash"))
+	assert.Equal(t, err, data.ErrInvalidHeaderType)
 }

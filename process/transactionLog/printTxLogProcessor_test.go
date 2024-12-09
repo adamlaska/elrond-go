@@ -5,9 +5,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ElrondNetwork/elrond-go-core/data/transaction"
-	logger "github.com/ElrondNetwork/elrond-go-logger"
-	vmcommon "github.com/ElrondNetwork/elrond-vm-common"
+	"github.com/multiversx/mx-chain-core-go/data/transaction"
+	logger "github.com/multiversx/mx-chain-logger-go"
+	vmcommon "github.com/multiversx/mx-chain-vm-common-go"
 	"github.com/stretchr/testify/require"
 )
 
@@ -63,9 +63,6 @@ func TestPrintTxLogProcessor_SaveLog(t *testing.T) {
 	}
 
 	err := ptlp.SaveLog([]byte("hash"), &transaction.Transaction{}, txLogEntry)
-	require.Nil(t, err)
-
-	err = ptlp.SaveLog([]byte("hash"), &transaction.Transaction{}, nil)
 	require.Nil(t, err)
 
 	require.True(t, strings.Contains(buff.String(), "printTxLogProcessor.SaveLog"))

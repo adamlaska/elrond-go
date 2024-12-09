@@ -1,14 +1,15 @@
 package factory
 
 import (
-	"github.com/ElrondNetwork/elrond-go-core/core"
-	"github.com/ElrondNetwork/elrond-go-core/data/typeConverters"
-	"github.com/ElrondNetwork/elrond-go-core/hashing"
-	"github.com/ElrondNetwork/elrond-go-core/marshal"
-	crypto "github.com/ElrondNetwork/elrond-go-crypto"
-	"github.com/ElrondNetwork/elrond-go/process"
-	"github.com/ElrondNetwork/elrond-go/sharding"
-	"github.com/ElrondNetwork/elrond-go/sharding/nodesCoordinator"
+	"github.com/multiversx/mx-chain-core-go/core"
+	"github.com/multiversx/mx-chain-core-go/data/typeConverters"
+	"github.com/multiversx/mx-chain-core-go/hashing"
+	"github.com/multiversx/mx-chain-core-go/marshal"
+	crypto "github.com/multiversx/mx-chain-crypto-go"
+	"github.com/multiversx/mx-chain-go/common"
+	"github.com/multiversx/mx-chain-go/process"
+	"github.com/multiversx/mx-chain-go/sharding"
+	"github.com/multiversx/mx-chain-go/sharding/nodesCoordinator"
 )
 
 // interceptedDataCoreComponentsHolder holds the core components required by the intercepted data factory
@@ -23,7 +24,8 @@ type interceptedDataCoreComponentsHolder interface {
 	ChainID() string
 	MinTransactionVersion() uint32
 	IsInterfaceNil() bool
-	EpochNotifier() process.EpochNotifier
+	HardforkTriggerPubKey() []byte
+	EnableEpochsHandler() common.EnableEpochsHandler
 }
 
 // interceptedDataCryptoComponentsHolder holds the crypto components required by the intercepted data factory
@@ -32,7 +34,7 @@ type interceptedDataCryptoComponentsHolder interface {
 	BlockSignKeyGen() crypto.KeyGenerator
 	TxSingleSigner() crypto.SingleSigner
 	BlockSigner() crypto.SingleSigner
-	MultiSigner() crypto.MultiSigner
+	GetMultiSigner(epoch uint32) (crypto.MultiSigner, error)
 	PublicKey() crypto.PublicKey
 	IsInterfaceNil() bool
 }
@@ -40,16 +42,19 @@ type interceptedDataCryptoComponentsHolder interface {
 // ArgInterceptedDataFactory holds all dependencies required by the shard and meta intercepted data factory in order to create
 // new instances
 type ArgInterceptedDataFactory struct {
-	CoreComponents            interceptedDataCoreComponentsHolder
-	CryptoComponents          interceptedDataCryptoComponentsHolder
-	ShardCoordinator          sharding.Coordinator
-	NodesCoordinator          nodesCoordinator.NodesCoordinator
-	FeeHandler                process.FeeHandler
-	WhiteListerVerifiedTxs    process.WhiteListHandler
-	HeaderSigVerifier         process.InterceptedHeaderSigVerifier
-	ValidityAttester          process.ValidityAttester
-	HeaderIntegrityVerifier   process.HeaderIntegrityVerifier
-	EpochStartTrigger         process.EpochStartTriggerHandler
-	ArgsParser                process.ArgumentsParser
-	EnableSignTxWithHashEpoch uint32
+	CoreComponents               interceptedDataCoreComponentsHolder
+	CryptoComponents             interceptedDataCryptoComponentsHolder
+	ShardCoordinator             sharding.Coordinator
+	NodesCoordinator             nodesCoordinator.NodesCoordinator
+	FeeHandler                   process.FeeHandler
+	WhiteListerVerifiedTxs       process.WhiteListHandler
+	HeaderSigVerifier            process.InterceptedHeaderSigVerifier
+	ValidityAttester             process.ValidityAttester
+	HeaderIntegrityVerifier      process.HeaderIntegrityVerifier
+	EpochStartTrigger            process.EpochStartTriggerHandler
+	ArgsParser                   process.ArgumentsParser
+	PeerSignatureHandler         crypto.PeerSignatureHandler
+	SignaturesHandler            process.SignaturesHandler
+	HeartbeatExpiryTimespanInSec int64
+	PeerID                       core.PeerID
 }

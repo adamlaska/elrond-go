@@ -2,36 +2,35 @@ package metrics
 
 import (
 	"fmt"
+	"runtime/debug"
 	"sort"
 	"strconv"
 
-	"github.com/ElrondNetwork/elrond-go-core/core"
-	"github.com/ElrondNetwork/elrond-go-core/core/check"
-	"github.com/ElrondNetwork/elrond-go/common"
-	"github.com/ElrondNetwork/elrond-go/config"
-	"github.com/ElrondNetwork/elrond-go/sharding"
+	"github.com/multiversx/mx-chain-core-go/core"
+	"github.com/multiversx/mx-chain-core-go/core/check"
+	"github.com/multiversx/mx-chain-go/common"
+	"github.com/multiversx/mx-chain-go/config"
+	"github.com/multiversx/mx-chain-go/sharding"
+	logger "github.com/multiversx/mx-chain-logger-go"
 )
 
 const millisecondsInSecond = 1000
 const initUint = uint64(0)
+const initInt = int64(0)
 const initString = ""
 const initZeroString = "0"
 
-// StatusHandlersUtils provides some functionality for statusHandlers
-type StatusHandlersUtils interface {
-	StatusHandler() core.AppStatusHandler
-	IsInterfaceNil() bool
-}
+var log = logger.GetOrCreate("node/metrics")
 
 // InitBaseMetrics will initialize base, default metrics to 0 values
-func InitBaseMetrics(statusHandlerUtils StatusHandlersUtils) error {
-	if check.IfNil(statusHandlerUtils) {
-		return ErrNilStatusHandlerUtils
+func InitBaseMetrics(appStatusHandler core.AppStatusHandler) error {
+	if check.IfNil(appStatusHandler) {
+		return ErrNilAppStatusHandler
 	}
 
-	appStatusHandler := statusHandlerUtils.StatusHandler()
 	appStatusHandler.SetUInt64Value(common.MetricSynchronizedRound, initUint)
 	appStatusHandler.SetUInt64Value(common.MetricNonce, initUint)
+	appStatusHandler.SetUInt64Value(common.MetricBlockTimestamp, initUint)
 	appStatusHandler.SetUInt64Value(common.MetricCountConsensus, initUint)
 	appStatusHandler.SetUInt64Value(common.MetricCountLeader, initUint)
 	appStatusHandler.SetUInt64Value(common.MetricCountAcceptedBlocks, initUint)
@@ -50,6 +49,16 @@ func InitBaseMetrics(statusHandlerUtils StatusHandlersUtils) error {
 	appStatusHandler.SetUInt64Value(common.MetricNoncesPassedInCurrentEpoch, initUint)
 	appStatusHandler.SetUInt64Value(common.MetricNumConnectedPeers, initUint)
 	appStatusHandler.SetUInt64Value(common.MetricEpochForEconomicsData, initUint)
+	appStatusHandler.SetUInt64Value(common.MetricAccountsSnapshotNumNodes, initUint)
+	appStatusHandler.SetUInt64Value(common.MetricTrieSyncNumProcessedNodes, initUint)
+	appStatusHandler.SetUInt64Value(common.MetricTrieSyncNumReceivedBytes, initUint)
+	appStatusHandler.SetUInt64Value(common.MetricAccountsSnapshotInProgress, initUint)
+	appStatusHandler.SetUInt64Value(common.MetricPeersSnapshotInProgress, initUint)
+	appStatusHandler.SetUInt64Value(common.MetricNonceAtEpochStart, initUint)
+	appStatusHandler.SetUInt64Value(common.MetricRoundAtEpochStart, initUint)
+
+	appStatusHandler.SetInt64Value(common.MetricLastAccountsSnapshotDurationSec, initInt)
+	appStatusHandler.SetInt64Value(common.MetricLastPeersSnapshotDurationSec, initInt)
 
 	appStatusHandler.SetStringValue(common.MetricConsensusState, initString)
 	appStatusHandler.SetStringValue(common.MetricConsensusRoundState, initString)
@@ -63,7 +72,6 @@ func InitBaseMetrics(statusHandlerUtils StatusHandlersUtils) error {
 	appStatusHandler.SetStringValue(common.MetricP2PIntraShardObservers, initString)
 	appStatusHandler.SetStringValue(common.MetricP2PCrossShardValidators, initString)
 	appStatusHandler.SetStringValue(common.MetricP2PCrossShardObservers, initString)
-	appStatusHandler.SetStringValue(common.MetricP2PFullHistoryObservers, initString)
 	appStatusHandler.SetStringValue(common.MetricP2PUnknownPeers, initString)
 
 	appStatusHandler.SetStringValue(common.MetricInflation, initZeroString)
@@ -75,18 +83,19 @@ func InitBaseMetrics(statusHandlerUtils StatusHandlersUtils) error {
 
 // InitConfigMetrics will init the "enable epochs" configuration metrics from epoch config
 func InitConfigMetrics(
-	statusHandlerUtils StatusHandlersUtils,
+	appStatusHandler core.AppStatusHandler,
 	epochConfig config.EpochConfig,
 	economicsConfig config.EconomicsConfig,
 	genesisNodesConfig sharding.GenesisNodesSetupHandler,
+	gatewayMetricsConfig config.GatewayMetricsConfig,
 ) error {
-	if check.IfNil(statusHandlerUtils) {
-		return ErrNilStatusHandlerUtils
+	if check.IfNil(appStatusHandler) {
+		return ErrNilAppStatusHandler
 	}
 
 	enableEpochs := epochConfig.EnableEpochs
-	appStatusHandler := statusHandlerUtils.StatusHandler()
 
+	// enable epochs metrics
 	appStatusHandler.SetUInt64Value(common.MetricScDeployEnableEpoch, uint64(enableEpochs.SCDeployEnableEpoch))
 	appStatusHandler.SetUInt64Value(common.MetricBuiltInFunctionsEnableEpoch, uint64(enableEpochs.BuiltInFunctionsEnableEpoch))
 	appStatusHandler.SetUInt64Value(common.MetricRelayedTransactionsEnableEpoch, uint64(enableEpochs.RelayedTransactionsEnableEpoch))
@@ -112,17 +121,87 @@ func InitConfigMetrics(
 	appStatusHandler.SetUInt64Value(common.MetricReturnDataToLastTransferEnableEpoch, uint64(enableEpochs.ReturnDataToLastTransferEnableEpoch))
 	appStatusHandler.SetUInt64Value(common.MetricSenderInOutTransferEnableEpoch, uint64(enableEpochs.SenderInOutTransferEnableEpoch))
 	appStatusHandler.SetUInt64Value(common.MetricRelayedTransactionsV2EnableEpoch, uint64(enableEpochs.RelayedTransactionsV2EnableEpoch))
+	appStatusHandler.SetUInt64Value(common.MetricFixRelayedBaseCostEnableEpoch, uint64(enableEpochs.FixRelayedBaseCostEnableEpoch))
 	appStatusHandler.SetUInt64Value(common.MetricUnbondTokensV2EnableEpoch, uint64(enableEpochs.UnbondTokensV2EnableEpoch))
 	appStatusHandler.SetUInt64Value(common.MetricSaveJailedAlwaysEnableEpoch, uint64(enableEpochs.SaveJailedAlwaysEnableEpoch))
 	appStatusHandler.SetUInt64Value(common.MetricValidatorToDelegationEnableEpoch, uint64(enableEpochs.ValidatorToDelegationEnableEpoch))
 	appStatusHandler.SetUInt64Value(common.MetricReDelegateBelowMinCheckEnableEpoch, uint64(enableEpochs.ReDelegateBelowMinCheckEnableEpoch))
 	appStatusHandler.SetUInt64Value(common.MetricIncrementSCRNonceInMultiTransferEnableEpoch, uint64(enableEpochs.IncrementSCRNonceInMultiTransferEnableEpoch))
+	appStatusHandler.SetUInt64Value(common.MetricScheduledMiniBlocksEnableEpoch, uint64(enableEpochs.ScheduledMiniBlocksEnableEpoch))
 	appStatusHandler.SetUInt64Value(common.MetricESDTMultiTransferEnableEpoch, uint64(enableEpochs.ESDTMultiTransferEnableEpoch))
 	appStatusHandler.SetUInt64Value(common.MetricGlobalMintBurnDisableEpoch, uint64(enableEpochs.GlobalMintBurnDisableEpoch))
 	appStatusHandler.SetUInt64Value(common.MetricESDTTransferRoleEnableEpoch, uint64(enableEpochs.ESDTTransferRoleEnableEpoch))
-	appStatusHandler.SetUInt64Value(common.MetricBuiltInFunctionOnMetaEnableEpoch, uint64(enableEpochs.BuiltInFunctionOnMetaEnableEpoch))
-	appStatusHandler.SetStringValue(common.MetricTotalSupply, economicsConfig.GlobalSettings.GenesisTotalSupply)
-	appStatusHandler.SetUInt64Value(common.MetricWaitingListFixEnableEpoch, uint64(enableEpochs.WaitingListFixEnableEpoch))
+	appStatusHandler.SetUInt64Value(common.MetricComputeRewardCheckpointEnableEpoch, uint64(enableEpochs.ComputeRewardCheckpointEnableEpoch))
+	appStatusHandler.SetUInt64Value(common.MetricSCRSizeInvariantCheckEnableEpoch, uint64(enableEpochs.SCRSizeInvariantCheckEnableEpoch))
+	appStatusHandler.SetUInt64Value(common.MetricBackwardCompSaveKeyValueEnableEpoch, uint64(enableEpochs.BackwardCompSaveKeyValueEnableEpoch))
+	appStatusHandler.SetUInt64Value(common.MetricESDTNFTCreateOnMultiShardEnableEpoch, uint64(enableEpochs.ESDTNFTCreateOnMultiShardEnableEpoch))
+	appStatusHandler.SetUInt64Value(common.MetricMetaESDTSetEnableEpoch, uint64(enableEpochs.MetaESDTSetEnableEpoch))
+	appStatusHandler.SetUInt64Value(common.MetricAddTokensToDelegationEnableEpoch, uint64(enableEpochs.AddTokensToDelegationEnableEpoch))
+	appStatusHandler.SetUInt64Value(common.MetricMultiESDTTransferFixOnCallBackOnEnableEpoch, uint64(enableEpochs.MultiESDTTransferFixOnCallBackOnEnableEpoch))
+	appStatusHandler.SetUInt64Value(common.MetricOptimizeGasUsedInCrossMiniBlocksEnableEpoch, uint64(enableEpochs.OptimizeGasUsedInCrossMiniBlocksEnableEpoch))
+	appStatusHandler.SetUInt64Value(common.MetricCorrectFirstQueuedEpoch, uint64(enableEpochs.CorrectFirstQueuedEpoch))
+	appStatusHandler.SetUInt64Value(common.MetricCorrectJailedNotUnstakedEmptyQueueEpoch, uint64(enableEpochs.CorrectJailedNotUnstakedEmptyQueueEpoch))
+	appStatusHandler.SetUInt64Value(common.MetricFixOOGReturnCodeEnableEpoch, uint64(enableEpochs.FixOOGReturnCodeEnableEpoch))
+	appStatusHandler.SetUInt64Value(common.MetricRemoveNonUpdatedStorageEnableEpoch, uint64(enableEpochs.RemoveNonUpdatedStorageEnableEpoch))
+	appStatusHandler.SetUInt64Value(common.MetricDeleteDelegatorAfterClaimRewardsEnableEpoch, uint64(enableEpochs.DeleteDelegatorAfterClaimRewardsEnableEpoch))
+	appStatusHandler.SetUInt64Value(common.MetricOptimizeNFTStoreEnableEpoch, uint64(enableEpochs.OptimizeNFTStoreEnableEpoch))
+	appStatusHandler.SetUInt64Value(common.MetricCreateNFTThroughExecByCallerEnableEpoch, uint64(enableEpochs.CreateNFTThroughExecByCallerEnableEpoch))
+	appStatusHandler.SetUInt64Value(common.MetricStopDecreasingValidatorRatingWhenStuckEnableEpoch, uint64(enableEpochs.StopDecreasingValidatorRatingWhenStuckEnableEpoch))
+	appStatusHandler.SetUInt64Value(common.MetricFrontRunningProtectionEnableEpoch, uint64(enableEpochs.FrontRunningProtectionEnableEpoch))
+	appStatusHandler.SetUInt64Value(common.MetricIsPayableBySCEnableEpoch, uint64(enableEpochs.IsPayableBySCEnableEpoch))
+	appStatusHandler.SetUInt64Value(common.MetricStorageAPICostOptimizationEnableEpoch, uint64(enableEpochs.StorageAPICostOptimizationEnableEpoch))
+	appStatusHandler.SetUInt64Value(common.MetricTransformToMultiShardCreateEnableEpoch, uint64(enableEpochs.TransformToMultiShardCreateEnableEpoch))
+	appStatusHandler.SetUInt64Value(common.MetricESDTRegisterAndSetAllRolesEnableEpoch, uint64(enableEpochs.ESDTRegisterAndSetAllRolesEnableEpoch))
+	appStatusHandler.SetUInt64Value(common.MetricDoNotReturnOldBlockInBlockchainHookEnableEpoch, uint64(enableEpochs.DoNotReturnOldBlockInBlockchainHookEnableEpoch))
+	appStatusHandler.SetUInt64Value(common.MetricAddFailedRelayedTxToInvalidMBsDisableEpoch, uint64(enableEpochs.AddFailedRelayedTxToInvalidMBsDisableEpoch))
+	appStatusHandler.SetUInt64Value(common.MetricSCRSizeInvariantOnBuiltInResultEnableEpoch, uint64(enableEpochs.SCRSizeInvariantOnBuiltInResultEnableEpoch))
+	appStatusHandler.SetUInt64Value(common.MetricCheckCorrectTokenIDForTransferRoleEnableEpoch, uint64(enableEpochs.CheckCorrectTokenIDForTransferRoleEnableEpoch))
+	appStatusHandler.SetUInt64Value(common.MetricDisableExecByCallerEnableEpoch, uint64(enableEpochs.DisableExecByCallerEnableEpoch))
+	appStatusHandler.SetUInt64Value(common.MetricFailExecutionOnEveryAPIErrorEnableEpoch, uint64(enableEpochs.FailExecutionOnEveryAPIErrorEnableEpoch))
+	appStatusHandler.SetUInt64Value(common.MetricManagedCryptoAPIsEnableEpoch, uint64(enableEpochs.ManagedCryptoAPIsEnableEpoch))
+	appStatusHandler.SetUInt64Value(common.MetricRefactorContextEnableEpoch, uint64(enableEpochs.RefactorContextEnableEpoch))
+	appStatusHandler.SetUInt64Value(common.MetricCheckFunctionArgumentEnableEpoch, uint64(enableEpochs.CheckFunctionArgumentEnableEpoch))
+	appStatusHandler.SetUInt64Value(common.MetricCheckExecuteOnReadOnlyEnableEpoch, uint64(enableEpochs.CheckExecuteOnReadOnlyEnableEpoch))
+	appStatusHandler.SetUInt64Value(common.MetricMiniBlockPartialExecutionEnableEpoch, uint64(enableEpochs.MiniBlockPartialExecutionEnableEpoch))
+	appStatusHandler.SetUInt64Value(common.MetricESDTMetadataContinuousCleanupEnableEpoch, uint64(enableEpochs.ESDTMetadataContinuousCleanupEnableEpoch))
+	appStatusHandler.SetUInt64Value(common.MetricFixAsyncCallBackArgsListEnableEpoch, uint64(enableEpochs.FixAsyncCallBackArgsListEnableEpoch))
+	appStatusHandler.SetUInt64Value(common.MetricFixOldTokenLiquidityEnableEpoch, uint64(enableEpochs.FixOldTokenLiquidityEnableEpoch))
+	appStatusHandler.SetUInt64Value(common.MetricRuntimeMemStoreLimitEnableEpoch, uint64(enableEpochs.RuntimeMemStoreLimitEnableEpoch))
+	appStatusHandler.SetUInt64Value(common.MetricRuntimeCodeSizeFixEnableEpoch, uint64(enableEpochs.RuntimeCodeSizeFixEnableEpoch))
+	appStatusHandler.SetUInt64Value(common.MetricSetSenderInEeiOutputTransferEnableEpoch, uint64(enableEpochs.SetSenderInEeiOutputTransferEnableEpoch))
+	appStatusHandler.SetUInt64Value(common.MetricRefactorPeersMiniBlocksEnableEpoch, uint64(enableEpochs.RefactorPeersMiniBlocksEnableEpoch))
+	appStatusHandler.SetUInt64Value(common.MetricSCProcessorV2EnableEpoch, uint64(enableEpochs.SCProcessorV2EnableEpoch))
+	appStatusHandler.SetUInt64Value(common.MetricMaxBlockchainHookCountersEnableEpoch, uint64(enableEpochs.MaxBlockchainHookCountersEnableEpoch))
+	appStatusHandler.SetUInt64Value(common.MetricWipeSingleNFTLiquidityDecreaseEnableEpoch, uint64(enableEpochs.WipeSingleNFTLiquidityDecreaseEnableEpoch))
+	appStatusHandler.SetUInt64Value(common.MetricAlwaysSaveTokenMetaDataEnableEpoch, uint64(enableEpochs.AlwaysSaveTokenMetaDataEnableEpoch))
+	appStatusHandler.SetUInt64Value(common.MetricCleanUpInformativeSCRsEnableEpoch, uint64(enableEpochs.CleanUpInformativeSCRsEnableEpoch))
+	appStatusHandler.SetUInt64Value(common.MetricSetGuardianEnableEpoch, uint64(enableEpochs.SetGuardianEnableEpoch))
+	appStatusHandler.SetUInt64Value(common.MetricSetScToScLogEventEnableEpoch, uint64(enableEpochs.ScToScLogEventEnableEpoch))
+	appStatusHandler.SetUInt64Value(common.MetricRelayedNonceFixEnableEpoch, uint64(enableEpochs.RelayedNonceFixEnableEpoch))
+	appStatusHandler.SetUInt64Value(common.MetricDeterministicSortOnValidatorsInfoEnableEpoch, uint64(enableEpochs.DeterministicSortOnValidatorsInfoEnableEpoch))
+	appStatusHandler.SetUInt64Value(common.MetricKeepExecOrderOnCreatedSCRsEnableEpoch, uint64(enableEpochs.KeepExecOrderOnCreatedSCRsEnableEpoch))
+	appStatusHandler.SetUInt64Value(common.MetricMultiClaimOnDelegationEnableEpoch, uint64(enableEpochs.MultiClaimOnDelegationEnableEpoch))
+	appStatusHandler.SetUInt64Value(common.MetricChangeUsernameEnableEpoch, uint64(enableEpochs.ChangeUsernameEnableEpoch))
+	appStatusHandler.SetUInt64Value(common.MetricAutoBalanceDataTriesEnableEpoch, uint64(enableEpochs.AutoBalanceDataTriesEnableEpoch))
+	appStatusHandler.SetUInt64Value(common.MetricMigrateDataTrieEnableEpoch, uint64(enableEpochs.MigrateDataTrieEnableEpoch))
+	appStatusHandler.SetUInt64Value(common.MetricConsistentTokensValuesLengthCheckEnableEpoch, uint64(enableEpochs.ConsistentTokensValuesLengthCheckEnableEpoch))
+	appStatusHandler.SetUInt64Value(common.MetricFixDelegationChangeOwnerOnAccountEnableEpoch, uint64(enableEpochs.FixDelegationChangeOwnerOnAccountEnableEpoch))
+	appStatusHandler.SetUInt64Value(common.MetricDynamicGasCostForDataTrieStorageLoadEnableEpoch, uint64(enableEpochs.DynamicGasCostForDataTrieStorageLoadEnableEpoch))
+	appStatusHandler.SetUInt64Value(common.MetricNFTStopCreateEnableEpoch, uint64(enableEpochs.NFTStopCreateEnableEpoch))
+	appStatusHandler.SetUInt64Value(common.MetricChangeOwnerAddressCrossShardThroughSCEnableEpoch, uint64(enableEpochs.ChangeOwnerAddressCrossShardThroughSCEnableEpoch))
+	appStatusHandler.SetUInt64Value(common.MetricFixGasRemainingForSaveKeyValueBuiltinFunctionEnableEpoch, uint64(enableEpochs.FixGasRemainingForSaveKeyValueBuiltinFunctionEnableEpoch))
+	appStatusHandler.SetUInt64Value(common.MetricCurrentRandomnessOnSortingEnableEpoch, uint64(enableEpochs.CurrentRandomnessOnSortingEnableEpoch))
+	appStatusHandler.SetUInt64Value(common.MetricStakeLimitsEnableEpoch, uint64(enableEpochs.StakeLimitsEnableEpoch))
+	appStatusHandler.SetUInt64Value(common.MetricStakingV4Step1EnableEpoch, uint64(enableEpochs.StakingV4Step1EnableEpoch))
+	appStatusHandler.SetUInt64Value(common.MetricStakingV4Step2EnableEpoch, uint64(enableEpochs.StakingV4Step2EnableEpoch))
+	appStatusHandler.SetUInt64Value(common.MetricStakingV4Step3EnableEpoch, uint64(enableEpochs.StakingV4Step3EnableEpoch))
+	appStatusHandler.SetUInt64Value(common.MetricCleanupAuctionOnLowWaitingListEnableEpoch, uint64(enableEpochs.CleanupAuctionOnLowWaitingListEnableEpoch))
+	appStatusHandler.SetUInt64Value(common.MetricAlwaysMergeContextsInEEIEnableEpoch, uint64(enableEpochs.AlwaysMergeContextsInEEIEnableEpoch))
+	appStatusHandler.SetUInt64Value(common.MetricDynamicESDTEnableEpoch, uint64(enableEpochs.DynamicESDTEnableEpoch))
+	appStatusHandler.SetUInt64Value(common.MetricEGLDInMultiTransferEnableEpoch, uint64(enableEpochs.EGLDInMultiTransferEnableEpoch))
+	appStatusHandler.SetUInt64Value(common.MetricCryptoOpcodesV2EnableEpoch, uint64(enableEpochs.CryptoOpcodesV2EnableEpoch))
+	appStatusHandler.SetUInt64Value(common.MetricMultiESDTNFTTransferAndExecuteByUserEnableEpoch, uint64(enableEpochs.MultiESDTNFTTransferAndExecuteByUserEnableEpoch))
+	appStatusHandler.SetUInt64Value(common.MetricFixRelayedMoveBalanceToNonPayableSCEnableEpoch, uint64(enableEpochs.FixRelayedMoveBalanceToNonPayableSCEnableEpoch))
 
 	for i, nodesChangeConfig := range enableEpochs.MaxNodesChangeEnableEpoch {
 		epochEnable := fmt.Sprintf("%s%d%s", common.MetricMaxNodesChangeEnableEpoch, i, common.EpochEnableSuffix)
@@ -138,17 +217,17 @@ func InitConfigMetrics(
 
 	appStatusHandler.SetStringValue(common.MetricHysteresis, fmt.Sprintf("%f", genesisNodesConfig.GetHysteresis()))
 	appStatusHandler.SetStringValue(common.MetricAdaptivity, fmt.Sprintf("%t", genesisNodesConfig.GetAdaptivity()))
+	appStatusHandler.SetStringValue(common.MetricGatewayMetricsEndpoint, gatewayMetricsConfig.URL)
+	appStatusHandler.SetStringValue(common.MetricTotalSupply, economicsConfig.GlobalSettings.GenesisTotalSupply)
 
 	return nil
 }
 
 // InitRatingsMetrics will init the ratings configuration metrics
-func InitRatingsMetrics(statusHandlerUtils StatusHandlersUtils, ratingsConfig config.RatingsConfig) error {
-	if check.IfNil(statusHandlerUtils) {
-		return ErrNilStatusHandlerUtils
+func InitRatingsMetrics(appStatusHandler core.AppStatusHandler, ratingsConfig config.RatingsConfig) error {
+	if check.IfNil(appStatusHandler) {
+		return ErrNilAppStatusHandler
 	}
-
-	appStatusHandler := statusHandlerUtils.StatusHandler()
 
 	appStatusHandler.SetUInt64Value(common.MetricRatingsGeneralStartRating, uint64(ratingsConfig.General.StartRating))
 	appStatusHandler.SetUInt64Value(common.MetricRatingsGeneralMaxRating, uint64(ratingsConfig.General.MaxRating))
@@ -186,7 +265,7 @@ func InitRatingsMetrics(statusHandlerUtils StatusHandlersUtils, ratingsConfig co
 
 // InitMetrics will init metrics for status handler
 func InitMetrics(
-	statusHandlerUtils StatusHandlersUtils,
+	appStatusHandler core.AppStatusHandler,
 	pubkeyStr string,
 	nodeType core.NodeType,
 	shardCoordinator sharding.Coordinator,
@@ -196,8 +275,8 @@ func InitMetrics(
 	roundsPerEpoch int64,
 	minTransactionVersion uint32,
 ) error {
-	if check.IfNil(statusHandlerUtils) {
-		return ErrNilStatusHandlerUtils
+	if check.IfNil(appStatusHandler) {
+		return ErrNilAppStatusHandler
 	}
 	if check.IfNil(shardCoordinator) {
 		return fmt.Errorf("nil shard coordinator when initializing metrics")
@@ -213,8 +292,6 @@ func InitMetrics(
 	numOfShards := uint64(shardCoordinator.NumberOfShards())
 	roundDuration := nodesConfig.GetRoundDuration()
 	isSyncing := uint64(1)
-
-	appStatusHandler := statusHandlerUtils.StatusHandler()
 
 	leaderPercentage := float64(0)
 	rewardsConfigs := make([]config.EpochRewardSettings, len(economicsConfig.RewardsSettings.RewardsConfigByEpoch))
@@ -236,8 +313,12 @@ func InitMetrics(
 	appStatusHandler.SetStringValue(common.MetricAppVersion, version)
 	appStatusHandler.SetUInt64Value(common.MetricRoundsPerEpoch, uint64(roundsPerEpoch))
 	appStatusHandler.SetStringValue(common.MetricCrossCheckBlockHeight, "0")
+	for i := uint32(0); i < shardCoordinator.NumberOfShards(); i++ {
+		key := fmt.Sprintf("%s_%d", common.MetricCrossCheckBlockHeight, i)
+		appStatusHandler.SetUInt64Value(key, 0)
+	}
+	appStatusHandler.SetUInt64Value(common.MetricCrossCheckBlockHeightMeta, 0)
 	appStatusHandler.SetUInt64Value(common.MetricIsSyncing, isSyncing)
-	// TODO: add all other rewards parameters
 	appStatusHandler.SetStringValue(common.MetricLeaderPercentage, fmt.Sprintf("%f", leaderPercentage))
 	appStatusHandler.SetUInt64Value(common.MetricDenomination, uint64(economicsConfig.GlobalSettings.Denomination))
 
@@ -268,12 +349,22 @@ func InitMetrics(
 	return nil
 }
 
-// SaveUint64Metric will save a uint64 metric in status handler
+// SaveUint64Metric will save an uint64 metric in status handler
 func SaveUint64Metric(ash core.AppStatusHandler, key string, value uint64) {
+	if check.IfNil(ash) {
+		log.Error("programming error: nil AppStatusHandler in SaveUint64Metric", "stack", string(debug.Stack()))
+		return
+	}
+
 	ash.SetUInt64Value(key, value)
 }
 
 // SaveStringMetric will save a string metric in status handler
 func SaveStringMetric(ash core.AppStatusHandler, key, value string) {
+	if check.IfNil(ash) {
+		log.Error("programming error: nil AppStatusHandler in SaveStringMetric", "stack", string(debug.Stack()))
+		return
+	}
+
 	ash.SetStringValue(key, value)
 }

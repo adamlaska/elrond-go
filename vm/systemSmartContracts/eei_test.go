@@ -6,26 +6,25 @@ import (
 	"math/big"
 	"testing"
 
-	"github.com/ElrondNetwork/elrond-go-core/core/check"
-	"github.com/ElrondNetwork/elrond-go/common"
-	"github.com/ElrondNetwork/elrond-go/process/smartContract/hooks"
-	"github.com/ElrondNetwork/elrond-go/state"
-	stateMock "github.com/ElrondNetwork/elrond-go/testscommon/state"
-	"github.com/ElrondNetwork/elrond-go/vm"
-	"github.com/ElrondNetwork/elrond-go/vm/mock"
-	vmcommon "github.com/ElrondNetwork/elrond-vm-common"
+	"github.com/multiversx/mx-chain-core-go/core"
+	"github.com/multiversx/mx-chain-core-go/core/check"
+	"github.com/multiversx/mx-chain-go/common"
+	"github.com/multiversx/mx-chain-go/state/accounts"
+	"github.com/multiversx/mx-chain-go/testscommon/enableEpochsHandlerMock"
+	stateMock "github.com/multiversx/mx-chain-go/testscommon/state"
+	"github.com/multiversx/mx-chain-go/testscommon/trie"
+	"github.com/multiversx/mx-chain-go/vm"
+	"github.com/multiversx/mx-chain-go/vm/mock"
+	vmcommon "github.com/multiversx/mx-chain-vm-common-go"
 	"github.com/stretchr/testify/assert"
 )
 
 func TestNewVMContext_NilBlockChainHook(t *testing.T) {
 	t.Parallel()
 
-	vmCtx, err := NewVMContext(
-		nil,
-		hooks.NewVMCryptoHook(),
-		&mock.ArgumentParserMock{},
-		&stateMock.AccountsStub{},
-		&mock.RaterMock{})
+	args := createDefaultEeiArgs()
+	args.BlockChainHook = nil
+	vmCtx, err := NewVMContext(args)
 
 	assert.Nil(t, vmCtx)
 	assert.Equal(t, vm.ErrNilBlockchainHook, err)
@@ -34,54 +33,94 @@ func TestNewVMContext_NilBlockChainHook(t *testing.T) {
 func TestNewVMContext_NilCryptoHook(t *testing.T) {
 	t.Parallel()
 
-	vmCtx, err := NewVMContext(
-		&mock.BlockChainHookStub{},
-		nil,
-		&mock.ArgumentParserMock{},
-		&stateMock.AccountsStub{},
-		&mock.RaterMock{})
+	args := createDefaultEeiArgs()
+	args.CryptoHook = nil
+	vmCtx, err := NewVMContext(args)
 
 	assert.Nil(t, vmCtx)
 	assert.Equal(t, vm.ErrNilCryptoHook, err)
 }
 
+func TestNewVMContext_NilInputParser(t *testing.T) {
+	t.Parallel()
+
+	args := createDefaultEeiArgs()
+	args.InputParser = nil
+	vmCtx, err := NewVMContext(args)
+
+	assert.Nil(t, vmCtx)
+	assert.Equal(t, vm.ErrNilArgumentsParser, err)
+}
+
+func TestNewVMContext_NilValidatorAccountsDB(t *testing.T) {
+	t.Parallel()
+
+	args := createDefaultEeiArgs()
+	args.ValidatorAccountsDB = nil
+	vmCtx, err := NewVMContext(args)
+
+	assert.Nil(t, vmCtx)
+	assert.Equal(t, vm.ErrNilValidatorAccountsDB, err)
+}
+
+func TestNewVMContext_NilUserAccountsDB(t *testing.T) {
+	t.Parallel()
+
+	args := createDefaultEeiArgs()
+	args.UserAccountsDB = nil
+	vmCtx, err := NewVMContext(args)
+
+	assert.Nil(t, vmCtx)
+	assert.Equal(t, vm.ErrNilUserAccountsDB, err)
+}
+
+func TestNewVMContext_NilChanceComputer(t *testing.T) {
+	t.Parallel()
+
+	args := createDefaultEeiArgs()
+	args.ChanceComputer = nil
+	vmCtx, err := NewVMContext(args)
+
+	assert.Nil(t, vmCtx)
+	assert.Equal(t, vm.ErrNilChanceComputer, err)
+}
+
+func TestNewVMContext_NilEnableEpochsHandler(t *testing.T) {
+	t.Parallel()
+
+	args := createDefaultEeiArgs()
+	args.EnableEpochsHandler = nil
+	vmCtx, err := NewVMContext(args)
+
+	assert.Nil(t, vmCtx)
+	assert.Equal(t, vm.ErrNilEnableEpochsHandler, err)
+	assert.True(t, check.IfNil(vmCtx))
+}
+
+func TestNewVMContext_InvalidEnableEpochsHandler(t *testing.T) {
+	t.Parallel()
+
+	args := createDefaultEeiArgs()
+	args.EnableEpochsHandler = enableEpochsHandlerMock.NewEnableEpochsHandlerStubWithNoFlagsDefined()
+	vmCtx, err := NewVMContext(args)
+
+	assert.Nil(t, vmCtx)
+	assert.True(t, errors.Is(err, core.ErrInvalidEnableEpochsHandler))
+}
+
 func TestNewVMContext(t *testing.T) {
 	t.Parallel()
 
-	vmCtx, err := NewVMContext(
-		&mock.BlockChainHookStub{},
-		hooks.NewVMCryptoHook(),
-		&mock.ArgumentParserMock{},
-		&stateMock.AccountsStub{},
-		&mock.RaterMock{})
-	assert.NotNil(t, vmCtx)
-	assert.Nil(t, err)
-}
-
-func TestVmContext_IsInterfaceNil(t *testing.T) {
-	t.Parallel()
-
-	vmCtx, _ := NewVMContext(
-		&mock.BlockChainHookStub{},
-		hooks.NewVMCryptoHook(),
-		&mock.ArgumentParserMock{},
-		&stateMock.AccountsStub{},
-		&mock.RaterMock{})
+	args := createDefaultEeiArgs()
+	vmCtx, err := NewVMContext(args)
 	assert.False(t, check.IfNil(vmCtx))
-
-	vmCtx = nil
-	assert.True(t, check.IfNil(vmCtx))
+	assert.Nil(t, err)
 }
 
 func TestVmContext_CleanCache(t *testing.T) {
 	t.Parallel()
 
-	vmCtx, _ := NewVMContext(
-		&mock.BlockChainHookStub{},
-		hooks.NewVMCryptoHook(),
-		&mock.ArgumentParserMock{},
-		&stateMock.AccountsStub{},
-		&mock.RaterMock{})
+	vmCtx, _ := NewVMContext(createDefaultEeiArgs())
 
 	vmCtx.CleanCache()
 
@@ -94,7 +133,8 @@ func TestVmContext_GetBalance(t *testing.T) {
 
 	addr := []byte("addr")
 	balance := big.NewInt(10)
-	account, _ := state.NewUserAccount([]byte("123"))
+
+	account, _ := accounts.NewUserAccount([]byte("123"), &trie.DataTrieTrackerStub{}, &trie.TrieLeafParserStub{})
 	_ = account.AddToBalance(balance)
 
 	blockChainHook := &mock.BlockChainHookStub{GetUserAccountCalled: func(address []byte) (a vmcommon.UserAccountHandler, e error) {
@@ -105,12 +145,9 @@ func TestVmContext_GetBalance(t *testing.T) {
 	},
 	}
 
-	vmCtx, _ := NewVMContext(
-		blockChainHook,
-		hooks.NewVMCryptoHook(),
-		&mock.ArgumentParserMock{},
-		&stateMock.AccountsStub{},
-		&mock.RaterMock{})
+	args := createDefaultEeiArgs()
+	args.BlockChainHook = blockChainHook
+	vmCtx, _ := NewVMContext(args)
 
 	res := vmCtx.GetBalance(addr)
 	assert.Equal(t, res.Uint64(), balance.Uint64())
@@ -119,12 +156,7 @@ func TestVmContext_GetBalance(t *testing.T) {
 func TestVmContext_CreateVMOutput_Empty(t *testing.T) {
 	t.Parallel()
 
-	vmCtx, _ := NewVMContext(
-		&mock.BlockChainHookStub{},
-		hooks.NewVMCryptoHook(),
-		&mock.ArgumentParserMock{},
-		&stateMock.AccountsStub{},
-		&mock.RaterMock{})
+	vmCtx, _ := NewVMContext(createDefaultEeiArgs())
 
 	vmOutput := vmCtx.CreateVMOutput()
 	assert.Equal(t, vmcommon.Ok, vmOutput.ReturnCode)
@@ -140,12 +172,7 @@ func TestVmContext_CreateVMOutput_Empty(t *testing.T) {
 func TestVmContext_SetStorage(t *testing.T) {
 	t.Parallel()
 
-	vmCtx, _ := NewVMContext(
-		&mock.BlockChainHookStub{},
-		hooks.NewVMCryptoHook(),
-		&mock.ArgumentParserMock{},
-		&stateMock.AccountsStub{},
-		&mock.RaterMock{})
+	vmCtx, _ := NewVMContext(createDefaultEeiArgs())
 
 	addr := "smartcontract"
 	vmCtx.SetSCAddress([]byte(addr))
@@ -166,21 +193,14 @@ func TestVmContext_SetStorage(t *testing.T) {
 func TestVmContext_Transfer(t *testing.T) {
 	t.Parallel()
 
-	vmCtx, _ := NewVMContext(
-		&mock.BlockChainHookStub{},
-		hooks.NewVMCryptoHook(),
-		&mock.ArgumentParserMock{},
-		&stateMock.AccountsStub{},
-		&mock.RaterMock{})
+	vmCtx, _ := NewVMContext(createDefaultEeiArgs())
 
 	destination := []byte("dest")
 	sender := []byte("sender")
 	value := big.NewInt(999)
 	input := []byte("input")
 
-	err := vmCtx.Transfer(destination, sender, value, input, 0)
-	assert.Nil(t, err)
-
+	vmCtx.Transfer(destination, sender, value, input, 0)
 	balance := vmCtx.GetBalance(destination)
 	assert.Equal(t, value.Uint64(), balance.Uint64())
 
@@ -194,16 +214,13 @@ func TestVmContext_Transfer(t *testing.T) {
 func TestVmContext_IsValidatorNonexistentAccountShouldRetFalse(t *testing.T) {
 	t.Parallel()
 
-	vmCtx, _ := NewVMContext(
-		&mock.BlockChainHookStub{},
-		hooks.NewVMCryptoHook(),
-		&mock.ArgumentParserMock{},
-		&stateMock.AccountsStub{
-			GetExistingAccountCalled: func(address []byte) (vmcommon.AccountHandler, error) {
-				return nil, errors.New("not found")
-			},
+	args := createDefaultEeiArgs()
+	args.ValidatorAccountsDB = &stateMock.AccountsStub{
+		GetExistingAccountCalled: func(address []byte) (vmcommon.AccountHandler, error) {
+			return nil, errors.New("not found")
 		},
-		&mock.RaterMock{})
+	}
+	vmCtx, _ := NewVMContext(args)
 
 	assert.False(t, vmCtx.IsValidator([]byte("bls key")))
 }
@@ -211,16 +228,13 @@ func TestVmContext_IsValidatorNonexistentAccountShouldRetFalse(t *testing.T) {
 func TestVmContext_IsValidatorInvalidAccountTypeShouldRetFalse(t *testing.T) {
 	t.Parallel()
 
-	vmCtx, _ := NewVMContext(
-		&mock.BlockChainHookStub{},
-		hooks.NewVMCryptoHook(),
-		&mock.ArgumentParserMock{},
-		&stateMock.AccountsStub{
-			GetExistingAccountCalled: func(address []byte) (vmcommon.AccountHandler, error) {
-				return state.NewEmptyUserAccount(), nil
-			},
+	args := createDefaultEeiArgs()
+	args.ValidatorAccountsDB = &stateMock.AccountsStub{
+		GetExistingAccountCalled: func(address []byte) (vmcommon.AccountHandler, error) {
+			return &stateMock.AccountWrapMock{}, nil
 		},
-		&mock.RaterMock{})
+	}
+	vmCtx, _ := NewVMContext(args)
 
 	assert.False(t, vmCtx.IsValidator([]byte("bls key")))
 }
@@ -258,21 +272,18 @@ func TestVmContext_IsValidator(t *testing.T) {
 
 	for _, tio := range testData {
 		blsKey := []byte("bls key")
-		vmCtx, _ := NewVMContext(
-			&mock.BlockChainHookStub{},
-			hooks.NewVMCryptoHook(),
-			&mock.ArgumentParserMock{},
-			&stateMock.AccountsStub{
-				GetExistingAccountCalled: func(address []byte) (vmcommon.AccountHandler, error) {
-					assert.Equal(t, blsKey, address)
+		args := createDefaultEeiArgs()
+		args.ValidatorAccountsDB = &stateMock.AccountsStub{
+			GetExistingAccountCalled: func(address []byte) (vmcommon.AccountHandler, error) {
+				assert.Equal(t, blsKey, address)
 
-					acnt := state.NewEmptyPeerAccount()
-					acnt.List = string(tio.peerType)
+				acnt, _ := accounts.NewPeerAccount(address)
+				acnt.List = string(tio.peerType)
 
-					return acnt, nil
-				},
+				return acnt, nil
 			},
-			&mock.RaterMock{})
+		}
+		vmCtx, _ := NewVMContext(args)
 
 		assert.Equal(t, tio.expectedResult, vmCtx.IsValidator(blsKey))
 	}
@@ -281,16 +292,135 @@ func TestVmContext_IsValidator(t *testing.T) {
 func TestVmContext_CleanStorage(t *testing.T) {
 	t.Parallel()
 
-	vmCtx, _ := NewVMContext(
-		&mock.BlockChainHookStub{},
-		hooks.NewVMCryptoHook(),
-		&mock.ArgumentParserMock{},
-		&stateMock.AccountsStub{},
-		&mock.RaterMock{})
+	vmCtx, _ := NewVMContext(createDefaultEeiArgs())
 
 	vmCtx.CleanCache()
 	vmCtx.storageUpdate["address"] = make(map[string][]byte)
 	vmCtx.storageUpdate["address"]["key"] = []byte("someData")
 	vmCtx.CleanStorageUpdates()
 	assert.Equal(t, 0, len(vmCtx.storageUpdate))
+}
+
+func TestVmContext_SetOwnerOperatingOnAccount(t *testing.T) {
+	t.Parallel()
+
+	scAddress := []byte("sc-address-01234")
+	ownerAddress := []byte("owner-address-01")
+	expectedErr := errors.New("expected error")
+
+	t.Run("load account errors, should error", func(t *testing.T) {
+		t.Parallel()
+
+		args := createDefaultEeiArgs()
+		args.UserAccountsDB = &stateMock.AccountsStub{
+			LoadAccountCalled: func(address []byte) (vmcommon.AccountHandler, error) {
+				if bytes.Equal(address, scAddress) {
+					return nil, expectedErr
+				}
+
+				return nil, nil
+			},
+		}
+		vmCtx, _ := NewVMContext(args)
+		vmCtx.SetSCAddress(scAddress)
+		err := vmCtx.SetOwnerOperatingOnAccount(ownerAddress)
+		assert.Equal(t, expectedErr, err)
+	})
+	t.Run("wrong type assertion, should error", func(t *testing.T) {
+		t.Parallel()
+
+		args := createDefaultEeiArgs()
+		args.UserAccountsDB = &stateMock.AccountsStub{
+			LoadAccountCalled: func(address []byte) (vmcommon.AccountHandler, error) {
+				if bytes.Equal(address, scAddress) {
+					return &stateMock.BaseAccountMock{}, nil
+				}
+
+				return nil, nil
+			},
+		}
+		vmCtx, _ := NewVMContext(args)
+		vmCtx.SetSCAddress(scAddress)
+		err := vmCtx.SetOwnerOperatingOnAccount(ownerAddress)
+		assert.ErrorIs(t, err, vm.ErrWrongTypeAssertion)
+	})
+	t.Run("wrong size for the owner, should error", func(t *testing.T) {
+		t.Parallel()
+
+		args := createDefaultEeiArgs()
+		args.UserAccountsDB = &stateMock.AccountsStub{
+			LoadAccountCalled: func(address []byte) (vmcommon.AccountHandler, error) {
+				if bytes.Equal(address, scAddress) {
+					return &stateMock.AccountWrapMock{}, nil
+				}
+
+				return nil, nil
+			},
+		}
+		vmCtx, _ := NewVMContext(args)
+		vmCtx.SetSCAddress(scAddress)
+		err := vmCtx.SetOwnerOperatingOnAccount([]byte("wrong size"))
+		assert.ErrorIs(t, err, vm.ErrWrongNewOwnerAddress)
+	})
+	t.Run("should work", func(t *testing.T) {
+		t.Parallel()
+
+		args := createDefaultEeiArgs()
+		account := &stateMock.AccountWrapMock{}
+		saveWasCalled := false
+		args.UserAccountsDB = &stateMock.AccountsStub{
+			LoadAccountCalled: func(address []byte) (vmcommon.AccountHandler, error) {
+				if bytes.Equal(address, scAddress) {
+					return account, nil
+				}
+
+				return nil, nil
+			},
+			SaveAccountCalled: func(saveAccount vmcommon.AccountHandler) error {
+				if account == saveAccount { // pointer testing
+					saveWasCalled = true
+				}
+
+				return nil
+			},
+		}
+		vmCtx, _ := NewVMContext(args)
+		vmCtx.SetSCAddress(scAddress)
+		err := vmCtx.SetOwnerOperatingOnAccount(ownerAddress)
+		assert.Nil(t, err)
+		assert.Equal(t, ownerAddress, account.Owner)
+		assert.True(t, saveWasCalled)
+	})
+}
+
+func TestVmContext_UpdateCodeDeployerAddress(t *testing.T) {
+	t.Parallel()
+
+	scAddress := "sc-address-01234"
+	ownerAddress := []byte("owner-address-01")
+
+	t.Run("programming error: account is missing, should error", func(t *testing.T) {
+		t.Parallel()
+
+		args := createDefaultEeiArgs()
+		vmCtx, _ := NewVMContext(args)
+
+		err := vmCtx.UpdateCodeDeployerAddress(scAddress, ownerAddress)
+		assert.Equal(t, vm.ErrInternalErrorWhileSettingNewOwner, err)
+	})
+	t.Run("account exists, should update", func(t *testing.T) {
+		t.Parallel()
+
+		args := createDefaultEeiArgs()
+		vmCtx, _ := NewVMContext(args)
+
+		account := &vmcommon.OutputAccount{
+			CodeDeployerAddress: []byte("deployer"),
+		}
+		vmCtx.outputAccounts[scAddress] = account
+
+		err := vmCtx.UpdateCodeDeployerAddress(scAddress, ownerAddress)
+		assert.Nil(t, err)
+		assert.Equal(t, ownerAddress, vmCtx.outputAccounts[scAddress].CodeDeployerAddress)
+	})
 }

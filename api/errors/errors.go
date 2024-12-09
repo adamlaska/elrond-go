@@ -19,17 +19,20 @@ var ErrGetBalance = errors.New("get balance error")
 // ErrGetUsername signals an error in getting the username for an account
 var ErrGetUsername = errors.New("get username error")
 
+// ErrGetCodeHash signals an error in getting the code hash for an account
+var ErrGetCodeHash = errors.New("get code hash error")
+
 // ErrGetValueForKey signals an error in getting the value of a key for an account
 var ErrGetValueForKey = errors.New("get value for key error")
 
 // ErrGetKeyValuePairs signals an error in getting the key-value pairs of a key for an account
 var ErrGetKeyValuePairs = errors.New("get key-value pairs error")
 
-// ErrGetESDTTokens signals an error in getting esdt tokens for a given address
-var ErrGetESDTTokens = errors.New("get esdt tokens for account error")
-
 // ErrGetESDTBalance signals an error in getting esdt balance for given address
 var ErrGetESDTBalance = errors.New("get esdt balance for account error")
+
+// ErrGetGuardianData signals an error in getting the guardian data for given address
+var ErrGetGuardianData = errors.New("get guardian data for account error")
 
 // ErrGetRolesForAccount signals an error in getting esdt tokens and roles for a given address
 var ErrGetRolesForAccount = errors.New("get roles for account error")
@@ -40,7 +43,7 @@ var ErrGetESDTNFTData = errors.New("get esdt nft data for account error")
 // ErrEmptyAddress signals that an empty address was provided
 var ErrEmptyAddress = errors.New("address is empty")
 
-// ErrEmptyKey signals an that empty key was provided
+// ErrEmptyKey signals that an empty key was provided
 var ErrEmptyKey = errors.New("key is empty")
 
 // ErrEmptyTokenIdentifier signals that an empty token identifier was provided
@@ -61,6 +64,9 @@ var ErrTxGenerationFailed = errors.New("transaction generation failed")
 // ErrValidationEmptyTxHash signals that an empty tx hash was provided
 var ErrValidationEmptyTxHash = errors.New("TxHash is empty")
 
+// ErrValidationEmptySCRHash signals that provided smart contract result hash is empty
+var ErrValidationEmptySCRHash = errors.New("SCRHash is empty")
+
 // ErrInvalidBlockNonce signals that an invalid block nonce was provided
 var ErrInvalidBlockNonce = errors.New("invalid block nonce")
 
@@ -70,26 +76,32 @@ var ErrInvalidBlockRound = errors.New("invalid block round")
 // ErrInvalidEpoch signals that an invalid epoch parameter was provided
 var ErrInvalidEpoch = errors.New("invalid epoch parameter")
 
-// ErrInvalidQueryParameter signals and invalid query parameter was provided
-var ErrInvalidQueryParameter = errors.New("invalid query parameter")
-
 // ErrValidationEmptyBlockHash signals an empty block hash was provided
 var ErrValidationEmptyBlockHash = errors.New("block hash is empty")
-
-// ErrValidationEmptyToken signals that an empty token was provided
-var ErrValidationEmptyToken = errors.New("token is empty")
 
 // ErrGetTransaction signals an error happening when trying to fetch a transaction
 var ErrGetTransaction = errors.New("getting transaction failed")
 
+// ErrGetSmartContractResults signals an error happening when trying to fetch smart contract results
+var ErrGetSmartContractResults = errors.New("getting smart contract results failed")
+
 // ErrGetBlock signals an error happening when trying to fetch a block
 var ErrGetBlock = errors.New("getting block failed")
+
+// ErrGetValidatorsInfo signals an error happening when trying to fetch validators info
+var ErrGetValidatorsInfo = errors.New("validators info failed")
+
+// ErrGetAlteredAccountsForBlock signals an error happening when trying to fetch the altered accounts for a block
+var ErrGetAlteredAccountsForBlock = errors.New("getting altered accounts for block failed")
 
 // ErrQueryError signals a general query error
 var ErrQueryError = errors.New("query error")
 
 // ErrGetPidInfo signals that an error occurred while getting peer ID info
 var ErrGetPidInfo = errors.New("error getting peer id info")
+
+// ErrGetEpochStartData signals that an error occurred while getting the epoch start data for a provided epoch
+var ErrGetEpochStartData = errors.New("error getting epoch start data for epoch")
 
 // ErrTooManyRequests signals that too many requests were simultaneously received
 var ErrTooManyRequests = errors.New("too many requests")
@@ -121,5 +133,53 @@ var ErrNilFacadeHandler = errors.New("nil facade handler")
 // ErrFacadeWrongTypeAssertion signals that a type conversion to a facade type failed
 var ErrFacadeWrongTypeAssertion = errors.New("facade - wrong type assertion")
 
-// ErrGetGenesisNodes signals that an error happened when trying to feth genesis nodes config
+// ErrGetGenesisNodes signals that an error occurred while trying to fetch genesis nodes config
 var ErrGetGenesisNodes = errors.New("getting genesis nodes failed")
+
+// ErrGetGenesisBalances signals that an error happened when trying to fetch genesis balances config
+var ErrGetGenesisBalances = errors.New("getting genesis balances failed")
+
+// ErrBadUrlParams signals one or more incorrectly provided URL params (generic error)
+var ErrBadUrlParams = errors.New("bad url parameter(s)")
+
+// ErrGetGasConfigs signals that an error occurred while trying to fetch gas configs
+var ErrGetGasConfigs = errors.New("getting gas configs failed")
+
+// ErrEmptySenderToGetLatestNonce signals that an error happened when trying to fetch latest nonce
+var ErrEmptySenderToGetLatestNonce = errors.New("empty sender to get latest nonce")
+
+// ErrEmptySenderToGetNonceGaps signals that an error happened when trying to fetch nonce gaps
+var ErrEmptySenderToGetNonceGaps = errors.New("empty sender to get nonce gaps")
+
+// ErrFetchingLatestNonceCannotIncludeFields signals that an error happened when trying to fetch latest nonce
+var ErrFetchingLatestNonceCannotIncludeFields = errors.New("fetching latest nonce cannot include fields")
+
+// ErrFetchingNonceGapsCannotIncludeFields signals that an error happened when trying to fetch nonce gaps
+var ErrFetchingNonceGapsCannotIncludeFields = errors.New("fetching nonce gaps cannot include fields")
+
+// ErrInvalidFields signals that invalid fields were provided
+var ErrInvalidFields = errors.New("invalid fields")
+
+// ErrGetESDTTokensWithRole signals an error in getting the esdt tokens with the given role for given address
+var ErrGetESDTTokensWithRole = errors.New("getting esdt tokens with role error")
+
+// ErrRegisteredNFTTokenIDs signals an error in getting the registered nft token ids by the given address
+var ErrRegisteredNFTTokenIDs = errors.New("getting registered nft token ids error")
+
+// ErrInvalidRole signals that an invalid role was provided
+var ErrInvalidRole = errors.New("invalid role")
+
+// ErrIsDataTrieMigrated signals that an error occurred while trying to verify the migration status of the data trie
+var ErrIsDataTrieMigrated = errors.New("could not verify the migration status of the data trie")
+
+// ErrGetEligibleManagedKeys signals that an error occurred while getting the eligible managed keys
+var ErrGetEligibleManagedKeys = errors.New("error getting the eligible managed keys")
+
+// ErrGetWaitingManagedKeys signals that an error occurred while getting the waiting managed keys
+var ErrGetWaitingManagedKeys = errors.New("error getting the waiting managed keys")
+
+// ErrGetWaitingEpochsLeftForPublicKey signals that an error occurred while getting the waiting epochs left for public key
+var ErrGetWaitingEpochsLeftForPublicKey = errors.New("error getting the waiting epochs left for public key")
+
+// ErrRecursiveRelayedTxIsNotAllowed signals that recursive relayed tx is not allowed
+var ErrRecursiveRelayedTxIsNotAllowed = errors.New("recursive relayed tx is not allowed")

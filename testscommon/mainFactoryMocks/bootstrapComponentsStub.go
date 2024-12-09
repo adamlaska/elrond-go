@@ -1,23 +1,26 @@
 package mainFactoryMocks
 
 import (
-	"github.com/ElrondNetwork/elrond-go-core/core"
-	nodeFactory "github.com/ElrondNetwork/elrond-go/cmd/node/factory"
-	"github.com/ElrondNetwork/elrond-go/factory"
-	"github.com/ElrondNetwork/elrond-go/process"
-	"github.com/ElrondNetwork/elrond-go/sharding"
+	"github.com/multiversx/mx-chain-core-go/core"
+	nodeFactory "github.com/multiversx/mx-chain-go/cmd/node/factory"
+	"github.com/multiversx/mx-chain-go/factory"
+	"github.com/multiversx/mx-chain-go/process"
+	"github.com/multiversx/mx-chain-go/sharding"
+	"github.com/multiversx/mx-chain-go/sharding/nodesCoordinator"
 )
 
 // BootstrapComponentsStub -
 type BootstrapComponentsStub struct {
-	Bootstrapper                factory.EpochStartBootstrapper
-	BootstrapParams             factory.BootstrapParamsHolder
-	NodeRole                    core.NodeType
-	ShCoordinator               sharding.Coordinator
-	HdrVersionHandler           nodeFactory.HeaderVersionHandler
-	VersionedHdrFactory         nodeFactory.VersionedHeaderFactory
-	HdrIntegrityVerifier        nodeFactory.HeaderIntegrityVerifierHandler
-	RoundActivationHandlerField process.RoundActivationHandler
+	Bootstrapper                         factory.EpochStartBootstrapper
+	BootstrapParams                      factory.BootstrapParamsHolder
+	NodeRole                             core.NodeType
+	ShCoordinator                        sharding.Coordinator
+	ShardCoordinatorCalled               func() sharding.Coordinator
+	HdrVersionHandler                    nodeFactory.HeaderVersionHandler
+	VersionedHdrFactory                  nodeFactory.VersionedHeaderFactory
+	HdrIntegrityVerifier                 nodeFactory.HeaderIntegrityVerifierHandler
+	GuardedAccountHandlerField           process.GuardedAccountHandler
+	NodesCoordinatorRegistryFactoryField nodesCoordinator.NodesCoordinatorRegistryFactory
 }
 
 // Create -
@@ -52,6 +55,9 @@ func (bcs *BootstrapComponentsStub) NodeType() core.NodeType {
 
 // ShardCoordinator -
 func (bcs *BootstrapComponentsStub) ShardCoordinator() sharding.Coordinator {
+	if bcs.ShardCoordinatorCalled != nil {
+		return bcs.ShardCoordinatorCalled()
+	}
 	return bcs.ShCoordinator
 }
 
@@ -61,8 +67,8 @@ func (bcs *BootstrapComponentsStub) HeaderVersionHandler() nodeFactory.HeaderVer
 }
 
 // VersionedHeaderFactory -
-func (bc *BootstrapComponentsStub) VersionedHeaderFactory() nodeFactory.VersionedHeaderFactory {
-	return bc.VersionedHdrFactory
+func (bcs *BootstrapComponentsStub) VersionedHeaderFactory() nodeFactory.VersionedHeaderFactory {
+	return bcs.VersionedHdrFactory
 }
 
 // HeaderIntegrityVerifier -
@@ -70,9 +76,20 @@ func (bcs *BootstrapComponentsStub) HeaderIntegrityVerifier() nodeFactory.Header
 	return bcs.HdrIntegrityVerifier
 }
 
-// RoundActivationHandler -
-func (bcs *BootstrapComponentsStub) RoundActivationHandler() process.RoundActivationHandler {
-	return bcs.RoundActivationHandlerField
+// SetShardCoordinator -
+func (bcs *BootstrapComponentsStub) SetShardCoordinator(shardCoordinator sharding.Coordinator) error {
+	bcs.ShCoordinator = shardCoordinator
+	return nil
+}
+
+// GuardedAccountHandler -
+func (bcs *BootstrapComponentsStub) GuardedAccountHandler() process.GuardedAccountHandler {
+	return bcs.GuardedAccountHandlerField
+}
+
+// NodesCoordinatorRegistryFactory -
+func (bcs *BootstrapComponentsStub) NodesCoordinatorRegistryFactory() nodesCoordinator.NodesCoordinatorRegistryFactory {
+	return bcs.NodesCoordinatorRegistryFactoryField
 }
 
 // String -

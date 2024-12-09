@@ -3,25 +3,24 @@ package spos
 import (
 	"testing"
 
-	"github.com/ElrondNetwork/elrond-go/consensus/mock"
-	"github.com/ElrondNetwork/elrond-go/testscommon"
-	"github.com/ElrondNetwork/elrond-go/testscommon/cryptoMocks"
-	"github.com/ElrondNetwork/elrond-go/testscommon/hashingMocks"
-	"github.com/ElrondNetwork/elrond-go/testscommon/shardingMocks"
+	"github.com/multiversx/mx-chain-go/consensus/mock"
+	"github.com/multiversx/mx-chain-go/testscommon"
+	consensusMocks "github.com/multiversx/mx-chain-go/testscommon/consensus"
+	"github.com/multiversx/mx-chain-go/testscommon/cryptoMocks"
+	"github.com/multiversx/mx-chain-go/testscommon/hashingMocks"
+	"github.com/multiversx/mx-chain-go/testscommon/shardingMocks"
 	"github.com/stretchr/testify/assert"
 )
 
 func initConsensusDataContainer() *ConsensusCore {
+	marshalizerMock := mock.MarshalizerMock{}
 	blockChain := &testscommon.ChainHandlerStub{}
-	blockProcessorMock := mock.InitBlockProcessorMock()
+	blockProcessorMock := mock.InitBlockProcessorMock(marshalizerMock)
 	bootstrapperMock := &mock.BootstrapperStub{}
 	broadcastMessengerMock := &mock.BroadcastMessengerMock{}
 	chronologyHandlerMock := mock.InitChronologyHandlerMock()
-	blsPrivateKeyMock := &mock.PrivateKeyMock{}
-	blsSingleSignerMock := &mock.SingleSignerMock{}
-	multiSignerMock := cryptoMocks.NewMultiSigner(21)
+	multiSignerMock := cryptoMocks.NewMultiSigner()
 	hasherMock := &hashingMocks.HasherMock{}
-	marshalizerMock := mock.MarshalizerMock{}
 	roundHandlerMock := &mock.RoundHandlerMock{}
 	shardCoordinatorMock := mock.ShardCoordinatorMock{}
 	syncTimerMock := &mock.SyncTimerMock{}
@@ -31,6 +30,11 @@ func initConsensusDataContainer() *ConsensusCore {
 	headerSigVerifier := &mock.HeaderSigVerifierStub{}
 	fallbackHeaderValidator := &testscommon.FallBackHeaderValidatorStub{}
 	nodeRedundancyHandler := &mock.NodeRedundancyHandlerStub{}
+	scheduledProcessor := &consensusMocks.ScheduledProcessorStub{}
+	messageSigningHandler := &mock.MessageSigningHandlerStub{}
+	peerBlacklistHandler := &mock.PeerBlacklistHandlerStub{}
+	multiSignerContainer := cryptoMocks.NewMultiSignerContainerMock(multiSignerMock)
+	signingHandler := &consensusMocks.SigningHandlerStub{}
 
 	return &ConsensusCore{
 		blockChain:              blockChain,
@@ -40,9 +44,7 @@ func initConsensusDataContainer() *ConsensusCore {
 		chronologyHandler:       chronologyHandlerMock,
 		hasher:                  hasherMock,
 		marshalizer:             marshalizerMock,
-		blsPrivateKey:           blsPrivateKeyMock,
-		blsSingleSigner:         blsSingleSignerMock,
-		multiSigner:             multiSignerMock,
+		multiSignerContainer:    multiSignerContainer,
 		roundHandler:            roundHandlerMock,
 		shardCoordinator:        shardCoordinatorMock,
 		syncTimer:               syncTimerMock,
@@ -52,6 +54,10 @@ func initConsensusDataContainer() *ConsensusCore {
 		headerSigVerifier:       headerSigVerifier,
 		fallbackHeaderValidator: fallbackHeaderValidator,
 		nodeRedundancyHandler:   nodeRedundancyHandler,
+		scheduledProcessor:      scheduledProcessor,
+		messageSigningHandler:   messageSigningHandler,
+		peerBlacklistHandler:    peerBlacklistHandler,
+		signingHandler:          signingHandler,
 	}
 }
 
@@ -121,11 +127,22 @@ func TestConsensusContainerValidator_ValidateNilMarshalizerShouldFail(t *testing
 	assert.Equal(t, ErrNilMarshalizer, err)
 }
 
+func TestConsensusContainerValidator_ValidateNilMultiSignerContainerShouldFail(t *testing.T) {
+	t.Parallel()
+
+	container := initConsensusDataContainer()
+	container.multiSignerContainer = nil
+
+	err := ValidateConsensusCore(container)
+
+	assert.Equal(t, ErrNilMultiSignerContainer, err)
+}
+
 func TestConsensusContainerValidator_ValidateNilMultiSignerShouldFail(t *testing.T) {
 	t.Parallel()
 
 	container := initConsensusDataContainer()
-	container.multiSigner = nil
+	container.multiSignerContainer = cryptoMocks.NewMultiSignerContainerMock(nil)
 
 	err := ValidateConsensusCore(container)
 
@@ -229,6 +246,17 @@ func TestConsensusContainerValidator_ValidateNilNodeRedundancyHandlerShouldFail(
 	err := ValidateConsensusCore(container)
 
 	assert.Equal(t, ErrNilNodeRedundancyHandler, err)
+}
+
+func TestConsensusContainerValidator_ValidateNilSignatureHandlerShouldFail(t *testing.T) {
+	t.Parallel()
+
+	container := initConsensusDataContainer()
+	container.signingHandler = nil
+
+	err := ValidateConsensusCore(container)
+
+	assert.Equal(t, ErrNilSigningHandler, err)
 }
 
 func TestConsensusContainerValidator_ShouldWork(t *testing.T) {

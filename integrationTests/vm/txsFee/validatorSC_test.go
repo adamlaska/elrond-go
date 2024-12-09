@@ -6,19 +6,19 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ElrondNetwork/elrond-go-core/core"
-	"github.com/ElrondNetwork/elrond-go-core/data/block"
-	"github.com/ElrondNetwork/elrond-go-core/data/smartContractResult"
-	"github.com/ElrondNetwork/elrond-go-core/data/transaction"
-	"github.com/ElrondNetwork/elrond-go-core/marshal"
-	"github.com/ElrondNetwork/elrond-go/config"
-	"github.com/ElrondNetwork/elrond-go/integrationTests/vm"
-	"github.com/ElrondNetwork/elrond-go/integrationTests/vm/txsFee/utils"
-	"github.com/ElrondNetwork/elrond-go/process/smartContract/hooks"
-	"github.com/ElrondNetwork/elrond-go/state"
-	vmAddr "github.com/ElrondNetwork/elrond-go/vm"
-	"github.com/ElrondNetwork/elrond-go/vm/systemSmartContracts"
-	vmcommon "github.com/ElrondNetwork/elrond-vm-common"
+	"github.com/multiversx/mx-chain-core-go/core"
+	"github.com/multiversx/mx-chain-core-go/data/block"
+	"github.com/multiversx/mx-chain-core-go/data/smartContractResult"
+	"github.com/multiversx/mx-chain-core-go/data/transaction"
+	"github.com/multiversx/mx-chain-go/config"
+	"github.com/multiversx/mx-chain-go/integrationTests/vm"
+	"github.com/multiversx/mx-chain-go/integrationTests/vm/txsFee/utils"
+	"github.com/multiversx/mx-chain-go/process/smartContract/hooks"
+	"github.com/multiversx/mx-chain-go/state"
+	"github.com/multiversx/mx-chain-go/testscommon/stakingcommon"
+	vmAddr "github.com/multiversx/mx-chain-go/vm"
+	"github.com/multiversx/mx-chain-go/vm/systemSmartContracts"
+	vmcommon "github.com/multiversx/mx-chain-vm-common-go"
 	"github.com/stretchr/testify/require"
 )
 
@@ -28,6 +28,9 @@ const (
 	validatorStakeData        = "stake@01@" + validatorBLSKey + "@0b823739887c40e9331f70c5a140623dfaf4558a9138b62f4473b26bbafdd4f58cb5889716a71c561c9e20e7a280e985@b2a11555ce521e4944e09ab17549d85b487dcd26c84b5017a39e31a3670889ba"
 	cannotUnBondTokensMessage = "cannot unBond tokens, the validator would remain without min deposit, nodes are still active"
 	noTokensToUnBondMessage   = "no tokens that can be unbond at this time"
+	delegationManagementKey   = "delegationManagement"
+	stakingV4Step1EnableEpoch = 4443
+	stakingV4Step2EnableEpoch = 4444
 )
 
 var (
@@ -36,29 +39,30 @@ var (
 	value200EGLD, _  = big.NewInt(0).SetString("200000000000000000000", 10)
 )
 
-const delegationManagementKey = "delegationManagement"
-
 func saveDelegationManagerConfig(testContext *vm.VMTestContext) {
 	acc, _ := testContext.Accounts.LoadAccount(vmAddr.DelegationManagerSCAddress)
 	userAcc, _ := acc.(state.UserAccountHandler)
 
 	managementData := &systemSmartContracts.DelegationManagement{MinDelegationAmount: big.NewInt(1)}
 	marshaledData, _ := testContext.Marshalizer.Marshal(managementData)
-	_ = userAcc.DataTrieTracker().SaveKeyValue([]byte(delegationManagementKey), marshaledData)
+	_ = userAcc.SaveKeyValue([]byte(delegationManagementKey), marshaledData)
 	_ = testContext.Accounts.SaveAccount(userAcc)
 }
 
 func TestValidatorsSC_DoStakePutInQueueUnStakeAndUnBondShouldRefund(t *testing.T) {
-	testContextMeta, err := vm.CreatePreparedTxProcessorWithVMsMultiShard(core.MetachainShardId, config.EnableEpochs{})
+	if testing.Short() {
+		t.Skip("this is not a short test")
+	}
+
+	testContextMeta, err := vm.CreatePreparedTxProcessorWithVMsMultiShard(core.MetachainShardId, config.EnableEpochs{}, 1)
 
 	require.Nil(t, err)
 	defer testContextMeta.Close()
 
-	saveNodesConfig(t, testContextMeta, 1, 1, 1)
+	stakingcommon.SaveNodesConfig(testContextMeta.Accounts, testContextMeta.Marshalizer, 1, 1, 1)
 	testContextMeta.BlockchainHook.(*hooks.BlockChainHookImpl).SetCurrentHeader(&block.MetaBlock{Epoch: 1})
 	saveDelegationManagerConfig(testContextMeta)
 
-	gasPrice := uint64(10)
 	gasLimit := uint64(4000)
 	sndAddr := []byte("12345678901234567890123456789012")
 	tx := vm.CreateTransaction(0, value2500EGLD, sndAddr, vmAddr.ValidatorSCAddress, gasPrice, gasLimit, []byte(validatorStakeData))
@@ -80,7 +84,7 @@ func TestValidatorsSC_DoStakePutInQueueUnStakeAndUnBondShouldRefund(t *testing.T
 	intermediateTxs = testContextMeta.GetIntermediateTransactions(t)
 	require.Equal(t, 2, len(intermediateTxs))
 
-	scr := intermediateTxs[1].(*smartContractResult.SmartContractResult)
+	scr := intermediateTxs[0].(*smartContractResult.SmartContractResult)
 	require.Equal(t, value2500EGLD, scr.Value)
 }
 
@@ -94,8 +98,8 @@ func checkReturnLog(t *testing.T, testContextMeta *vm.VMTestContext, subStr stri
 	}
 
 	found := false
-	for _, log := range allLogs {
-		for _, event := range log.GetLogEvents() {
+	for _, eventLog := range allLogs {
+		for _, event := range eventLog.GetLogEvents() {
 			if string(event.GetIdentifier()) == identifierStr {
 				require.True(t, strings.Contains(string(event.GetTopics()[1]), subStr))
 				found = true
@@ -106,16 +110,26 @@ func checkReturnLog(t *testing.T, testContextMeta *vm.VMTestContext, subStr stri
 }
 
 func TestValidatorsSC_DoStakePutInQueueUnStakeAndUnBondTokensShouldRefund(t *testing.T) {
-	testContextMeta, err := vm.CreatePreparedTxProcessorWithVMsMultiShard(core.MetachainShardId, config.EnableEpochs{})
+	if testing.Short() {
+		t.Skip("this is not a short test")
+	}
+
+	testContextMeta, err := vm.CreatePreparedTxProcessorWithVMsMultiShard(
+		core.MetachainShardId,
+		config.EnableEpochs{
+			StakingV4Step1EnableEpoch: stakingV4Step1EnableEpoch,
+			StakingV4Step2EnableEpoch: stakingV4Step2EnableEpoch,
+		},
+		1,
+	)
 
 	require.Nil(t, err)
 	defer testContextMeta.Close()
 
-	saveNodesConfig(t, testContextMeta, 1, 1, 1)
+	stakingcommon.SaveNodesConfig(testContextMeta.Accounts, testContextMeta.Marshalizer, 1, 1, 1)
 	saveDelegationManagerConfig(testContextMeta)
 	testContextMeta.BlockchainHook.(*hooks.BlockChainHookImpl).SetCurrentHeader(&block.MetaBlock{Epoch: 1})
 
-	gasPrice := uint64(10)
 	gasLimit := uint64(4000)
 	sndAddr := []byte("12345678901234567890123456789012")
 	tx := vm.CreateTransaction(0, value2500EGLD, sndAddr, vmAddr.ValidatorSCAddress, gasPrice, gasLimit, []byte(validatorStakeData))
@@ -137,28 +151,35 @@ func TestValidatorsSC_DoStakePutInQueueUnStakeAndUnBondTokensShouldRefund(t *tes
 }
 
 func TestValidatorsSC_DoStakeWithTopUpValueTryToUnStakeTokensAndUnBondTokens(t *testing.T) {
+	if testing.Short() {
+		t.Skip("this is not a short test")
+	}
+
 	argUnbondTokensV1 := config.EnableEpochs{
 		UnbondTokensV2EnableEpoch: 20000,
+		StakingV4Step1EnableEpoch: stakingV4Step1EnableEpoch,
+		StakingV4Step2EnableEpoch: stakingV4Step2EnableEpoch,
 	}
 	testValidatorsSCDoStakeWithTopUpValueTryToUnStakeTokensAndUnBondTokens(t, argUnbondTokensV1)
 
 	argUnbondTokensV2 := config.EnableEpochs{
 		UnbondTokensV2EnableEpoch: 0,
+		StakingV4Step1EnableEpoch: stakingV4Step1EnableEpoch,
+		StakingV4Step2EnableEpoch: stakingV4Step2EnableEpoch,
 	}
 	testValidatorsSCDoStakeWithTopUpValueTryToUnStakeTokensAndUnBondTokens(t, argUnbondTokensV2)
 }
 
 func testValidatorsSCDoStakeWithTopUpValueTryToUnStakeTokensAndUnBondTokens(t *testing.T, enableEpochs config.EnableEpochs) {
-	testContextMeta, err := vm.CreatePreparedTxProcessorWithVMsMultiShard(core.MetachainShardId, enableEpochs)
+	testContextMeta, err := vm.CreatePreparedTxProcessorWithVMsMultiShard(core.MetachainShardId, enableEpochs, 1)
 
 	require.Nil(t, err)
 	defer testContextMeta.Close()
 
-	saveNodesConfig(t, testContextMeta, 1, 1, 1)
+	stakingcommon.SaveNodesConfig(testContextMeta.Accounts, testContextMeta.Marshalizer, 1, 1, 1)
 	saveDelegationManagerConfig(testContextMeta)
 	testContextMeta.BlockchainHook.(*hooks.BlockChainHookImpl).SetCurrentHeader(&block.MetaBlock{Epoch: 0})
 
-	gasPrice := uint64(10)
 	gasLimit := uint64(4000)
 	sndAddr := []byte("12345678901234567890123456789012")
 	tx := vm.CreateTransaction(0, value2700EGLD, sndAddr, vmAddr.ValidatorSCAddress, gasPrice, gasLimit, []byte(validatorStakeData))
@@ -171,22 +192,32 @@ func testValidatorsSCDoStakeWithTopUpValueTryToUnStakeTokensAndUnBondTokens(t *t
 	testContextMeta.TxsLogsProcessor.Clean()
 
 	tx = vm.CreateTransaction(0, big.NewInt(0), sndAddr, vmAddr.ValidatorSCAddress, gasPrice, gasLimit, []byte("unBondTokens@"+hex.EncodeToString(value200EGLD.Bytes())))
-	executeTxAndCheckResults(t, testContextMeta, tx, vmcommon.Ok, nil)
+	executeTxAndCheckResults(t, testContextMeta, tx, vmcommon.UserError, nil)
 
-	checkReturnLog(t, testContextMeta, noTokensToUnBondMessage, false)
+	checkReturnLog(t, testContextMeta, noTokensToUnBondMessage, true)
 }
 
 func TestValidatorsSC_ToStakePutInQueueUnStakeAndUnBondShouldRefundUnBondTokens(t *testing.T) {
-	testContextMeta, err := vm.CreatePreparedTxProcessorWithVMsMultiShard(core.MetachainShardId, config.EnableEpochs{})
+	if testing.Short() {
+		t.Skip("this is not a short test")
+	}
+
+	testContextMeta, err := vm.CreatePreparedTxProcessorWithVMsMultiShard(
+		core.MetachainShardId,
+		config.EnableEpochs{
+			StakingV4Step1EnableEpoch: stakingV4Step1EnableEpoch,
+			StakingV4Step2EnableEpoch: stakingV4Step2EnableEpoch,
+		},
+		1,
+	)
 
 	require.Nil(t, err)
 	defer testContextMeta.Close()
 
-	saveNodesConfig(t, testContextMeta, 1, 1, 1)
+	stakingcommon.SaveNodesConfig(testContextMeta.Accounts, testContextMeta.Marshalizer, 1, 1, 1)
 	saveDelegationManagerConfig(testContextMeta)
 	testContextMeta.BlockchainHook.(*hooks.BlockChainHookImpl).SetCurrentHeader(&block.MetaBlock{Epoch: 1})
 
-	gasPrice := uint64(10)
 	gasLimit := uint64(4000)
 	sndAddr := []byte("12345678901234567890123456789012")
 	tx := vm.CreateTransaction(0, value2700EGLD, sndAddr, vmAddr.ValidatorSCAddress, gasPrice, gasLimit, []byte(validatorStakeData))
@@ -205,7 +236,7 @@ func TestValidatorsSC_ToStakePutInQueueUnStakeAndUnBondShouldRefundUnBondTokens(
 	intermediateTxs := testContextMeta.GetIntermediateTransactions(t)
 	require.Equal(t, 2, len(intermediateTxs))
 
-	scr := intermediateTxs[1].(*smartContractResult.SmartContractResult)
+	scr := intermediateTxs[0].(*smartContractResult.SmartContractResult)
 	require.Equal(t, value2500EGLD, scr.Value)
 
 	utils.CleanAccumulatedIntermediateTransactions(t, testContextMeta)
@@ -224,16 +255,26 @@ func TestValidatorsSC_ToStakePutInQueueUnStakeAndUnBondShouldRefundUnBondTokens(
 }
 
 func TestValidatorsSC_ToStakePutInQueueUnStakeNodesAndUnBondNodesShouldRefund(t *testing.T) {
-	testContextMeta, err := vm.CreatePreparedTxProcessorWithVMsMultiShard(core.MetachainShardId, config.EnableEpochs{})
+	if testing.Short() {
+		t.Skip("this is not a short test")
+	}
+
+	testContextMeta, err := vm.CreatePreparedTxProcessorWithVMsMultiShard(
+		core.MetachainShardId,
+		config.EnableEpochs{
+			StakingV4Step1EnableEpoch: stakingV4Step1EnableEpoch,
+			StakingV4Step2EnableEpoch: stakingV4Step2EnableEpoch,
+		},
+		1,
+	)
 
 	require.Nil(t, err)
 	defer testContextMeta.Close()
 
-	saveNodesConfig(t, testContextMeta, 1, 1, 1)
+	stakingcommon.SaveNodesConfig(testContextMeta.Accounts, testContextMeta.Marshalizer, 1, 1, 1)
 	saveDelegationManagerConfig(testContextMeta)
 	testContextMeta.BlockchainHook.(*hooks.BlockChainHookImpl).SetCurrentHeader(&block.MetaBlock{Epoch: 1})
 
-	gasPrice := uint64(10)
 	gasLimit := uint64(4000)
 	sndAddr := []byte("12345678901234567890123456789012")
 	tx := vm.CreateTransaction(0, value2700EGLD, sndAddr, vmAddr.ValidatorSCAddress, gasPrice, gasLimit, []byte(validatorStakeData))
@@ -282,23 +323,4 @@ func executeTxAndCheckResults(
 	recCode, err := testContext.TxProcessor.ProcessTransaction(tx)
 	require.Equal(t, vmCodeExpected, recCode)
 	require.Equal(t, expectedErr, err)
-}
-
-func saveNodesConfig(t *testing.T, testContext *vm.VMTestContext, stakedNodes, minNumNodes, maxNumNodes int64) {
-	protoMarshalizer := &marshal.GogoProtoMarshalizer{}
-
-	account, err := testContext.Accounts.LoadAccount(vmAddr.StakingSCAddress)
-	require.Nil(t, err)
-	userAccount, _ := account.(state.UserAccountHandler)
-
-	nodesConfigData := &systemSmartContracts.StakingNodesConfig{
-		StakedNodes: stakedNodes,
-		MinNumNodes: minNumNodes,
-		MaxNumNodes: maxNumNodes,
-	}
-	nodesDataBytes, _ := protoMarshalizer.Marshal(nodesConfigData)
-
-	_ = userAccount.DataTrieTracker().SaveKeyValue([]byte("nodesConfig"), nodesDataBytes)
-	_ = testContext.Accounts.SaveAccount(account)
-	_, _ = testContext.Accounts.Commit()
 }

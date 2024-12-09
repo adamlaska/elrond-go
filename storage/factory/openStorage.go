@@ -3,14 +3,13 @@ package factory
 import (
 	"fmt"
 	"path/filepath"
-	"time"
 
-	"github.com/ElrondNetwork/elrond-go/common"
-	"github.com/ElrondNetwork/elrond-go/config"
-	"github.com/ElrondNetwork/elrond-go/process/block/bootstrapStorage"
-	"github.com/ElrondNetwork/elrond-go/storage"
-	"github.com/ElrondNetwork/elrond-go/storage/lrucache"
-	"github.com/ElrondNetwork/elrond-go/storage/storageUnit"
+	"github.com/multiversx/mx-chain-core-go/core/check"
+	"github.com/multiversx/mx-chain-go/config"
+	"github.com/multiversx/mx-chain-go/process/block/bootstrapStorage"
+	"github.com/multiversx/mx-chain-go/storage"
+	"github.com/multiversx/mx-chain-go/storage/cache"
+	"github.com/multiversx/mx-chain-go/storage/storageunit"
 )
 
 const cacheSize = 10
@@ -32,6 +31,13 @@ type openStorageUnits struct {
 
 // NewStorageUnitOpenHandler creates an openStorageUnits component
 func NewStorageUnitOpenHandler(args ArgsNewOpenStorageUnits) (*openStorageUnits, error) {
+	if check.IfNil(args.BootstrapDataProvider) {
+		return nil, storage.ErrNilBootstrapDataProvider
+	}
+	if check.IfNil(args.LatestStorageDataProvider) {
+		return nil, storage.ErrNilLatestStorageDataProvider
+	}
+
 	o := &openStorageUnits{
 		defaultEpochString:        args.DefaultEpochString,
 		defaultShardString:        args.DefaultShardString,
@@ -49,7 +55,10 @@ func (o *openStorageUnits) GetMostRecentStorageUnit(dbConfig config.DBConfig) (s
 		return nil, err
 	}
 
-	persisterFactory := NewPersisterFactory(dbConfig)
+	persisterFactory, err := NewPersisterFactory(dbConfig)
+	if err != nil {
+		return nil, err
+	}
 	pathWithoutShard := o.getPathWithoutShard(parentDir, lastEpoch)
 	shardIdsStr, err := o.latestStorageDataProvider.GetShardsFromDirectory(pathWithoutShard)
 	if err != nil {
@@ -63,17 +72,17 @@ func (o *openStorageUnits) GetMostRecentStorageUnit(dbConfig config.DBConfig) (s
 
 	persisterPath := o.getPersisterPath(pathWithoutShard, mostRecentShard, dbConfig)
 
-	persister, err := createDB(persisterFactory, persisterPath)
+	persister, err := persisterFactory.CreateWithRetries(persisterPath)
 	if err != nil {
 		return nil, err
 	}
 
-	cacher, err := lrucache.NewCache(cacheSize)
+	cacher, err := cache.NewLRUCache(cacheSize)
 	if err != nil {
 		return nil, err
 	}
 
-	storer, err := storageUnit.NewStorageUnit(cacher, persister)
+	storer, err := storageunit.NewStorageUnit(cacher, persister)
 	if err != nil {
 		return nil, err
 	}
@@ -101,34 +110,22 @@ func (o *openStorageUnits) OpenDB(dbConfig config.DBConfig, shardID uint32, epoc
 	parentDir := o.latestStorageDataProvider.GetParentDirectory()
 	pathWithoutShard := o.getPathWithoutShard(parentDir, epoch)
 	persisterPath := o.getPersisterPath(pathWithoutShard, fmt.Sprintf("%d", shardID), dbConfig)
-	persisterFactory := NewPersisterFactory(dbConfig)
-
-	persister, err := createDB(persisterFactory, persisterPath)
+	persisterFactory, err := NewPersisterFactory(dbConfig)
 	if err != nil {
 		return nil, err
 	}
 
-	cache, err := lrucache.NewCache(cacheSize)
+	persister, err := persisterFactory.CreateWithRetries(persisterPath)
 	if err != nil {
 		return nil, err
 	}
 
-	return storageUnit.NewStorageUnit(cache, persister)
-}
-
-func createDB(persisterFactory *PersisterFactory, persisterPath string) (storage.Persister, error) {
-	var persister storage.Persister
-	var err error
-	for i := 0; i < common.MaxRetriesToCreateDB; i++ {
-		persister, err = persisterFactory.Create(persisterPath)
-		if err == nil {
-			return persister, nil
-		}
-		log.Warn("Create Persister failed", "path", persisterPath, "error", err)
-		//TODO: extract this in a parameter and inject it
-		time.Sleep(common.SleepTimeBetweenCreateDBRetries)
+	lruCache, err := cache.NewLRUCache(cacheSize)
+	if err != nil {
+		return nil, err
 	}
-	return nil, err
+
+	return storageunit.NewStorageUnit(lruCache, persister)
 }
 
 func (o *openStorageUnits) getMostUpToDateDirectory(

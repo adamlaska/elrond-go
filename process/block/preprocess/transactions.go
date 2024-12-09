@@ -8,23 +8,23 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ElrondNetwork/elrond-go-core/core"
-	"github.com/ElrondNetwork/elrond-go-core/core/atomic"
-	"github.com/ElrondNetwork/elrond-go-core/core/check"
-	"github.com/ElrondNetwork/elrond-go-core/core/sliceUtil"
-	"github.com/ElrondNetwork/elrond-go-core/data"
-	"github.com/ElrondNetwork/elrond-go-core/data/block"
-	"github.com/ElrondNetwork/elrond-go-core/data/transaction"
-	"github.com/ElrondNetwork/elrond-go-core/hashing"
-	"github.com/ElrondNetwork/elrond-go-core/marshal"
-	logger "github.com/ElrondNetwork/elrond-go-logger"
-	"github.com/ElrondNetwork/elrond-go/dataRetriever"
-	"github.com/ElrondNetwork/elrond-go/process"
-	"github.com/ElrondNetwork/elrond-go/sharding"
-	"github.com/ElrondNetwork/elrond-go/state"
-	"github.com/ElrondNetwork/elrond-go/storage"
-	"github.com/ElrondNetwork/elrond-go/storage/txcache"
-	vmcommon "github.com/ElrondNetwork/elrond-vm-common"
+	"github.com/multiversx/mx-chain-core-go/core"
+	"github.com/multiversx/mx-chain-core-go/core/check"
+	"github.com/multiversx/mx-chain-core-go/data"
+	"github.com/multiversx/mx-chain-core-go/data/block"
+	"github.com/multiversx/mx-chain-core-go/data/transaction"
+	"github.com/multiversx/mx-chain-core-go/hashing"
+	"github.com/multiversx/mx-chain-core-go/marshal"
+	logger "github.com/multiversx/mx-chain-logger-go"
+
+	"github.com/multiversx/mx-chain-go/common"
+	"github.com/multiversx/mx-chain-go/dataRetriever"
+	"github.com/multiversx/mx-chain-go/process"
+	"github.com/multiversx/mx-chain-go/process/block/helpers"
+	"github.com/multiversx/mx-chain-go/sharding"
+	"github.com/multiversx/mx-chain-go/state"
+	"github.com/multiversx/mx-chain-go/storage"
+	"github.com/multiversx/mx-chain-go/storage/txcache"
 )
 
 var _ process.DataMarshalizer = (*transactions)(nil)
@@ -33,62 +33,53 @@ var _ process.PreProcessor = (*transactions)(nil)
 var log = logger.GetOrCreate("process/block/preprocess")
 
 // 200% bandwidth to allow 100% overshooting estimations
-const selectionGasBandwidthIncreasePercent = 200
+const selectionGasBandwidthIncreasePercent = 400
 
 // 130% to allow 30% overshooting estimations for scheduled SC calls
-const selectionGasBandwidthIncreaseScheduledPercent = 130
-
-type accountTxsShards struct {
-	accountsInfo map[string]*txShardInfo
-	sync.RWMutex
-}
+const selectionGasBandwidthIncreaseScheduledPercent = 260
 
 // TODO: increase code coverage with unit test
 
 type transactions struct {
 	*basePreProcess
-	chRcvAllTxs                    chan bool
-	onRequestTransaction           func(shardID uint32, txHashes [][]byte)
-	txsForCurrBlock                txsForBlock
-	txPool                         dataRetriever.ShardedDataCacherNotifier
-	storage                        dataRetriever.StorageService
-	txProcessor                    process.TransactionProcessor
-	orderedTxs                     map[string][]data.TransactionHandler
-	orderedTxHashes                map[string][][]byte
-	mutOrderedTxs                  sync.RWMutex
-	blockTracker                   BlockTracker
-	blockType                      block.Type
-	accountTxsShards               accountTxsShards
-	emptyAddress                   []byte
-	scheduledMiniBlocksEnableEpoch uint32
-	flagScheduledMiniBlocks        atomic.Flag
-	txTypeHandler                  process.TxTypeHandler
-	scheduledTxsExecutionHandler   process.ScheduledTxsExecutionHandler
+	chRcvAllTxs                  chan bool
+	onRequestTransaction         func(shardID uint32, txHashes [][]byte)
+	txsForCurrBlock              txsForBlock
+	txPool                       dataRetriever.ShardedDataCacherNotifier
+	storage                      dataRetriever.StorageService
+	txProcessor                  process.TransactionProcessor
+	orderedTxs                   map[string][]data.TransactionHandler
+	orderedTxHashes              map[string][][]byte
+	mutOrderedTxs                sync.RWMutex
+	blockTracker                 BlockTracker
+	blockType                    block.Type
+	emptyAddress                 []byte
+	txTypeHandler                process.TxTypeHandler
+	scheduledTxsExecutionHandler process.ScheduledTxsExecutionHandler
 }
 
 // ArgsTransactionPreProcessor holds the arguments to create a txs pre processor
 type ArgsTransactionPreProcessor struct {
-	TxDataPool                                  dataRetriever.ShardedDataCacherNotifier
-	Store                                       dataRetriever.StorageService
-	Hasher                                      hashing.Hasher
-	Marshalizer                                 marshal.Marshalizer
-	TxProcessor                                 process.TransactionProcessor
-	ShardCoordinator                            sharding.Coordinator
-	Accounts                                    state.AccountsAdapter
-	OnRequestTransaction                        func(shardID uint32, txHashes [][]byte)
-	EconomicsFee                                process.FeeHandler
-	GasHandler                                  process.GasHandler
-	BlockTracker                                BlockTracker
-	BlockType                                   block.Type
-	PubkeyConverter                             core.PubkeyConverter
-	BlockSizeComputation                        BlockSizeComputationHandler
-	BalanceComputation                          BalanceComputationHandler
-	EpochNotifier                               process.EpochNotifier
-	OptimizeGasUsedInCrossMiniBlocksEnableEpoch uint32
-	FrontRunningProtectionEnableEpoch           uint32
-	ScheduledMiniBlocksEnableEpoch              uint32
-	TxTypeHandler                               process.TxTypeHandler
-	ScheduledTxsExecutionHandler                process.ScheduledTxsExecutionHandler
+	TxDataPool                   dataRetriever.ShardedDataCacherNotifier
+	Store                        dataRetriever.StorageService
+	Hasher                       hashing.Hasher
+	Marshalizer                  marshal.Marshalizer
+	TxProcessor                  process.TransactionProcessor
+	ShardCoordinator             sharding.Coordinator
+	Accounts                     state.AccountsAdapter
+	OnRequestTransaction         func(shardID uint32, txHashes [][]byte)
+	EconomicsFee                 process.FeeHandler
+	GasHandler                   process.GasHandler
+	BlockTracker                 BlockTracker
+	BlockType                    block.Type
+	PubkeyConverter              core.PubkeyConverter
+	BlockSizeComputation         BlockSizeComputationHandler
+	BalanceComputation           BalanceComputationHandler
+	EnableEpochsHandler          common.EnableEpochsHandler
+	TxTypeHandler                process.TxTypeHandler
+	ScheduledTxsExecutionHandler process.ScheduledTxsExecutionHandler
+	ProcessedMiniBlocksTracker   process.ProcessedMiniBlocksTracker
+	TxExecutionOrderHandler      common.TxExecutionOrderHandler
 }
 
 // NewTransactionPreprocessor creates a new transaction preprocessor object
@@ -137,14 +128,30 @@ func NewTransactionPreprocessor(
 	if check.IfNil(args.BalanceComputation) {
 		return nil, process.ErrNilBalanceComputationHandler
 	}
-	if check.IfNil(args.EpochNotifier) {
-		return nil, process.ErrNilEpochNotifier
+	if check.IfNil(args.EnableEpochsHandler) {
+		return nil, process.ErrNilEnableEpochsHandler
 	}
+	err := core.CheckHandlerCompatibility(args.EnableEpochsHandler, []core.EnableEpochFlag{
+		common.OptimizeGasUsedInCrossMiniBlocksFlag,
+		common.ScheduledMiniBlocksFlag,
+		common.FrontRunningProtectionFlag,
+		common.CurrentRandomnessOnSortingFlag,
+	})
+	if err != nil {
+		return nil, err
+	}
+
 	if check.IfNil(args.TxTypeHandler) {
 		return nil, process.ErrNilTxTypeHandler
 	}
 	if check.IfNil(args.ScheduledTxsExecutionHandler) {
 		return nil, process.ErrNilScheduledTxsExecutionHandler
+	}
+	if check.IfNil(args.ProcessedMiniBlocksTracker) {
+		return nil, process.ErrNilProcessedMiniBlocksTracker
+	}
+	if check.IfNil(args.TxExecutionOrderHandler) {
+		return nil, process.ErrNilTxExecutionOrderHandler
 	}
 
 	bpp := basePreProcess{
@@ -155,26 +162,25 @@ func NewTransactionPreprocessor(
 			gasHandler:       args.GasHandler,
 			economicsFee:     args.EconomicsFee,
 		},
-		blockSizeComputation: args.BlockSizeComputation,
-		balanceComputation:   args.BalanceComputation,
-		accounts:             args.Accounts,
-		pubkeyConverter:      args.PubkeyConverter,
-
-		optimizeGasUsedInCrossMiniBlocksEnableEpoch: args.OptimizeGasUsedInCrossMiniBlocksEnableEpoch,
-		frontRunningProtectionEnableEpoch:           args.FrontRunningProtectionEnableEpoch,
+		blockSizeComputation:       args.BlockSizeComputation,
+		balanceComputation:         args.BalanceComputation,
+		accounts:                   args.Accounts,
+		pubkeyConverter:            args.PubkeyConverter,
+		enableEpochsHandler:        args.EnableEpochsHandler,
+		processedMiniBlocksTracker: args.ProcessedMiniBlocksTracker,
+		txExecutionOrderHandler:    args.TxExecutionOrderHandler,
 	}
 
 	txs := &transactions{
-		basePreProcess:                 &bpp,
-		storage:                        args.Store,
-		txPool:                         args.TxDataPool,
-		onRequestTransaction:           args.OnRequestTransaction,
-		txProcessor:                    args.TxProcessor,
-		blockTracker:                   args.BlockTracker,
-		blockType:                      args.BlockType,
-		scheduledMiniBlocksEnableEpoch: args.ScheduledMiniBlocksEnableEpoch,
-		txTypeHandler:                  args.TxTypeHandler,
-		scheduledTxsExecutionHandler:   args.ScheduledTxsExecutionHandler,
+		basePreProcess:               &bpp,
+		storage:                      args.Store,
+		txPool:                       args.TxDataPool,
+		onRequestTransaction:         args.OnRequestTransaction,
+		txProcessor:                  args.TxProcessor,
+		blockTracker:                 args.BlockTracker,
+		blockType:                    args.BlockType,
+		txTypeHandler:                args.TxTypeHandler,
+		scheduledTxsExecutionHandler: args.ScheduledTxsExecutionHandler,
 	}
 
 	txs.chRcvAllTxs = make(chan bool)
@@ -183,15 +189,8 @@ func NewTransactionPreprocessor(
 	txs.txsForCurrBlock.txHashAndInfo = make(map[string]*txInfo)
 	txs.orderedTxs = make(map[string][]data.TransactionHandler)
 	txs.orderedTxHashes = make(map[string][][]byte)
-	txs.accountTxsShards.accountsInfo = make(map[string]*txShardInfo)
 
 	txs.emptyAddress = make([]byte, txs.pubkeyConverter.Len())
-
-	log.Debug("transactions: enable epoch for optimize gas used in cross shard mini blocks", "epoch", txs.optimizeGasUsedInCrossMiniBlocksEnableEpoch)
-	log.Debug("transactions: enable epoch for front running protection", "epoch", txs.frontRunningProtectionEnableEpoch)
-	log.Debug("transactions: enable epoch for scheduled mini blocks", "epoch", txs.scheduledMiniBlocksEnableEpoch)
-
-	args.EpochNotifier.RegisterNotifyHandler(txs)
 
 	return txs, nil
 }
@@ -253,27 +252,9 @@ func (txs *transactions) RestoreBlockDataIntoPools(
 			continue
 		}
 
-		miniBlockStrCache := process.ShardCacherIdentifier(miniBlock.SenderShardID, miniBlock.ReceiverShardID)
-		txsBuff, err := txs.storage.GetAll(dataRetriever.TransactionUnit, miniBlock.TxHashes)
+		err := txs.restoreTxsIntoPool(miniBlock)
 		if err != nil {
-			log.Debug("tx from mini block was not found in TransactionUnit",
-				"sender shard ID", miniBlock.SenderShardID,
-				"receiver shard ID", miniBlock.ReceiverShardID,
-				"num txs", len(miniBlock.TxHashes),
-			)
-
 			return txsRestored, err
-		}
-
-		for txHash, txBuff := range txsBuff {
-			tx := transaction.Transaction{}
-			err = txs.marshalizer.Unmarshal(&tx, txBuff)
-			if err != nil {
-				return txsRestored, err
-			}
-
-			strCache := txs.computeCacheIdentifier(miniBlockStrCache, &tx, miniBlock.Type)
-			txs.txPool.AddData([]byte(txHash), &tx, tx.Size(), strCache)
 		}
 
 		if miniBlock.SenderShardID != txs.shardCoordinator.SelfId() {
@@ -291,11 +272,38 @@ func (txs *transactions) RestoreBlockDataIntoPools(
 	return txsRestored, nil
 }
 
+func (txs *transactions) restoreTxsIntoPool(miniBlock *block.MiniBlock) error {
+	miniBlockStrCache := process.ShardCacherIdentifier(miniBlock.SenderShardID, miniBlock.ReceiverShardID)
+	txsBuff, err := txs.storage.GetAll(dataRetriever.TransactionUnit, miniBlock.TxHashes)
+	if err != nil {
+		log.Debug("txs from mini block were not found in TransactionUnit",
+			"sender shard ID", miniBlock.SenderShardID,
+			"receiver shard ID", miniBlock.ReceiverShardID,
+			"num txs", len(miniBlock.TxHashes),
+		)
+
+		return err
+	}
+
+	for txHash, txBuff := range txsBuff {
+		tx := transaction.Transaction{}
+		err = txs.marshalizer.Unmarshal(&tx, txBuff)
+		if err != nil {
+			return err
+		}
+
+		strCache := txs.computeCacheIdentifier(miniBlockStrCache, &tx, miniBlock.Type)
+		txs.txPool.AddData([]byte(txHash), &tx, tx.Size(), strCache)
+	}
+
+	return nil
+}
+
 func (txs *transactions) computeCacheIdentifier(miniBlockStrCache string, tx *transaction.Transaction, miniBlockType block.Type) string {
 	if miniBlockType != block.InvalidBlock {
 		return miniBlockStrCache
 	}
-	if !txs.flagScheduledMiniBlocks.IsSet() {
+	if !txs.enableEpochsHandler.IsFlagEnabled(common.ScheduledMiniBlocksFlag) {
 		return miniBlockStrCache
 	}
 
@@ -319,13 +327,17 @@ func (txs *transactions) ProcessBlockTransactions(
 	}
 
 	if txs.isBodyFromMe(body) {
-		return txs.processTxsFromMe(body, haveTime, header.GetPrevRandSeed())
+		randomness := helpers.ComputeRandomnessForTxSorting(header, txs.enableEpochsHandler)
+		return txs.processTxsFromMe(body, haveTime, randomness)
 	}
 
 	return process.ErrInvalidBody
 }
 
-func (txs *transactions) computeTxsToMe(body *block.Body) ([]*txcache.WrappedTransaction, error) {
+func (txs *transactions) computeTxsToMe(
+	headerHandler data.HeaderHandler,
+	body *block.Body,
+) ([]*txcache.WrappedTransaction, error) {
 	if check.IfNil(body) {
 		return nil, process.ErrNilBlockBody
 	}
@@ -344,7 +356,12 @@ func (txs *transactions) computeTxsToMe(body *block.Body) ([]*txcache.WrappedTra
 				miniBlock.ReceiverShardID)
 		}
 
-		txsFromMiniBlock, err := txs.computeTxsFromMiniBlock(miniBlock)
+		pi, err := txs.getIndexesOfLastTxProcessed(miniBlock, headerHandler)
+		if err != nil {
+			return nil, err
+		}
+
+		txsFromMiniBlock, err := txs.computeTxsFromMiniBlock(miniBlock, pi)
 		if err != nil {
 			return nil, err
 		}
@@ -369,7 +386,12 @@ func (txs *transactions) computeTxsFromMe(body *block.Body) ([]*txcache.WrappedT
 			continue
 		}
 
-		txsFromMiniBlock, err := txs.computeTxsFromMiniBlock(miniBlock)
+		pi := &processedIndexes{
+			indexOfLastTxProcessed:           -1,
+			indexOfLastTxProcessedByProposer: int32(len(miniBlock.TxHashes)) - 1,
+		}
+
+		txsFromMiniBlock, err := txs.computeTxsFromMiniBlock(miniBlock, pi)
 		if err != nil {
 			return nil, err
 		}
@@ -394,7 +416,12 @@ func (txs *transactions) computeScheduledTxsFromMe(body *block.Body) ([]*txcache
 			continue
 		}
 
-		txsFromScheduledMiniBlock, err := txs.computeTxsFromMiniBlock(miniBlock)
+		pi := &processedIndexes{
+			indexOfLastTxProcessed:           -1,
+			indexOfLastTxProcessedByProposer: int32(len(miniBlock.TxHashes)) - 1,
+		}
+
+		txsFromScheduledMiniBlock, err := txs.computeTxsFromMiniBlock(miniBlock, pi)
 		if err != nil {
 			return nil, err
 		}
@@ -405,10 +432,20 @@ func (txs *transactions) computeScheduledTxsFromMe(body *block.Body) ([]*txcache
 	return allScheduledTxs, nil
 }
 
-func (txs *transactions) computeTxsFromMiniBlock(miniBlock *block.MiniBlock) ([]*txcache.WrappedTransaction, error) {
+func (txs *transactions) computeTxsFromMiniBlock(
+	miniBlock *block.MiniBlock,
+	pi *processedIndexes,
+) ([]*txcache.WrappedTransaction, error) {
+
 	txsFromMiniBlock := make([]*txcache.WrappedTransaction, 0, len(miniBlock.TxHashes))
 
-	for i := 0; i < len(miniBlock.TxHashes); i++ {
+	indexOfFirstTxToBeProcessed := pi.indexOfLastTxProcessed + 1
+	err := process.CheckIfIndexesAreOutOfBound(indexOfFirstTxToBeProcessed, pi.indexOfLastTxProcessedByProposer, miniBlock)
+	if err != nil {
+		return nil, err
+	}
+
+	for i := indexOfFirstTxToBeProcessed; i <= pi.indexOfLastTxProcessedByProposer; i++ {
 		txHash := miniBlock.TxHashes[i]
 		txs.txsForCurrBlock.mutTxsForBlock.RLock()
 		txInfoFromMap, ok := txs.txsForCurrBlock.txHashAndInfo[string(txHash)]
@@ -463,14 +500,14 @@ func (txs *transactions) processTxsToMe(
 
 	var err error
 	scheduledMode := false
-	if txs.flagScheduledMiniBlocks.IsSet() {
+	if txs.enableEpochsHandler.IsFlagEnabled(common.ScheduledMiniBlocksFlag) {
 		scheduledMode, err = process.IsScheduledMode(header, body, txs.hasher, txs.marshalizer)
 		if err != nil {
 			return err
 		}
 	}
 
-	txsToMe, err := txs.computeTxsToMe(body)
+	txsToMe, err := txs.computeTxsToMe(header, body)
 	if err != nil {
 		return err
 	}
@@ -502,7 +539,7 @@ func (txs *transactions) processTxsToMe(
 			"scheduled mode", scheduledMode,
 			"totalGasConsumedInSelfShard", gasInfo.totalGasConsumedInSelfShard,
 			"gasConsumedByMiniBlockInReceiverShard", gasInfo.gasConsumedByMiniBlockInReceiverShard,
-			"num scrs processed", numTXsProcessed,
+			"num txs processed", numTXsProcessed,
 			"total gas provided", txs.gasHandler.TotalGasProvided(),
 			"total gas provided as scheduled", txs.gasHandler.TotalGasProvidedAsScheduled(),
 			"total gas refunded", txs.gasHandler.TotalGasRefunded(),
@@ -547,7 +584,10 @@ func (txs *transactions) processTxsToMe(
 			txs.gasHandler.SetGasProvided(gasProvidedByTxInSelfShard, txHash)
 		}
 
-		txs.saveAccountBalanceForAddress(tx.GetRcvAddr())
+		err = txs.saveAccountBalanceForAddress(tx.GetRcvAddr())
+		if err != nil {
+			return err
+		}
 
 		if scheduledMode {
 			txs.scheduledTxsExecutionHandler.AddScheduledTx(txHash, tx)
@@ -671,8 +711,7 @@ func (txs *transactions) createAndProcessScheduledMiniBlocksFromMeAsValidator(
 	mapSCTxs map[string]struct{},
 	randomness []byte,
 ) (block.MiniBlockSlice, error) {
-
-	if !txs.flagScheduledMiniBlocks.IsSet() {
+	if !txs.enableEpochsHandler.IsFlagEnabled(common.ScheduledMiniBlocksFlag) {
 		return make(block.MiniBlockSlice, 0), nil
 	}
 
@@ -683,7 +722,7 @@ func (txs *transactions) createAndProcessScheduledMiniBlocksFromMeAsValidator(
 
 	txs.sortTransactionsBySenderAndNonce(scheduledTxsFromMe, randomness)
 
-	scheduledMiniBlocks := txs.createScheduledMiniBlocks(
+	scheduledMiniBlocks, err := txs.createScheduledMiniBlocks(
 		haveTime,
 		haveAdditionalTime,
 		isShardStuck,
@@ -691,6 +730,9 @@ func (txs *transactions) createAndProcessScheduledMiniBlocksFromMeAsValidator(
 		scheduledTxsFromMe,
 		mapSCTxs,
 	)
+	if err != nil {
+		return nil, err
+	}
 
 	if !haveTime() && !haveAdditionalTime() {
 		return nil, process.ErrTimeIsOut
@@ -747,10 +789,6 @@ func (txs *transactions) CreateBlockStarted() {
 	txs.orderedTxHashes = make(map[string][][]byte)
 	txs.mutOrderedTxs.Unlock()
 
-	txs.accountTxsShards.Lock()
-	txs.accountTxsShards.accountsInfo = make(map[string]*txShardInfo)
-	txs.accountTxsShards.Unlock()
-
 	txs.scheduledTxsExecutionHandler.Init()
 }
 
@@ -767,7 +805,10 @@ func (txs *transactions) AddTxsFromMiniBlocks(miniBlocks block.MiniBlockSlice) {
 		}
 
 		txShardInfoToSet := &txShardInfo{senderShardID: mb.SenderShardID, receiverShardID: mb.ReceiverShardID}
-		searchFirst := mb.Type == block.InvalidBlock
+		method := process.SearchMethodJustPeek
+		if mb.Type == block.InvalidBlock {
+			method = process.SearchMethodSearchFirst
+		}
 
 		for _, txHash := range mb.TxHashes {
 			tx, err := process.GetTransactionHandler(
@@ -777,7 +818,7 @@ func (txs *transactions) AddTxsFromMiniBlocks(miniBlocks block.MiniBlockSlice) {
 				txs.txPool,
 				txs.storage,
 				txs.marshalizer,
-				searchFirst,
+				method,
 			)
 			if err != nil {
 				log.Debug("transactions.AddTxsFromMiniBlocks: GetTransactionHandler", "tx hash", txHash, "error", err.Error())
@@ -840,14 +881,18 @@ func (txs *transactions) processAndRemoveBadTransaction(
 	dstShardId uint32,
 ) error {
 
+	txs.txExecutionOrderHandler.Add(txHash)
 	_, err := txs.txProcessor.ProcessTransaction(tx)
-	isTxTargetedForDeletion := errors.Is(err, process.ErrLowerNonceInTransaction) || errors.Is(err, process.ErrInsufficientFee)
+	isTxTargetedForDeletion := errors.Is(err, process.ErrLowerNonceInTransaction) || errors.Is(err, process.ErrInsufficientFee) || errors.Is(err, process.ErrTransactionNotExecutable)
 	if isTxTargetedForDeletion {
+		txs.txExecutionOrderHandler.Remove(txHash)
 		strCache := process.ShardCacherIdentifier(sndShardId, dstShardId)
 		txs.txPool.RemoveData(txHash, strCache)
 	}
 
 	if err != nil && !errors.Is(err, process.ErrFailedTransaction) {
+		txs.txExecutionOrderHandler.Remove(txHash)
+
 		return err
 	}
 
@@ -859,63 +904,32 @@ func (txs *transactions) processAndRemoveBadTransaction(
 	return err
 }
 
-func (txs *transactions) notifyTransactionProviderIfNeeded() {
-	txs.accountTxsShards.RLock()
-	for senderAddress, txShardInfoValue := range txs.accountTxsShards.accountsInfo {
-		if txShardInfoValue.senderShardID != txs.shardCoordinator.SelfId() {
-			continue
-		}
-
-		account, err := txs.getAccountForAddress([]byte(senderAddress))
-		if err != nil {
-			log.Debug("notifyTransactionProviderIfNeeded.getAccountForAddress", "error", err)
-			continue
-		}
-
-		strCache := process.ShardCacherIdentifier(txShardInfoValue.senderShardID, txShardInfoValue.receiverShardID)
-		txShardPool := txs.txPool.ShardDataStore(strCache)
-		if check.IfNil(txShardPool) {
-			log.Trace("notifyTransactionProviderIfNeeded", "error", process.ErrNilTxDataPool)
-			continue
-		}
-
-		sortedTransactionsProvider := createSortedTransactionsProvider(txShardPool)
-		sortedTransactionsProvider.NotifyAccountNonce([]byte(senderAddress), account.GetNonce())
-	}
-	txs.accountTxsShards.RUnlock()
-}
-
-func (txs *transactions) getAccountForAddress(address []byte) (vmcommon.AccountHandler, error) {
-	account, err := txs.accounts.GetExistingAccount(address)
-	if err != nil {
-		return nil, err
-	}
-
-	return account, nil
-}
-
 // RequestTransactionsForMiniBlock requests missing transactions for a certain miniblock
 func (txs *transactions) RequestTransactionsForMiniBlock(miniBlock *block.MiniBlock) int {
 	if miniBlock == nil {
 		return 0
 	}
 
-	missingTxsForMiniBlock := txs.computeMissingTxsForMiniBlock(miniBlock)
-	if len(missingTxsForMiniBlock) > 0 {
-		txs.onRequestTransaction(miniBlock.SenderShardID, missingTxsForMiniBlock)
+	missingTxsHashesForMiniBlock := txs.computeMissingTxsHashesForMiniBlock(miniBlock)
+	if len(missingTxsHashesForMiniBlock) > 0 {
+		txs.onRequestTransaction(miniBlock.SenderShardID, missingTxsHashesForMiniBlock)
 	}
 
-	return len(missingTxsForMiniBlock)
+	return len(missingTxsHashesForMiniBlock)
 }
 
-// computeMissingTxsForMiniBlock computes missing transactions for a certain miniblock
-func (txs *transactions) computeMissingTxsForMiniBlock(miniBlock *block.MiniBlock) [][]byte {
+// computeMissingTxsHashesForMiniBlock computes missing transactions hashes for a certain miniblock
+func (txs *transactions) computeMissingTxsHashesForMiniBlock(miniBlock *block.MiniBlock) [][]byte {
+	missingTransactionsHashes := make([][]byte, 0)
+
 	if miniBlock.Type != txs.blockType {
-		return nil
+		return missingTransactionsHashes
 	}
 
-	missingTransactions := make([][]byte, 0, len(miniBlock.TxHashes))
-	searchFirst := txs.blockType == block.InvalidBlock
+	method := process.SearchMethodJustPeek
+	if txs.blockType == block.InvalidBlock {
+		method = process.SearchMethodSearchFirst
+	}
 
 	for _, txHash := range miniBlock.TxHashes {
 		tx, _ := process.GetTransactionHandlerFromPool(
@@ -923,14 +937,14 @@ func (txs *transactions) computeMissingTxsForMiniBlock(miniBlock *block.MiniBloc
 			miniBlock.ReceiverShardID,
 			txHash,
 			txs.txPool,
-			searchFirst)
+			method)
 
-		if tx == nil || tx.IsInterfaceNil() {
-			missingTransactions = append(missingTransactions, txHash)
+		if check.IfNil(tx) {
+			missingTransactionsHashes = append(missingTransactionsHashes, txHash)
 		}
 	}
 
-	return sliceUtil.TrimSliceSliceByte(missingTransactions)
+	return missingTransactionsHashes
 }
 
 // getAllTxsFromMiniBlock gets all the transactions from a miniblock into a new structure
@@ -998,7 +1012,7 @@ func (txs *transactions) CreateAndProcessMiniBlocks(haveTime func() bool, random
 
 	gasBandwidth := txs.getRemainingGasPerBlock() * selectionGasBandwidthIncreasePercent / 100
 	gasBandwidthForScheduled := uint64(0)
-	if txs.flagScheduledMiniBlocks.IsSet() {
+	if txs.enableEpochsHandler.IsFlagEnabled(common.ScheduledMiniBlocksFlag) {
 		gasBandwidthForScheduled = txs.getRemainingGasPerBlockAsScheduled() * selectionGasBandwidthIncreaseScheduledPercent / 100
 		gasBandwidth += gasBandwidthForScheduled
 	}
@@ -1080,12 +1094,12 @@ func (txs *transactions) createAndProcessScheduledMiniBlocksFromMeAsProposer(
 	mapSCTxs map[string]struct{},
 ) (block.MiniBlockSlice, error) {
 
-	if !txs.flagScheduledMiniBlocks.IsSet() {
+	if !txs.enableEpochsHandler.IsFlagEnabled(common.ScheduledMiniBlocksFlag) {
 		return make(block.MiniBlockSlice, 0), nil
 	}
 
 	startTime := time.Now()
-	scheduledMiniBlocks := txs.createScheduledMiniBlocks(
+	scheduledMiniBlocks, err := txs.createScheduledMiniBlocks(
 		haveTime,
 		haveAdditionalTime,
 		txs.blockTracker.IsShardStuck,
@@ -1097,6 +1111,9 @@ func (txs *transactions) createAndProcessScheduledMiniBlocksFromMeAsProposer(
 	log.Debug("elapsed time to createScheduledMiniBlocks",
 		"time [s]", elapsedTime,
 	)
+	if err != nil {
+		return nil, err
+	}
 
 	return scheduledMiniBlocks, nil
 }
@@ -1118,7 +1135,6 @@ func (txs *transactions) createAndProcessMiniBlocksFromMeV1(
 	args := miniBlocksBuilderArgs{
 		gasTracker:                txs.gasTracker,
 		accounts:                  txs.accounts,
-		accountTxsShards:          &txs.accountTxsShards,
 		balanceComputationHandler: txs.balanceComputation,
 		blockSizeComputation:      txs.blockSizeComputation,
 		haveTime:                  haveTime,
@@ -1133,10 +1149,6 @@ func (txs *transactions) createAndProcessMiniBlocksFromMeV1(
 	if err != nil {
 		return nil, nil, err
 	}
-
-	defer func() {
-		go txs.notifyTransactionProviderIfNeeded()
-	}()
 
 	remainingTxs := make([]*txcache.WrappedTransaction, 0)
 	for idx, wtx := range sortedTxs {
@@ -1157,6 +1169,9 @@ func (txs *transactions) createAndProcessMiniBlocksFromMeV1(
 
 		err = txs.processMiniBlockBuilderTx(mbBuilder, wtx, tx)
 		if err != nil {
+			if core.IsGetNodeFromDBError(err) {
+				return nil, nil, err
+			}
 			continue
 		}
 
@@ -1218,7 +1233,6 @@ func (txs *transactions) processMiniBlockBuilderTx(
 	)
 	elapsedTime := time.Since(startTime)
 	mb.stats.totalProcessingTime += elapsedTime
-	mb.updateAccountShardsInfo(tx, wtx)
 
 	if err != nil && !errors.Is(err, process.ErrFailedTransaction) {
 		txs.handleBadTransaction(err, wtx, tx, mb, snapshot)
@@ -1246,7 +1260,7 @@ func (txs *transactions) handleBadTransaction(
 ) {
 	log.Trace("bad tx", "error", err.Error(), "hash", wtx.TxHash)
 	errRevert := txs.accounts.RevertToSnapshot(snapshot)
-	if errRevert != nil {
+	if errRevert != nil && !core.IsClosingError(errRevert) {
 		log.Warn("revert to snapshot", "error", err.Error())
 	}
 
@@ -1301,7 +1315,7 @@ func (txs *transactions) getMiniBlockSliceFromMap(mapMiniBlocks map[uint32]*bloc
 }
 
 func (txs *transactions) splitMiniBlocksBasedOnMaxGasLimitIfNeeded(miniBlocks block.MiniBlockSlice) block.MiniBlockSlice {
-	if !txs.flagOptimizeGasUsedInCrossMiniBlocks.IsSet() {
+	if !txs.enableEpochsHandler.IsFlagEnabled(common.OptimizeGasUsedInCrossMiniBlocksFlag) {
 		return miniBlocks
 	}
 
@@ -1396,7 +1410,16 @@ func (txs *transactions) computeSortedTxs(
 
 	sortedTransactionsProvider := createSortedTransactionsProvider(txShardPool)
 	log.Debug("computeSortedTxs.GetSortedTransactions")
-	sortedTxs := sortedTransactionsProvider.GetSortedTransactions()
+
+	session, err := newSelectionSession(argsSelectionSession{
+		accountsAdapter:       txs.accounts,
+		transactionsProcessor: txs.txProcessor,
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+
+	sortedTxs := sortedTransactionsProvider.GetSortedTransactions(session)
 
 	// TODO: this could be moved to SortedTransactionsProvider
 	selectedTxs, remainingTxs := txs.preFilterTransactionsWithMoveBalancePriority(sortedTxs, gasBandwidth)
@@ -1405,40 +1428,46 @@ func (txs *transactions) computeSortedTxs(
 	return selectedTxs, remainingTxs, nil
 }
 
-// ProcessMiniBlock processes all the transactions from a and saves the processed transactions in local cache complete miniblock
+// ProcessMiniBlock processes all the transactions from the given miniblock and saves the processed ones in a local cache
 func (txs *transactions) ProcessMiniBlock(
 	miniBlock *block.MiniBlock,
 	haveTime func() bool,
 	haveAdditionalTime func() bool,
-	getNumOfCrossInterMbsAndTxs func() (int, int),
 	scheduledMode bool,
-) (processedTxHashes [][]byte, numProcessedTxs int, err error) {
+	partialMbExecutionMode bool,
+	indexOfLastTxProcessed int,
+	preProcessorExecutionInfoHandler process.PreProcessorExecutionInfoHandler,
+) ([][]byte, int, bool, error) {
 
 	if miniBlock.Type != block.TxBlock {
-		return nil, 0, process.ErrWrongTypeInMiniBlock
+		return nil, indexOfLastTxProcessed, false, process.ErrWrongTypeInMiniBlock
 	}
 
 	numTXsProcessed := 0
 	var gasProvidedByTxInSelfShard uint64
-	processedTxHashes = make([][]byte, 0)
+	var err error
+	var txIndex int
+	processedTxHashes := make([][]byte, 0)
+
+	indexOfFirstTxToBeProcessed := indexOfLastTxProcessed + 1
+	err = process.CheckIfIndexesAreOutOfBound(int32(indexOfFirstTxToBeProcessed), int32(len(miniBlock.TxHashes))-1, miniBlock)
+	if err != nil {
+		return nil, indexOfLastTxProcessed, false, err
+	}
+
 	miniBlockTxs, miniBlockTxHashes, err := txs.getAllTxsFromMiniBlock(miniBlock, haveTime, haveAdditionalTime)
 	if err != nil {
-		return nil, 0, err
+		return nil, indexOfLastTxProcessed, false, err
 	}
 
-	if txs.blockSizeComputation.IsMaxBlockSizeWithoutThrottleReached(1, len(miniBlockTxs)) {
-		return nil, 0, process.ErrMaxBlockSizeReached
+	if txs.blockSizeComputation.IsMaxBlockSizeWithoutThrottleReached(1, len(miniBlock.TxHashes)) {
+		return nil, indexOfLastTxProcessed, false, process.ErrMaxBlockSizeReached
 	}
 
-	defer func() {
-		if err != nil {
-			for _, hash := range processedTxHashes {
-				log.Trace("transactions.ProcessMiniBlock: defer func()", "tx hash", hash)
-			}
-
-			txs.gasHandler.RestoreGasSinceLastReset()
-		}
-	}()
+	miniBlockHash, err := core.CalculateHash(txs.marshalizer, txs.hasher, miniBlock)
+	if err != nil {
+		return nil, indexOfLastTxProcessed, false, err
+	}
 
 	var totalGasConsumed uint64
 	if scheduledMode {
@@ -1482,53 +1511,61 @@ func (txs *transactions) ProcessMiniBlock(
 		)
 	}()
 
-	numOfOldCrossInterMbs, numOfOldCrossInterTxs := getNumOfCrossInterMbsAndTxs()
+	numOfOldCrossInterMbs, numOfOldCrossInterTxs := preProcessorExecutionInfoHandler.GetNumOfCrossInterMbsAndTxs()
 
-	for index := range miniBlockTxs {
+	for txIndex = indexOfFirstTxToBeProcessed; txIndex < len(miniBlockTxs); txIndex++ {
 		if !haveTime() && !haveAdditionalTime() {
-			return processedTxHashes, index, process.ErrTimeIsOut
+			err = process.ErrTimeIsOut
+			break
 		}
 
 		gasProvidedByTxInSelfShard, err = txs.computeGasProvided(
 			miniBlock.SenderShardID,
 			miniBlock.ReceiverShardID,
-			miniBlockTxs[index],
-			miniBlockTxHashes[index],
+			miniBlockTxs[txIndex],
+			miniBlockTxHashes[txIndex],
 			&gasInfo)
 
 		if err != nil {
-			return processedTxHashes, index, err
+			break
 		}
 
-		if scheduledMode {
-			txs.gasHandler.SetGasProvidedAsScheduled(gasProvidedByTxInSelfShard, miniBlockTxHashes[index])
-		} else {
-			txs.gasHandler.SetGasProvided(gasProvidedByTxInSelfShard, miniBlockTxHashes[index])
-		}
-
-		processedTxHashes = append(processedTxHashes, miniBlockTxHashes[index])
-
-		if txs.flagOptimizeGasUsedInCrossMiniBlocks.IsSet() {
+		if txs.enableEpochsHandler.IsFlagEnabled(common.OptimizeGasUsedInCrossMiniBlocksFlag) {
 			if gasInfo.totalGasConsumedInSelfShard > maxGasLimitUsedForDestMeTxs {
-				return processedTxHashes, index, process.ErrMaxGasLimitUsedForDestMeTxsIsReached
+				err = process.ErrMaxGasLimitUsedForDestMeTxsIsReached
+				break
 			}
 		}
 
-		txs.saveAccountBalanceForAddress(miniBlockTxs[index].GetRcvAddr())
+		err = txs.saveAccountBalanceForAddress(miniBlockTxs[txIndex].GetRcvAddr())
+		if err != nil {
+			break
+		}
 
 		if !scheduledMode {
-			_, err = txs.txProcessor.ProcessTransaction(miniBlockTxs[index])
+			err = txs.processInNormalMode(
+				preProcessorExecutionInfoHandler,
+				miniBlockTxs[txIndex],
+				miniBlockTxHashes[txIndex],
+				&gasInfo,
+				gasProvidedByTxInSelfShard,
+				miniBlockHash)
 			if err != nil {
-				return processedTxHashes, index, err
+				break
 			}
-
-			txs.updateGasConsumedWithGasRefundedAndGasPenalized(miniBlockTxHashes[index], &gasInfo)
+		} else {
+			txs.gasHandler.SetGasProvidedAsScheduled(gasProvidedByTxInSelfShard, miniBlockTxHashes[txIndex])
 		}
 
+		processedTxHashes = append(processedTxHashes, miniBlockTxHashes[txIndex])
 		numTXsProcessed++
 	}
 
-	numOfCrtCrossInterMbs, numOfCrtCrossInterTxs := getNumOfCrossInterMbsAndTxs()
+	if err != nil && !partialMbExecutionMode {
+		return processedTxHashes, txIndex - 1, true, err
+	}
+
+	numOfCrtCrossInterMbs, numOfCrtCrossInterTxs := preProcessorExecutionInfoHandler.GetNumOfCrossInterMbsAndTxs()
 	numOfNewCrossInterMbs := numOfCrtCrossInterMbs - numOfOldCrossInterMbs
 	numOfNewCrossInterTxs := numOfCrtCrossInterTxs - numOfOldCrossInterTxs
 
@@ -1540,9 +1577,9 @@ func (txs *transactions) ProcessMiniBlock(
 	)
 
 	numMiniBlocks := 1 + numOfNewCrossInterMbs
-	numTxs := len(miniBlockTxs) + numOfNewCrossInterTxs
+	numTxs := len(miniBlock.TxHashes) + numOfNewCrossInterTxs
 	if txs.blockSizeComputation.IsMaxBlockSizeWithoutThrottleReached(numMiniBlocks, numTxs) {
-		return processedTxHashes, len(processedTxHashes), process.ErrMaxBlockSizeReached
+		return processedTxHashes, txIndex - 1, true, process.ErrMaxBlockSizeReached
 	}
 
 	txShardInfoToSet := &txShardInfo{senderShardID: miniBlock.SenderShardID, receiverShardID: miniBlock.ReceiverShardID}
@@ -1557,43 +1594,58 @@ func (txs *transactions) ProcessMiniBlock(
 	txs.blockSizeComputation.AddNumTxs(numTxs)
 
 	if scheduledMode {
-		for index := range miniBlockTxs {
+		for index := indexOfFirstTxToBeProcessed; index <= txIndex-1; index++ {
 			txs.scheduledTxsExecutionHandler.AddScheduledTx(miniBlockTxHashes[index], miniBlockTxs[index])
 		}
 	}
 
-	return nil, len(processedTxHashes), nil
+	return nil, txIndex - 1, false, err
 }
 
-// CreateMarshalizedData marshalizes transactions and creates and saves them into a new structure
-func (txs *transactions) CreateMarshalizedData(txHashes [][]byte) ([][]byte, error) {
-	mrsScrs, err := txs.createMarshalizedData(txHashes, &txs.txsForCurrBlock)
+func (txs *transactions) processInNormalMode(
+	preProcessorExecutionInfoHandler process.PreProcessorExecutionInfoHandler,
+	tx *transaction.Transaction,
+	txHash []byte,
+	gasInfo *gasConsumedInfo,
+	gasProvidedByTxInSelfShard uint64,
+	mbHash []byte,
+) error {
+
+	snapshot := txs.handleProcessTransactionInit(preProcessorExecutionInfoHandler, txHash, mbHash)
+
+	txs.txExecutionOrderHandler.Add(txHash)
+	_, err := txs.txProcessor.ProcessTransaction(tx)
+	if err != nil {
+		txs.handleProcessTransactionError(preProcessorExecutionInfoHandler, snapshot, txHash)
+		return err
+	}
+
+	txs.updateGasConsumedWithGasRefundedAndGasPenalized(txHash, gasInfo)
+	txs.gasHandler.SetGasProvided(gasProvidedByTxInSelfShard, txHash)
+
+	return nil
+}
+
+// CreateMarshalledData marshals transactions hashes and saves them into a new structure
+func (txs *transactions) CreateMarshalledData(txHashes [][]byte) ([][]byte, error) {
+	marshalledTxs, err := txs.createMarshalledData(txHashes, &txs.txsForCurrBlock)
 	if err != nil {
 		return nil, err
 	}
 
-	return mrsScrs, nil
+	return marshalledTxs, nil
 }
 
 // GetAllCurrentUsedTxs returns all the transactions used at current creation / processing
 func (txs *transactions) GetAllCurrentUsedTxs() map[string]data.TransactionHandler {
-	txPool := make(map[string]data.TransactionHandler, len(txs.txsForCurrBlock.txHashAndInfo))
-
 	txs.txsForCurrBlock.mutTxsForBlock.RLock()
+	txsPool := make(map[string]data.TransactionHandler, len(txs.txsForCurrBlock.txHashAndInfo))
 	for txHash, txInfoFromMap := range txs.txsForCurrBlock.txHashAndInfo {
-		txPool[txHash] = txInfoFromMap.tx
+		txsPool[txHash] = txInfoFromMap.tx
 	}
 	txs.txsForCurrBlock.mutTxsForBlock.RUnlock()
 
-	return txPool
-}
-
-// EpochConfirmed is called whenever a new epoch is confirmed
-func (txs *transactions) EpochConfirmed(epoch uint32, timestamp uint64) {
-	txs.epochConfirmed(epoch, timestamp)
-
-	txs.flagScheduledMiniBlocks.SetValue(epoch >= txs.scheduledMiniBlocksEnableEpoch)
-	log.Debug("transactions: scheduled mini blocks", "enabled", txs.flagScheduledMiniBlocks.IsSet())
+	return txsPool
 }
 
 // IsInterfaceNil returns true if there is no value under the interface
@@ -1603,7 +1655,7 @@ func (txs *transactions) IsInterfaceNil() bool {
 
 // sortTransactionsBySenderAndNonce sorts the provided transactions and hashes simultaneously
 func (txs *transactions) sortTransactionsBySenderAndNonce(transactions []*txcache.WrappedTransaction, randomness []byte) {
-	if !txs.flagFrontRunningProtection.IsSet() {
+	if !txs.enableEpochsHandler.IsFlagEnabled(common.FrontRunningProtectionFlag) {
 		sortTransactionsBySenderAndNonceLegacy(transactions)
 		return
 	}
@@ -1784,7 +1836,7 @@ func (txs *transactions) createAndProcessMiniBlocksFromMe(
 	var mapSCTxs map[string]struct{}
 	var remainingTxs []*txcache.WrappedTransaction
 
-	if txs.flagScheduledMiniBlocks.IsSet() {
+	if txs.enableEpochsHandler.IsFlagEnabled(common.ScheduledMiniBlocksFlag) {
 		miniBlocks, remainingTxs, mapSCTxs, err = txs.createAndProcessMiniBlocksFromMeV2(
 			haveTime,
 			isShardStuck,

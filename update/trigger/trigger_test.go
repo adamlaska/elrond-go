@@ -8,12 +8,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ElrondNetwork/elrond-go-core/core/check"
-	"github.com/ElrondNetwork/elrond-go-core/data/endProcess"
-	"github.com/ElrondNetwork/elrond-go/process/smartContract"
-	"github.com/ElrondNetwork/elrond-go/update"
-	"github.com/ElrondNetwork/elrond-go/update/mock"
-	"github.com/ElrondNetwork/elrond-go/update/trigger"
+	"github.com/multiversx/mx-chain-core-go/core/check"
+	"github.com/multiversx/mx-chain-core-go/data/endProcess"
+	"github.com/multiversx/mx-chain-go/process/smartContract"
+	"github.com/multiversx/mx-chain-go/update"
+	"github.com/multiversx/mx-chain-go/update/mock"
+	"github.com/multiversx/mx-chain-go/update/trigger"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -68,6 +68,26 @@ func TestNewTrigger_ShouldWork(t *testing.T) {
 
 	assert.Nil(t, err)
 	assert.False(t, check.IfNil(trig))
+}
+
+//------- SetExportFactoryHandler
+
+func TestSetExportFactoryHandler_NilArgShouldErr(t *testing.T) {
+	t.Parallel()
+
+	trig, _ := trigger.NewTrigger(createMockArgHardforkTrigger())
+
+	err := trig.SetExportFactoryHandler(nil)
+	assert.Equal(t, update.ErrNilExportFactoryHandler, err)
+}
+
+func TestSetExportFactoryHandler_ShouldWork(t *testing.T) {
+	t.Parallel()
+
+	trig, _ := trigger.NewTrigger(createMockArgHardforkTrigger())
+
+	err := trig.SetExportFactoryHandler(&mock.ExportFactoryHandlerStub{})
+	assert.Nil(t, err)
 }
 
 //------- Trigger
@@ -183,7 +203,7 @@ func TestTrigger_TriggerCalledTwiceShouldErr(t *testing.T) {
 	assert.Equal(t, update.ErrTriggerAlreadyInAction, err)
 
 	select {
-	case <-trig.NotifyTriggerReceived():
+	case <-trig.NotifyTriggerReceivedV2():
 	case <-time.After(time.Second):
 		assert.Fail(t, "should have write on the notify channel")
 	}

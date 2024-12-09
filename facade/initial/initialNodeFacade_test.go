@@ -4,12 +4,44 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/ElrondNetwork/elrond-go-core/core/check"
-	"github.com/ElrondNetwork/elrond-go-core/data/api"
+	"github.com/multiversx/mx-chain-core-go/data/api"
+	"github.com/multiversx/mx-chain-go/facade"
+	"github.com/multiversx/mx-chain-go/node/external"
+	"github.com/multiversx/mx-chain-go/testscommon"
 	"github.com/stretchr/testify/assert"
 )
 
-func TestDisabledNodeFacade_AllMethodsShouldNotPanic(t *testing.T) {
+func createInitialNodeFacadeArgs() ArgInitialNodeFacade {
+	return ArgInitialNodeFacade{
+		ApiInterface:                "127.0.0.1:8080",
+		PprofEnabled:                true,
+		P2PPrometheusMetricsEnabled: false,
+		StatusMetricsHandler:        &testscommon.StatusMetricsStub{},
+	}
+}
+
+func TestInitialNodeFacade(t *testing.T) {
+	t.Parallel()
+
+	t.Run("nil status metrics should error", func(t *testing.T) {
+		t.Parallel()
+
+		args := createInitialNodeFacadeArgs()
+		args.StatusMetricsHandler = nil
+		inf, err := NewInitialNodeFacade(args)
+		assert.Equal(t, facade.ErrNilStatusMetrics, err)
+		assert.Nil(t, inf)
+	})
+	t.Run("should work", func(t *testing.T) {
+		t.Parallel()
+
+		inf, err := NewInitialNodeFacade(createInitialNodeFacadeArgs())
+		assert.Nil(t, err)
+		assert.NotNil(t, inf)
+	})
+}
+
+func TestInitialNodeFacade_AllMethodsShouldNotPanic(t *testing.T) {
 	t.Parallel()
 	defer func() {
 		r := recover()
@@ -19,34 +51,36 @@ func TestDisabledNodeFacade_AllMethodsShouldNotPanic(t *testing.T) {
 	}()
 
 	apiInterface := "127.0.0.1:7799"
-	inf := NewInitialNodeFacade(apiInterface, true)
+	args := createInitialNodeFacadeArgs()
+	args.ApiInterface = apiInterface
+	inf, err := NewInitialNodeFacade(args)
+	assert.Nil(t, err)
 
 	inf.SetSyncer(nil)
 	b := inf.RestAPIServerDebugMode()
 	assert.False(t, b)
 	s1 := inf.RestApiInterface()
 	assert.Equal(t, apiInterface, s1)
-	s1, s2, err := inf.GetESDTBalance("", "")
+	s1, s2, _, err := inf.GetESDTBalance("", "", api.AccountQueryOptions{})
 	assert.Equal(t, emptyString, s1+s2)
 	assert.Equal(t, errNodeStarting, err)
-	v, err := inf.GetBalance("")
+	v, _, err := inf.GetBalance("", api.AccountQueryOptions{})
 	assert.Nil(t, v)
 	assert.Equal(t, errNodeStarting, err)
 
-	s1, err = inf.GetUsername("")
+	s1, _, err = inf.GetUsername("", api.AccountQueryOptions{})
 	assert.Equal(t, emptyString, s1)
 	assert.Equal(t, errNodeStarting, err)
 
-	s1, err = inf.GetValueForKey("", "")
+	s1, _, err = inf.GetValueForKey("", "", api.AccountQueryOptions{})
 	assert.Equal(t, emptyString, s1)
 	assert.Equal(t, errNodeStarting, err)
 
-	s3, err := inf.GetAllESDTTokens("")
+	s3, _, err := inf.GetAllESDTTokens("", api.AccountQueryOptions{})
 	assert.Nil(t, s3)
 	assert.Equal(t, errNodeStarting, err)
 
-	n1, n2, err := inf.CreateTransaction(uint64(0), "", "", []byte{0}, "",
-		[]byte{0}, uint64(0), uint64(0), []byte{0}, "", "", uint32(0), uint32(0))
+	n1, n2, err := inf.CreateTransaction(&external.ArgsCreateTransaction{})
 	assert.Nil(t, n1)
 	assert.Nil(t, n2)
 	assert.Equal(t, errNodeStarting, err)
@@ -59,6 +93,10 @@ func TestDisabledNodeFacade_AllMethodsShouldNotPanic(t *testing.T) {
 
 	v1, err := inf.ValidatorStatisticsApi()
 	assert.Nil(t, v1)
+	assert.Equal(t, errNodeStarting, err)
+
+	v2, err := inf.AuctionListApi()
+	assert.Nil(t, v2)
 	assert.Equal(t, errNodeStarting, err)
 
 	u1, err := inf.SendBulkTransactions(nil)
@@ -77,7 +115,7 @@ func TestDisabledNodeFacade_AllMethodsShouldNotPanic(t *testing.T) {
 	assert.Nil(t, resp)
 	assert.Equal(t, errNodeStarting, err)
 
-	uac, err := inf.GetAccount("")
+	uac, _, err := inf.GetAccount("", api.AccountQueryOptions{})
 	assert.Equal(t, api.AccountResponse{}, uac)
 	assert.Equal(t, errNodeStarting, err)
 
@@ -88,7 +126,7 @@ func TestDisabledNodeFacade_AllMethodsShouldNotPanic(t *testing.T) {
 	sm := inf.StatusMetrics()
 	assert.NotNil(t, sm)
 
-	vo, err := inf.ExecuteSCQuery(nil)
+	vo, _, err := inf.ExecuteSCQuery(nil)
 	assert.Nil(t, vo)
 	assert.Equal(t, errNodeStarting, err)
 
@@ -121,18 +159,18 @@ func TestDisabledNodeFacade_AllMethodsShouldNotPanic(t *testing.T) {
 	assert.Nil(t, th)
 	assert.False(t, b)
 
-	ab, err := inf.GetBlockByHash("", false)
+	ab, err := inf.GetBlockByHash("", api.BlockQueryOptions{})
 	assert.Nil(t, ab)
 	assert.Equal(t, errNodeStarting, err)
 
-	c := inf.GetCode(nil)
+	c := inf.GetCode(nil, api.AccountQueryOptions{})
 	assert.Nil(t, c)
 
-	ab, err = inf.GetBlockByNonce(0, false)
+	ab, err = inf.GetBlockByNonce(0, api.BlockQueryOptions{})
 	assert.Nil(t, ab)
 	assert.Equal(t, errNodeStarting, err)
 
-	ab, err = inf.GetBlockByRound(0, false)
+	ab, err = inf.GetBlockByRound(0, api.BlockQueryOptions{})
 	assert.Nil(t, ab)
 	assert.Equal(t, errNodeStarting, err)
 
@@ -151,11 +189,11 @@ func TestDisabledNodeFacade_AllMethodsShouldNotPanic(t *testing.T) {
 	assert.False(t, b)
 	assert.Equal(t, errNodeStarting, err)
 
-	sa, err := inf.GetNFTTokenIDsRegisteredByAddress("")
+	sa, _, err := inf.GetNFTTokenIDsRegisteredByAddress("", api.AccountQueryOptions{})
 	assert.Nil(t, sa)
 	assert.Equal(t, errNodeStarting, err)
 
-	sa, err = inf.GetESDTsWithRole("", "")
+	sa, _, err = inf.GetESDTsWithRole("", "", api.AccountQueryOptions{})
 	assert.Nil(t, sa)
 	assert.Equal(t, errNodeStarting, err)
 
@@ -166,7 +204,7 @@ func TestDisabledNodeFacade_AllMethodsShouldNotPanic(t *testing.T) {
 	assert.Nil(t, asv)
 	assert.Equal(t, errNodeStarting, err)
 
-	mss, err := inf.GetKeyValuePairs("")
+	mss, _, err := inf.GetKeyValuePairs("", api.AccountQueryOptions{})
 	assert.Nil(t, mss)
 	assert.Equal(t, errNodeStarting, err)
 
@@ -174,7 +212,7 @@ func TestDisabledNodeFacade_AllMethodsShouldNotPanic(t *testing.T) {
 	assert.Nil(t, ds)
 	assert.Equal(t, errNodeStarting, err)
 
-	mssa, err := inf.GetESDTsRoles("")
+	mssa, _, err := inf.GetESDTsRoles("", api.AccountQueryOptions{})
 	assert.Nil(t, mssa)
 	assert.Equal(t, errNodeStarting, err)
 
@@ -186,9 +224,145 @@ func TestDisabledNodeFacade_AllMethodsShouldNotPanic(t *testing.T) {
 	assert.Nil(t, supply)
 	assert.Equal(t, errNodeStarting, err)
 
-	txPool, err := inf.GetTransactionsPool()
+	txPool, err := inf.GetTransactionsPool("")
 	assert.Nil(t, txPool)
 	assert.Equal(t, errNodeStarting, err)
 
-	assert.False(t, check.IfNil(inf))
+	eligible, waiting, err := inf.GetGenesisNodesPubKeys()
+	assert.Nil(t, eligible)
+	assert.Nil(t, waiting)
+	assert.Equal(t, errNodeStarting, err)
+
+	gasConfig, err := inf.GetGasConfigs()
+	assert.Nil(t, gasConfig)
+	assert.Equal(t, errNodeStarting, err)
+
+	txs, err := inf.GetTransactionsPoolForSender("", "")
+	assert.Nil(t, txs)
+	assert.Equal(t, errNodeStarting, err)
+
+	nonce, err := inf.GetLastPoolNonceForSender("")
+	assert.Equal(t, uint64(0), nonce)
+	assert.Equal(t, errNodeStarting, err)
+
+	guardianData, _, err := inf.GetGuardianData("", api.AccountQueryOptions{})
+	assert.Equal(t, api.GuardianData{}, guardianData)
+	assert.Equal(t, errNodeStarting, err)
+
+	isMigrated, err := inf.IsDataTrieMigrated("", api.AccountQueryOptions{})
+	assert.False(t, isMigrated)
+	assert.Equal(t, errNodeStarting, err)
+
+	mainTrieResponse, dataTrieResponse, err := inf.GetProofDataTrie("", "", "")
+	assert.Nil(t, mainTrieResponse)
+	assert.Nil(t, dataTrieResponse)
+	assert.Equal(t, errNodeStarting, err)
+
+	codeHash, blockInfo, err := inf.GetCodeHash("", api.AccountQueryOptions{})
+	assert.Nil(t, codeHash)
+	assert.Equal(t, api.BlockInfo{}, blockInfo)
+	assert.Equal(t, errNodeStarting, err)
+
+	accountsResponse, blockInfo, err := inf.GetAccounts([]string{}, api.AccountQueryOptions{})
+	assert.Nil(t, accountsResponse)
+	assert.Equal(t, api.BlockInfo{}, blockInfo)
+	assert.Equal(t, errNodeStarting, err)
+
+	stakeValue, err := inf.GetTotalStakedValue()
+	assert.Nil(t, stakeValue)
+	assert.Equal(t, errNodeStarting, err)
+
+	ratings, err := inf.GetConnectedPeersRatingsOnMainNetwork()
+	assert.Equal(t, "", ratings)
+	assert.Equal(t, errNodeStarting, err)
+
+	epochStartData, err := inf.GetEpochStartDataAPI(0)
+	assert.Nil(t, epochStartData)
+	assert.Equal(t, errNodeStarting, err)
+
+	alteredAcc, err := inf.GetAlteredAccountsForBlock(api.GetAlteredAccountsForBlockOptions{})
+	assert.Nil(t, alteredAcc)
+	assert.Equal(t, errNodeStarting, err)
+
+	block, err := inf.GetInternalMetaBlockByHash(0, "")
+	assert.Nil(t, block)
+	assert.Equal(t, errNodeStarting, err)
+
+	block, err = inf.GetInternalMetaBlockByNonce(0, 0)
+	assert.Nil(t, block)
+	assert.Equal(t, errNodeStarting, err)
+
+	block, err = inf.GetInternalMetaBlockByRound(0, 0)
+	assert.Nil(t, block)
+	assert.Equal(t, errNodeStarting, err)
+
+	block, err = inf.GetInternalStartOfEpochMetaBlock(0, 0)
+	assert.Nil(t, block)
+	assert.Equal(t, errNodeStarting, err)
+
+	validatorsInfo, err := inf.GetInternalStartOfEpochValidatorsInfo(0)
+	assert.Nil(t, validatorsInfo)
+	assert.Equal(t, errNodeStarting, err)
+
+	block, err = inf.GetInternalShardBlockByHash(0, "")
+	assert.Nil(t, block)
+	assert.Equal(t, errNodeStarting, err)
+
+	block, err = inf.GetInternalShardBlockByNonce(0, 0)
+	assert.Nil(t, block)
+	assert.Equal(t, errNodeStarting, err)
+
+	block, err = inf.GetInternalShardBlockByRound(0, 0)
+	assert.Nil(t, block)
+	assert.Equal(t, errNodeStarting, err)
+
+	block, err = inf.GetInternalMiniBlockByHash(0, "", 0)
+	assert.Nil(t, block)
+	assert.Equal(t, errNodeStarting, err)
+
+	esdtData, blockInfo, err := inf.GetESDTData("", "", 0, api.AccountQueryOptions{})
+	assert.Nil(t, esdtData)
+	assert.Equal(t, api.BlockInfo{}, blockInfo)
+	assert.Equal(t, errNodeStarting, err)
+
+	genesisBalances, err := inf.GetGenesisBalances()
+	assert.Nil(t, genesisBalances)
+	assert.Equal(t, errNodeStarting, err)
+
+	txPoolGaps, err := inf.GetTransactionsPoolNonceGapsForSender("")
+	assert.Nil(t, txPoolGaps)
+	assert.Equal(t, errNodeStarting, err)
+
+	count := inf.GetManagedKeysCount()
+	assert.Zero(t, count)
+
+	keys := inf.GetManagedKeys()
+	assert.Nil(t, keys)
+
+	keys = inf.GetLoadedKeys()
+	assert.Nil(t, keys)
+
+	keys, err = inf.GetEligibleManagedKeys()
+	assert.Nil(t, keys)
+	assert.Equal(t, errNodeStarting, err)
+
+	keys, err = inf.GetWaitingManagedKeys()
+	assert.Nil(t, keys)
+	assert.Equal(t, errNodeStarting, err)
+
+	left, err := inf.GetWaitingEpochsLeftForPublicKey("")
+	assert.Zero(t, left)
+	assert.Equal(t, errNodeStarting, err)
+
+	assert.NotNil(t, inf)
+}
+
+func TestInitialNodeFacade_IsInterfaceNil(t *testing.T) {
+	t.Parallel()
+
+	var inf *initialNodeFacade
+	assert.True(t, inf.IsInterfaceNil())
+
+	inf, _ = NewInitialNodeFacade(createInitialNodeFacadeArgs())
+	assert.False(t, inf.IsInterfaceNil())
 }

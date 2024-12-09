@@ -1,15 +1,15 @@
 package interceptedBlocks
 
 import (
-	"github.com/ElrondNetwork/elrond-go-core/core"
-	"github.com/ElrondNetwork/elrond-go-core/core/check"
-	"github.com/ElrondNetwork/elrond-go-core/data"
-	"github.com/ElrondNetwork/elrond-go/process"
-	"github.com/ElrondNetwork/elrond-go/sharding"
+	"github.com/multiversx/mx-chain-core-go/core"
+	"github.com/multiversx/mx-chain-core-go/core/check"
+	"github.com/multiversx/mx-chain-core-go/data"
+	"github.com/multiversx/mx-chain-go/process"
+	"github.com/multiversx/mx-chain-go/sharding"
 )
 
 const maxLenMiniBlockReservedField = 10
-const maxLenMiniBlockHeaderReservedField = 16
+const maxLenMiniBlockHeaderReservedField = 32
 
 func checkBlockHeaderArgument(arg *ArgInterceptedBlockHeader) error {
 	if arg == nil {
@@ -83,7 +83,7 @@ func checkHeaderHandler(hdr data.HeaderHandler) error {
 		return process.ErrNilPrevRandSeed
 	}
 
-	return nil
+	return hdr.CheckFieldsForNil()
 }
 
 func checkMetaShardInfo(shardInfo []data.ShardDataHandler, coordinator sharding.Coordinator) error {
@@ -122,20 +122,20 @@ func checkShardData(sd data.ShardDataHandler, coordinator sharding.Coordinator) 
 	return nil
 }
 
-func checkMiniblocks(miniblocks []data.MiniBlockHeaderHandler, coordinator sharding.Coordinator) error {
-	for _, miniblock := range miniblocks {
-		isWrongSenderShardId := miniblock.GetSenderShardID() >= coordinator.NumberOfShards() &&
-			miniblock.GetSenderShardID() != core.MetachainShardId &&
-			miniblock.GetSenderShardID() != core.AllShardId
-		isWrongDestinationShardId := miniblock.GetReceiverShardID() >= coordinator.NumberOfShards() &&
-			miniblock.GetReceiverShardID() != core.MetachainShardId &&
-			miniblock.GetReceiverShardID() != core.AllShardId
+func checkMiniBlocksHeaders(mbHeaders []data.MiniBlockHeaderHandler, coordinator sharding.Coordinator) error {
+	for _, mbHeader := range mbHeaders {
+		isWrongSenderShardId := mbHeader.GetSenderShardID() >= coordinator.NumberOfShards() &&
+			mbHeader.GetSenderShardID() != core.MetachainShardId &&
+			mbHeader.GetSenderShardID() != core.AllShardId
+		isWrongDestinationShardId := mbHeader.GetReceiverShardID() >= coordinator.NumberOfShards() &&
+			mbHeader.GetReceiverShardID() != core.MetachainShardId &&
+			mbHeader.GetReceiverShardID() != core.AllShardId
 		isWrongShardId := isWrongSenderShardId || isWrongDestinationShardId
 		if isWrongShardId {
 			return process.ErrInvalidShardId
 		}
 
-		if len(miniblock.GetReserved()) > maxLenMiniBlockReservedField {
+		if len(mbHeader.GetReserved()) > maxLenMiniBlockHeaderReservedField {
 			return process.ErrReservedFieldInvalid
 		}
 	}

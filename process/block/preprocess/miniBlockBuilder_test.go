@@ -4,19 +4,18 @@ import (
 	"encoding/hex"
 	"errors"
 	"math/big"
-	"sync"
 	"testing"
 
-	stateMock "github.com/ElrondNetwork/elrond-go/testscommon/state"
-
-	"github.com/ElrondNetwork/elrond-go-core/data"
-	"github.com/ElrondNetwork/elrond-go-core/data/block"
-	"github.com/ElrondNetwork/elrond-go-core/data/transaction"
-	"github.com/ElrondNetwork/elrond-go/process"
-	"github.com/ElrondNetwork/elrond-go/storage/txcache"
-	"github.com/ElrondNetwork/elrond-go/testscommon"
-	"github.com/ElrondNetwork/elrond-go/testscommon/economicsmocks"
-	"github.com/ElrondNetwork/elrond-go/testscommon/hashingMocks"
+	"github.com/multiversx/mx-chain-core-go/data"
+	"github.com/multiversx/mx-chain-core-go/data/block"
+	"github.com/multiversx/mx-chain-core-go/data/transaction"
+	"github.com/multiversx/mx-chain-go/process"
+	"github.com/multiversx/mx-chain-go/storage/txcache"
+	"github.com/multiversx/mx-chain-go/testscommon"
+	"github.com/multiversx/mx-chain-go/testscommon/economicsmocks"
+	"github.com/multiversx/mx-chain-go/testscommon/hashingMocks"
+	"github.com/multiversx/mx-chain-go/testscommon/marshallerMock"
+	stateMock "github.com/multiversx/mx-chain-go/testscommon/state"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -82,16 +81,6 @@ func Test_checkMiniBlocksBuilderArgsNilBlockSizeComputationHandlerShouldErr(t *t
 	require.Equal(t, process.ErrNilBlockSizeComputationHandler, err)
 }
 
-func Test_checkMiniBlocksBuilderArgsNilAccountsTxsPerShardsShouldErr(t *testing.T) {
-	t.Parallel()
-
-	args := createDefaultMiniBlockBuilderArgs()
-	args.accountTxsShards = nil
-
-	err := checkMiniBlocksBuilderArgs(args)
-	require.Equal(t, process.ErrNilAccountTxsPerShard, err)
-}
-
 func Test_checkMiniBlocksBuilderArgsNilBalanceComputationHandlerShouldErr(t *testing.T) {
 	t.Parallel()
 
@@ -149,29 +138,6 @@ func Test_checkMiniBlocksBuilderArgsOK(t *testing.T) {
 
 	err := checkMiniBlocksBuilderArgs(args)
 	require.Nil(t, err)
-}
-
-func Test_MiniBlocksBuilderUpdateAccountShardsInfo(t *testing.T) {
-	t.Parallel()
-
-	args := createDefaultMiniBlockBuilderArgs()
-
-	mbb, _ := newMiniBlockBuilder(args)
-	senderAddr := []byte("senderAddr")
-	receiverAddr := []byte("receiverAddr")
-	tx := createDefaultTx(senderAddr, receiverAddr, 50000)
-
-	senderShardID := uint32(0)
-	receiverShardID := uint32(0)
-	wtx := createWrappedTransaction(tx, senderShardID, receiverShardID)
-
-	mbb.updateAccountShardsInfo(tx, wtx)
-
-	addrShardInfo, ok := mbb.accountTxsShards.accountsInfo[string(tx.SndAddr)]
-	require.True(t, ok)
-
-	require.Equal(t, senderShardID, addrShardInfo.senderShardID)
-	require.Equal(t, receiverShardID, addrShardInfo.receiverShardID)
 }
 
 func Test_MiniBlocksBuilderHandleGasRefundIntraShard(t *testing.T) {
@@ -659,12 +625,11 @@ func Test_MiniBlocksBuilderCheckAddTransactionWrongTypeAssertion(t *testing.T) {
 	t.Parallel()
 
 	wtx := &txcache.WrappedTransaction{
-		Tx:                   nil,
-		TxHash:               nil,
-		SenderShardID:        0,
-		ReceiverShardID:      0,
-		Size:                 0,
-		TxFeeScoreNormalized: 0,
+		Tx:              nil,
+		TxHash:          nil,
+		SenderShardID:   0,
+		ReceiverShardID: 0,
+		Size:            0,
 	}
 
 	args := createDefaultMiniBlockBuilderArgs()
@@ -882,11 +847,7 @@ func createDefaultMiniBlockBuilderArgs() miniBlocksBuilderArgs {
 				},
 			},
 		},
-		accounts: &stateMock.AccountsStub{},
-		accountTxsShards: &accountTxsShards{
-			accountsInfo: make(map[string]*txShardInfo),
-			RWMutex:      sync.RWMutex{},
-		},
+		accounts:                  &stateMock.AccountsStub{},
 		blockSizeComputation:      &testscommon.BlockSizeComputationStub{},
 		balanceComputationHandler: &testscommon.BalanceComputationStub{},
 		haveTime:                  haveTimeTrue,
@@ -907,16 +868,18 @@ func createWrappedTransaction(
 	receiverShardID uint32,
 ) *txcache.WrappedTransaction {
 	hasher := &hashingMocks.HasherMock{}
-	marshaller := &testscommon.MarshalizerMock{}
+	marshaller := &marshallerMock.MarshalizerMock{}
 	txMarshalled, _ := marshaller.Marshal(tx)
 	txHash := hasher.Compute(string(txMarshalled))
 
-	return &txcache.WrappedTransaction{
-		Tx:                   tx,
-		TxHash:               txHash,
-		SenderShardID:        senderShardID,
-		ReceiverShardID:      receiverShardID,
-		Size:                 int64(len(txMarshalled)),
-		TxFeeScoreNormalized: 10,
+	wrappedTx := &txcache.WrappedTransaction{
+		Tx:              tx,
+		TxHash:          txHash,
+		SenderShardID:   senderShardID,
+		ReceiverShardID: receiverShardID,
+		Size:            int64(len(txMarshalled)),
 	}
+
+	wrappedTx.PricePerUnit = 1_000_000_000
+	return wrappedTx
 }

@@ -3,9 +3,10 @@ package disabled
 import (
 	"sync"
 
-	logger "github.com/ElrondNetwork/elrond-go-logger"
-	"github.com/ElrondNetwork/elrond-go/dataRetriever"
-	"github.com/ElrondNetwork/elrond-go/storage"
+	"github.com/multiversx/mx-chain-go/dataRetriever"
+	"github.com/multiversx/mx-chain-go/storage"
+	"github.com/multiversx/mx-chain-go/testscommon"
+	logger "github.com/multiversx/mx-chain-logger-go"
 )
 
 var _ dataRetriever.StorageService = (*chainStorer)(nil)
@@ -51,19 +52,19 @@ func (c *chainStorer) AddStorer(key dataRetriever.UnitType, s storage.Storer) {
 	c.mapStorages[key] = s
 }
 
-// GetStorer returns the storer from the chain map or nil if the storer was not found
-func (c *chainStorer) GetStorer(unitType dataRetriever.UnitType) storage.Storer {
+// GetStorer returns the storer from the chain map or nil if the storer was not found with error
+func (c *chainStorer) GetStorer(unitType dataRetriever.UnitType) (storage.Storer, error) {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 
 	_, ok := c.mapStorages[unitType]
 	if !ok {
 		log.Debug("created new mem storer", "key", unitType)
-		c.mapStorages[unitType] = CreateMemUnit()
+		c.mapStorages[unitType] = testscommon.CreateMemUnit()
 	}
 
 	store := c.mapStorages[unitType]
-	return store
+	return store, nil
 }
 
 // SetEpochForPutOperation won't do anything
@@ -74,7 +75,11 @@ func (c *chainStorer) SetEpochForPutOperation(_ uint32) {
 // It can return an error if the provided unit type is not supported or if the
 // underlying implementation of the storage unit reports an error.
 func (c *chainStorer) Has(unitType dataRetriever.UnitType, key []byte) error {
-	store := c.GetStorer(unitType)
+	store, err := c.GetStorer(unitType)
+	if err != nil {
+		return err
+	}
+
 	return store.Has(key)
 }
 
@@ -82,7 +87,11 @@ func (c *chainStorer) Has(unitType dataRetriever.UnitType, key []byte) error {
 // nil otherwise. It can return an error if the provided unit type is not supported
 // or if the storage unit underlying implementation reports an error
 func (c *chainStorer) Get(unitType dataRetriever.UnitType, key []byte) ([]byte, error) {
-	store := c.GetStorer(unitType)
+	store, err := c.GetStorer(unitType)
+	if err != nil {
+		return nil, err
+	}
+
 	return store.Get(key)
 }
 
@@ -90,7 +99,11 @@ func (c *chainStorer) Get(unitType dataRetriever.UnitType, key []byte) ([]byte, 
 // It can return an error if the provided unit type is not supported
 // or if the storage unit underlying implementation reports an error
 func (c *chainStorer) Put(unitType dataRetriever.UnitType, key []byte, value []byte) error {
-	store := c.GetStorer(unitType)
+	store, err := c.GetStorer(unitType)
+	if err != nil {
+		return err
+	}
+
 	return store.Put(key, value)
 }
 
@@ -98,7 +111,11 @@ func (c *chainStorer) Put(unitType dataRetriever.UnitType, key []byte, value []b
 // It can report an error if the provided unit type is not supported, if there is a missing
 // key in the unit, or if the underlying implementation of the storage unit reports an error.
 func (c *chainStorer) GetAll(unitType dataRetriever.UnitType, keys [][]byte) (map[string][]byte, error) {
-	store := c.GetStorer(unitType)
+	store, err := c.GetStorer(unitType)
+	if err != nil {
+		return nil, err
+	}
+
 	allValues := make(map[string][]byte, len(keys))
 
 	for _, key := range keys {

@@ -3,7 +3,7 @@ package middleware
 import (
 	"bytes"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -33,7 +33,7 @@ func NewResponseLoggerMiddleware(thresholdDurationForLoggingRequest time.Duratio
 	return rlm
 }
 
-// MiddlewareHandlerFunc logs detail about a request if it is not successful or it's duration is higher than a threshold
+// MiddlewareHandlerFunc logs detail about a request if it is not successful, or it's duration is higher than a threshold
 func (rlm *responseLoggerMiddleware) MiddlewareHandlerFunc() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		t := time.Now()
@@ -64,9 +64,9 @@ func (rlm *responseLoggerMiddleware) logRequestAndResponse(c *gin.Context, durat
 
 	if c.Request.Body != nil {
 		reqBody := c.Request.Body
-		reqBodyBytes, err := ioutil.ReadAll(reqBody)
+		reqBodyBytes, err := io.ReadAll(reqBody)
 		if err != nil {
-			log.Error(err.Error())
+			log.Debug(err.Error())
 			return
 		}
 

@@ -1,6 +1,3 @@
-//go:build !race
-// +build !race
-
 package localFuncs
 
 import (
@@ -9,10 +6,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ElrondNetwork/elrond-go-core/core"
-	"github.com/ElrondNetwork/elrond-go/integrationTests"
-	esdtCommon "github.com/ElrondNetwork/elrond-go/integrationTests/vm/esdt"
-	"github.com/ElrondNetwork/elrond-go/testscommon/txDataBuilder"
+	"github.com/multiversx/mx-chain-core-go/core"
+	"github.com/multiversx/mx-chain-go/integrationTests"
+	esdtCommon "github.com/multiversx/mx-chain-go/integrationTests/vm/esdt"
+	"github.com/multiversx/mx-chain-go/testscommon/txDataBuilder"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -37,22 +34,37 @@ func TestESDTLocalMintAndBurnFromSC(t *testing.T) {
 	nonce++
 
 	scAddress := esdtCommon.DeployNonPayableSmartContract(t, nodes, idxProposers, &nonce, &round, "../testdata/local-esdt-and-nft.wasm")
-	tokenIdentifier := esdtCommon.PrepareFungibleTokensWithLocalBurnAndMint(t, nodes, scAddress, idxProposers, &nonce, &round)
+
+	esdtLocalMintAndBurnFromSCRunTestsAndAsserts(t, nodes, nodes[0].OwnAccount, scAddress, idxProposers, nonce, round)
+}
+
+func esdtLocalMintAndBurnFromSCRunTestsAndAsserts(
+	t *testing.T,
+	nodes []*integrationTests.TestProcessorNode,
+	ownerWallet *integrationTests.TestWalletAccount,
+	scAddress []byte,
+	idxProposers []int,
+	nonce uint64,
+	round uint64,
+) {
+	tokenIdentifier := esdtCommon.PrepareFungibleTokensWithLocalBurnAndMintWithIssuerAccount(t, nodes, ownerWallet, scAddress, idxProposers, &nonce, &round)
 
 	txData := []byte("localMint" + "@" + hex.EncodeToString([]byte(tokenIdentifier)) +
 		"@" + hex.EncodeToString(big.NewInt(100).Bytes()))
-	integrationTests.CreateAndSendTransaction(
+	integrationTests.CreateAndSendTransactionWithSenderAccount(
 		nodes[0],
 		nodes,
 		big.NewInt(0),
+		ownerWallet,
 		scAddress,
 		string(txData),
 		integrationTests.AdditionalGasLimit,
 	)
-	integrationTests.CreateAndSendTransaction(
+	integrationTests.CreateAndSendTransactionWithSenderAccount(
 		nodes[0],
 		nodes,
 		big.NewInt(0),
+		ownerWallet,
 		scAddress,
 		string(txData),
 		integrationTests.AdditionalGasLimit,
@@ -67,18 +79,20 @@ func TestESDTLocalMintAndBurnFromSC(t *testing.T) {
 
 	txData = []byte("localBurn" + "@" + hex.EncodeToString([]byte(tokenIdentifier)) +
 		"@" + hex.EncodeToString(big.NewInt(50).Bytes()))
-	integrationTests.CreateAndSendTransaction(
+	integrationTests.CreateAndSendTransactionWithSenderAccount(
 		nodes[0],
 		nodes,
 		big.NewInt(0),
+		ownerWallet,
 		scAddress,
 		string(txData),
 		integrationTests.AdditionalGasLimit,
 	)
-	integrationTests.CreateAndSendTransaction(
+	integrationTests.CreateAndSendTransactionWithSenderAccount(
 		nodes[0],
 		nodes,
 		big.NewInt(0),
+		ownerWallet,
 		scAddress,
 		string(txData),
 		integrationTests.AdditionalGasLimit,
@@ -249,17 +263,22 @@ func TestESDTSetTransferRoles(t *testing.T) {
 }
 
 func TestESDTSetTransferRolesForwardAsyncCallFailsIntra(t *testing.T) {
+	if testing.Short() {
+		t.Skip("this is not a short test")
+	}
+
 	testESDTWithTransferRoleAndForwarder(t, 1)
 }
 
 func TestESDTSetTransferRolesForwardAsyncCallFailsCross(t *testing.T) {
+	if testing.Short() {
+		t.Skip("this is not a short test")
+	}
+
 	testESDTWithTransferRoleAndForwarder(t, 2)
 }
 
 func testESDTWithTransferRoleAndForwarder(t *testing.T, numShards int) {
-	if testing.Short() {
-		t.Skip("this is not a short test")
-	}
 	nodes, idxProposers := esdtCommon.CreateNodesAndPrepareBalances(numShards)
 
 	defer func() {
@@ -303,22 +322,28 @@ func testESDTWithTransferRoleAndForwarder(t *testing.T, numShards int) {
 	nonce, round = integrationTests.WaitOperationToBeDone(t, nodes, 15, nonce, round, idxProposers)
 	time.Sleep(time.Second)
 
+	esdtCommon.CheckAddressHasTokens(t, scAddressB, nodes, []byte(tokenIdentifier), 0, 0)
+	esdtCommon.CheckAddressHasTokens(t, scAddressA, nodes, []byte(tokenIdentifier), 0, 0)
 	esdtCommon.CheckAddressHasTokens(t, nodes[0].OwnAccount.Address, nodes, []byte(tokenIdentifier), 0, amount)
 }
 
 func TestAsyncCallsAndCallBacksArgumentsIntra(t *testing.T) {
-	testAsyncCallAndCallBacksArguments(t, 1)
-}
-
-func TestAsyncCallsAndCallBacksArgumentsCross(t *testing.T) {
-	testAsyncCallAndCallBacksArguments(t, 2)
-}
-
-func testAsyncCallAndCallBacksArguments(t *testing.T, numShards int) {
 	if testing.Short() {
 		t.Skip("this is not a short test")
 	}
 
+	testAsyncCallAndCallBacksArguments(t, 1)
+}
+
+func TestAsyncCallsAndCallBacksArgumentsCross(t *testing.T) {
+	if testing.Short() {
+		t.Skip("this is not a short test")
+	}
+
+	testAsyncCallAndCallBacksArguments(t, 2)
+}
+
+func testAsyncCallAndCallBacksArguments(t *testing.T, numShards int) {
 	nodes, idxProposers := esdtCommon.CreateNodesAndPrepareBalances(numShards)
 	defer func() {
 		for _, n := range nodes {
@@ -380,6 +405,6 @@ func checkDataFromAccountAndKey(
 	expectedData []byte,
 ) {
 	userAcc := esdtCommon.GetUserAccountWithAddress(t, address, nodes)
-	val, _ := userAcc.DataTrieTracker().RetrieveValue(key)
+	val, _, _ := userAcc.RetrieveValue(key)
 	assert.Equal(t, expectedData, val)
 }

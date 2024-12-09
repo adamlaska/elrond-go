@@ -6,20 +6,23 @@ import (
 	"math/big"
 	"testing"
 
-	"github.com/ElrondNetwork/elrond-go-core/core"
-	"github.com/ElrondNetwork/elrond-go-core/data/block"
-	"github.com/ElrondNetwork/elrond-go-core/data/smartContractResult"
-	"github.com/ElrondNetwork/elrond-go/config"
-	"github.com/ElrondNetwork/elrond-go/integrationTests/vm"
-	"github.com/ElrondNetwork/elrond-go/integrationTests/vm/txsFee/utils"
-	"github.com/ElrondNetwork/elrond-go/process"
-	"github.com/ElrondNetwork/elrond-go/sharding"
-	vmcommon "github.com/ElrondNetwork/elrond-vm-common"
+	"github.com/multiversx/mx-chain-core-go/core"
+	"github.com/multiversx/mx-chain-core-go/data/smartContractResult"
+	"github.com/multiversx/mx-chain-go/config"
+	"github.com/multiversx/mx-chain-go/integrationTests/vm"
+	"github.com/multiversx/mx-chain-go/integrationTests/vm/txsFee/utils"
+	"github.com/multiversx/mx-chain-go/process"
+	"github.com/multiversx/mx-chain-go/sharding"
+	vmcommon "github.com/multiversx/mx-chain-vm-common-go"
 	"github.com/stretchr/testify/require"
 )
 
 func TestESDTTransferShouldWork(t *testing.T) {
-	testContext, err := vm.CreatePreparedTxProcessorWithVMs(config.EnableEpochs{})
+	if testing.Short() {
+		t.Skip("this is not a short test")
+	}
+
+	testContext, err := vm.CreatePreparedTxProcessorWithVMs(config.EnableEpochs{}, 1)
 	require.Nil(t, err)
 	defer testContext.Close()
 
@@ -29,9 +32,8 @@ func TestESDTTransferShouldWork(t *testing.T) {
 	egldBalance := big.NewInt(100000000)
 	esdtBalance := big.NewInt(100000000)
 	token := []byte("miiutoken")
-	utils.CreateAccountWithESDTBalance(t, testContext.Accounts, sndAddr, egldBalance, token, 0, esdtBalance)
+	utils.CreateAccountWithESDTBalance(t, testContext.Accounts, sndAddr, egldBalance, token, 0, esdtBalance, uint32(core.Fungible))
 
-	gasPrice := uint64(10)
 	gasLimit := uint64(40)
 	tx := utils.CreateESDTTransferTx(0, sndAddr, rcvAddr, token, big.NewInt(100), gasPrice, gasLimit)
 	retCode, err := testContext.TxProcessor.ProcessTransaction(tx)
@@ -53,18 +55,14 @@ func TestESDTTransferShouldWork(t *testing.T) {
 	// check accumulated fees
 	accumulatedFees := testContext.TxFeeHandler.GetAccumulatedFees()
 	require.Equal(t, big.NewInt(360), accumulatedFees)
-
-	intermediateTxs := testContext.GetIntermediateTransactions(t)
-	testIndexer := vm.CreateTestIndexer(t, testContext.ShardCoordinator, testContext.EconomicsData, true, testContext.TxsLogsProcessor)
-	testIndexer.SaveTransaction(tx, block.TxBlock, intermediateTxs)
-
-	indexerTx := testIndexer.GetIndexerPreparedTransaction(t)
-	require.Equal(t, uint64(36), indexerTx.GasUsed)
-	require.Equal(t, "360", indexerTx.Fee)
 }
 
 func TestESDTTransferShouldWorkToMuchGasShouldConsumeAllGas(t *testing.T) {
-	testContext, err := vm.CreatePreparedTxProcessorWithVMs(config.EnableEpochs{})
+	if testing.Short() {
+		t.Skip("this is not a short test")
+	}
+
+	testContext, err := vm.CreatePreparedTxProcessorWithVMs(config.EnableEpochs{}, 1)
 	require.Nil(t, err)
 	defer testContext.Close()
 
@@ -74,9 +72,8 @@ func TestESDTTransferShouldWorkToMuchGasShouldConsumeAllGas(t *testing.T) {
 	egldBalance := big.NewInt(100000000)
 	esdtBalance := big.NewInt(100000000)
 	token := []byte("miiutoken")
-	utils.CreateAccountWithESDTBalance(t, testContext.Accounts, sndAddr, egldBalance, token, 0, esdtBalance)
+	utils.CreateAccountWithESDTBalance(t, testContext.Accounts, sndAddr, egldBalance, token, 0, esdtBalance, uint32(core.Fungible))
 
-	gasPrice := uint64(10)
 	gasLimit := uint64(1000)
 	tx := utils.CreateESDTTransferTx(0, sndAddr, rcvAddr, token, big.NewInt(100), gasPrice, gasLimit)
 	retCode, err := testContext.TxProcessor.ProcessTransaction(tx)
@@ -98,18 +95,14 @@ func TestESDTTransferShouldWorkToMuchGasShouldConsumeAllGas(t *testing.T) {
 	// check accumulated fees
 	accumulatedFees := testContext.TxFeeHandler.GetAccumulatedFees()
 	require.Equal(t, big.NewInt(10000), accumulatedFees)
-
-	intermediateTxs := testContext.GetIntermediateTransactions(t)
-	testIndexer := vm.CreateTestIndexer(t, testContext.ShardCoordinator, testContext.EconomicsData, false, testContext.TxsLogsProcessor)
-	testIndexer.SaveTransaction(tx, block.TxBlock, intermediateTxs)
-
-	indexerTx := testIndexer.GetIndexerPreparedTransaction(t)
-	require.Equal(t, tx.GasLimit, indexerTx.GasUsed)
-	require.Equal(t, "10000", indexerTx.Fee)
 }
 
 func TestESDTTransferInvalidESDTValueShouldConsumeGas(t *testing.T) {
-	testContext, err := vm.CreatePreparedTxProcessorWithVMs(config.EnableEpochs{})
+	if testing.Short() {
+		t.Skip("this is not a short test")
+	}
+
+	testContext, err := vm.CreatePreparedTxProcessorWithVMs(config.EnableEpochs{}, 1)
 	require.Nil(t, err)
 	defer testContext.Close()
 
@@ -119,9 +112,8 @@ func TestESDTTransferInvalidESDTValueShouldConsumeGas(t *testing.T) {
 	egldBalance := big.NewInt(100000000)
 	esdtBalance := big.NewInt(100000000)
 	token := []byte("miiutoken")
-	utils.CreateAccountWithESDTBalance(t, testContext.Accounts, sndAddr, egldBalance, token, 0, esdtBalance)
+	utils.CreateAccountWithESDTBalance(t, testContext.Accounts, sndAddr, egldBalance, token, 0, esdtBalance, uint32(core.Fungible))
 
-	gasPrice := uint64(10)
 	gasLimit := uint64(1000)
 	tx := utils.CreateESDTTransferTx(0, sndAddr, rcvAddr, token, big.NewInt(100000000+1), gasPrice, gasLimit)
 
@@ -143,19 +135,15 @@ func TestESDTTransferInvalidESDTValueShouldConsumeGas(t *testing.T) {
 	// check accumulated fees
 	accumulatedFees := testContext.TxFeeHandler.GetAccumulatedFees()
 	require.Equal(t, big.NewInt(10000), accumulatedFees)
-
-	intermediateTxs := testContext.GetIntermediateTransactions(t)
-	testIndexer := vm.CreateTestIndexer(t, testContext.ShardCoordinator, testContext.EconomicsData, false, testContext.TxsLogsProcessor)
-	testIndexer.SaveTransaction(tx, block.TxBlock, intermediateTxs)
-
-	indexerTx := testIndexer.GetIndexerPreparedTransaction(t)
-	require.Equal(t, tx.GasLimit, indexerTx.GasUsed)
-	require.Equal(t, "10000", indexerTx.Fee)
 }
 
 func TestESDTTransferCallBackOnErrorShouldNotGenerateSCRsFurther(t *testing.T) {
+	if testing.Short() {
+		t.Skip("this is not a short test")
+	}
+
 	shardC, _ := sharding.NewMultiShardCoordinator(2, 0)
-	testContext, err := vm.CreatePreparedTxProcessorWithVMsWithShardCoordinator(config.EnableEpochs{}, shardC)
+	testContext, err := vm.CreatePreparedTxProcessorWithVMsWithShardCoordinator(config.EnableEpochs{}, shardC, 1)
 	require.Nil(t, err)
 	defer testContext.Close()
 
@@ -168,7 +156,7 @@ func TestESDTTransferCallBackOnErrorShouldNotGenerateSCRsFurther(t *testing.T) {
 	egldBalance := big.NewInt(100000000)
 	esdtBalance := big.NewInt(100000000)
 	token := []byte("miiutoken")
-	utils.CreateAccountWithESDTBalance(t, testContext.Accounts, sndAddr, egldBalance, token, 0, esdtBalance)
+	utils.CreateAccountWithESDTBalance(t, testContext.Accounts, sndAddr, egldBalance, token, 0, esdtBalance, uint32(core.Fungible))
 
 	hexEncodedToken := hex.EncodeToString(token)
 	esdtValueEncoded := hex.EncodeToString(big.NewInt(100).Bytes())

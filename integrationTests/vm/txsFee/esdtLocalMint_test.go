@@ -4,18 +4,21 @@ import (
 	"math/big"
 	"testing"
 
-	"github.com/ElrondNetwork/elrond-go-core/core"
-	"github.com/ElrondNetwork/elrond-go-core/data/block"
-	"github.com/ElrondNetwork/elrond-go/config"
-	"github.com/ElrondNetwork/elrond-go/integrationTests/vm"
-	"github.com/ElrondNetwork/elrond-go/integrationTests/vm/txsFee/utils"
-	"github.com/ElrondNetwork/elrond-go/process"
-	vmcommon "github.com/ElrondNetwork/elrond-vm-common"
+	"github.com/multiversx/mx-chain-core-go/core"
+	"github.com/multiversx/mx-chain-go/config"
+	"github.com/multiversx/mx-chain-go/integrationTests/vm"
+	"github.com/multiversx/mx-chain-go/integrationTests/vm/txsFee/utils"
+	"github.com/multiversx/mx-chain-go/process"
+	vmcommon "github.com/multiversx/mx-chain-vm-common-go"
 	"github.com/stretchr/testify/require"
 )
 
 func TestESDTLocalMintShouldWork(t *testing.T) {
-	testContext, err := vm.CreatePreparedTxProcessorWithVMs(config.EnableEpochs{})
+	if testing.Short() {
+		t.Skip("this is not a short test")
+	}
+
+	testContext, err := vm.CreatePreparedTxProcessorWithVMs(config.EnableEpochs{}, 1)
 	require.Nil(t, err)
 	defer testContext.Close()
 
@@ -27,7 +30,6 @@ func TestESDTLocalMintShouldWork(t *testing.T) {
 	roles := [][]byte{[]byte(core.ESDTRoleLocalMint), []byte(core.ESDTRoleLocalBurn)}
 	utils.CreateAccountWithESDTBalanceAndRoles(t, testContext.Accounts, sndAddr, egldBalance, token, 0, esdtBalance, roles)
 
-	gasPrice := uint64(10)
 	gasLimit := uint64(40)
 	tx := utils.CreateESDTLocalMintTx(0, sndAddr, sndAddr, token, big.NewInt(100), gasPrice, gasLimit)
 	retCode, err := testContext.TxProcessor.ProcessTransaction(tx)
@@ -43,18 +45,14 @@ func TestESDTLocalMintShouldWork(t *testing.T) {
 	// check accumulated fees
 	accumulatedFees := testContext.TxFeeHandler.GetAccumulatedFees()
 	require.Equal(t, big.NewInt(370), accumulatedFees)
-
-	intermediateTxs := testContext.GetIntermediateTransactions(t)
-	testIndexer := vm.CreateTestIndexer(t, testContext.ShardCoordinator, testContext.EconomicsData, true, testContext.TxsLogsProcessor)
-	testIndexer.SaveTransaction(tx, block.TxBlock, intermediateTxs)
-
-	indexerTx := testIndexer.GetIndexerPreparedTransaction(t)
-	require.Equal(t, uint64(37), indexerTx.GasUsed)
-	require.Equal(t, "370", indexerTx.Fee)
 }
 
 func TestESDTLocalMintNotAllowedShouldErr(t *testing.T) {
-	testContext, err := vm.CreatePreparedTxProcessorWithVMs(config.EnableEpochs{})
+	if testing.Short() {
+		t.Skip("this is not a short test")
+	}
+
+	testContext, err := vm.CreatePreparedTxProcessorWithVMs(config.EnableEpochs{}, 1)
 	require.Nil(t, err)
 	defer testContext.Close()
 
@@ -63,9 +61,8 @@ func TestESDTLocalMintNotAllowedShouldErr(t *testing.T) {
 	egldBalance := big.NewInt(100000000)
 	esdtBalance := big.NewInt(100000000)
 	token := []byte("miiutoken")
-	utils.CreateAccountWithESDTBalance(t, testContext.Accounts, sndAddr, egldBalance, token, 0, esdtBalance)
+	utils.CreateAccountWithESDTBalance(t, testContext.Accounts, sndAddr, egldBalance, token, 0, esdtBalance, uint32(core.Fungible))
 
-	gasPrice := uint64(10)
 	gasLimit := uint64(40)
 	tx := utils.CreateESDTLocalMintTx(0, sndAddr, sndAddr, token, big.NewInt(100), gasPrice, gasLimit)
 	retCode, err := testContext.TxProcessor.ProcessTransaction(tx)
@@ -81,12 +78,4 @@ func TestESDTLocalMintNotAllowedShouldErr(t *testing.T) {
 	// check accumulated fees
 	accumulatedFees := testContext.TxFeeHandler.GetAccumulatedFees()
 	require.Equal(t, big.NewInt(400), accumulatedFees)
-
-	intermediateTxs := testContext.GetIntermediateTransactions(t)
-	testIndexer := vm.CreateTestIndexer(t, testContext.ShardCoordinator, testContext.EconomicsData, false, testContext.TxsLogsProcessor)
-	testIndexer.SaveTransaction(tx, block.TxBlock, intermediateTxs)
-
-	indexerTx := testIndexer.GetIndexerPreparedTransaction(t)
-	require.Equal(t, uint64(40), indexerTx.GasUsed)
-	require.Equal(t, "400", indexerTx.Fee)
 }

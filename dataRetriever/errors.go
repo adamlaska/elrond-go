@@ -13,8 +13,11 @@ var ErrSendRequest = errors.New("cannot send request: peer list is empty or erro
 // ErrNilValue signals the value is nil
 var ErrNilValue = errors.New("nil value")
 
-// ErrTxNotFoundInBlockPool signals the value is nil
-var ErrTxNotFoundInBlockPool = errors.New("cannot find tx in current block pool")
+// ErrTxNotFoundInBlockPool signals that transaction was not found in the current block pool
+var ErrTxNotFoundInBlockPool = errors.New("transaction was not found in the current block pool")
+
+// ErrValidatorInfoNotFoundInEpochPool signals that validator info was not found in the current epoch pool
+var ErrValidatorInfoNotFoundInEpochPool = errors.New("validator info was not found in the current epoch pool")
 
 // ErrNilMarshalizer signals that an operation has been attempted to or with a nil Marshalizer implementation
 var ErrNilMarshalizer = errors.New("nil Marshalizer")
@@ -55,6 +58,9 @@ var ErrNilHeadersNoncesStorage = errors.New("nil headers nonces storage")
 // ErrNilResolverSender signals that a nil resolver sender object has been provided
 var ErrNilResolverSender = errors.New("nil resolver sender")
 
+// ErrNilRequestSender signals that a nil request sender object has been provided
+var ErrNilRequestSender = errors.New("nil request sender")
+
 // ErrInvalidNonceByteSlice signals that an invalid byte slice has been provided
 // and an uint64 can not be decoded from that byte slice
 var ErrInvalidNonceByteSlice = errors.New("invalid nonce byte slice")
@@ -86,6 +92,9 @@ var ErrNilUint64ByteSliceConverter = errors.New("nil byte slice converter")
 // ErrNilResolverContainer signals that a nil resolver container was provided
 var ErrNilResolverContainer = errors.New("nil resolver container")
 
+// ErrNilRequestersContainer signals that a nil requesters container was provided
+var ErrNilRequestersContainer = errors.New("nil requesters container")
+
 // ErrWrongTypeInContainer signals that a wrong type of object was found in container
 var ErrWrongTypeInContainer = errors.New("wrong type of object inside container")
 
@@ -106,9 +115,6 @@ var ErrCacheConfigInvalidSize = errors.New("cache parameter [size] is not valid,
 
 // ErrCacheConfigInvalidShards signals that the cache parameter "shards" is invalid
 var ErrCacheConfigInvalidShards = errors.New("cache parameter [shards] is not valid, it must be a positive number")
-
-// ErrCacheConfigInvalidEconomics signals that an economics parameter required by the cache is invalid
-var ErrCacheConfigInvalidEconomics = errors.New("cache-economics parameter is not valid")
 
 // ErrCacheConfigInvalidSharding signals that a sharding parameter required by the cache is invalid
 var ErrCacheConfigInvalidSharding = errors.New("cache-sharding parameter is not valid")
@@ -131,8 +137,8 @@ var ErrRequestTypeNotImplemented = errors.New("request type is not implemented")
 // ErrNilDataPacker signals that a nil data packer has been provided
 var ErrNilDataPacker = errors.New("nil data packer provided")
 
-// ErrNilResolverFinder signals that a nil resolver finder has been provided
-var ErrNilResolverFinder = errors.New("nil resolvers finder")
+// ErrNilRequestersFinder signals that a nil requesters finder has been provided
+var ErrNilRequestersFinder = errors.New("nil requesters finder")
 
 // ErrInvalidMaxTxRequest signals that max tx request is too small
 var ErrInvalidMaxTxRequest = errors.New("max tx request number is invalid")
@@ -146,8 +152,11 @@ var ErrNilPeersRatingHandler = errors.New("nil peers rating handler")
 // ErrNilTrieDataGetter signals that a nil trie data getter has been provided
 var ErrNilTrieDataGetter = errors.New("nil trie data getter provided")
 
-// ErrNilCurrBlockTxs signals that nil current blocks txs holder was provided
+// ErrNilCurrBlockTxs signals that nil current block txs holder was provided
 var ErrNilCurrBlockTxs = errors.New("nil current block txs holder")
+
+// ErrNilCurrentEpochValidatorInfo signals that nil current epoch validator info holder was provided
+var ErrNilCurrentEpochValidatorInfo = errors.New("nil current epoch validator info holder")
 
 // ErrNilRequestedItemsHandler signals that a nil requested items handler was provided
 var ErrNilRequestedItemsHandler = errors.New("nil requested items handler")
@@ -188,8 +197,8 @@ var ErrNilWhiteListHandler = errors.New("nil white list handler")
 // ErrRequestIntervalTooSmall signals that request interval is too small
 var ErrRequestIntervalTooSmall = errors.New("request interval is too small")
 
-// ErrNilResolverDebugHandler signals that a nil resolver debug handler has been provided
-var ErrNilResolverDebugHandler = errors.New("nil resolver debug handler")
+// ErrNilDebugHandler signals that a nil debug handler has been provided
+var ErrNilDebugHandler = errors.New("nil debug handler")
 
 // ErrMissingData signals that the required data is missing
 var ErrMissingData = errors.New("missing data")
@@ -223,3 +232,33 @@ var ErrNilPathManager = errors.New("nil path manager")
 
 // ErrNilEpochNotifier signals that the provided EpochNotifier is nil
 var ErrNilEpochNotifier = errors.New("nil EpochNotifier")
+
+// ErrNilPeerAuthenticationPool signals that a nil peer authentication pool has been provided
+var ErrNilPeerAuthenticationPool = errors.New("nil peer authentication pool")
+
+// ErrNilHeartbeatPool signals that a nil heartbeat pool has been provided
+var ErrNilHeartbeatPool = errors.New("nil heartbeat pool")
+
+// ErrPeerAuthNotFound signals that no peer authentication found
+var ErrPeerAuthNotFound = errors.New("peer authentication not found")
+
+// ErrNilNodesCoordinator signals a nil nodes coordinator has been provided
+var ErrNilNodesCoordinator = errors.New("nil nodes coordinator")
+
+// ErrNilPayloadValidator signals that a nil payload validator was provided
+var ErrNilPayloadValidator = errors.New("nil payload validator")
+
+// ErrWrongTypeAssertion signals that a type assertion failed
+var ErrWrongTypeAssertion = errors.New("wrong type assertion")
+
+// ErrStorerNotFound signals that the storer was not found
+var ErrStorerNotFound = errors.New("storer not found")
+
+// ErrNilValidatorInfoPool signals that a nil validator info pool has been provided
+var ErrNilValidatorInfoPool = errors.New("nil validator info pool")
+
+// ErrNilValidatorInfoStorage signals that a nil validator info storage has been provided
+var ErrNilValidatorInfoStorage = errors.New("nil validator info storage")
+
+// ErrValidatorInfoNotFound signals that no validator info was found
+var ErrValidatorInfoNotFound = errors.New("validator info not found")

@@ -5,36 +5,39 @@ import (
 	"math/big"
 	"time"
 
-	"github.com/ElrondNetwork/elrond-go-core/core"
-	"github.com/ElrondNetwork/elrond-go-core/data"
-	"github.com/ElrondNetwork/elrond-go-core/data/block"
-	"github.com/ElrondNetwork/elrond-go-core/data/endProcess"
-	"github.com/ElrondNetwork/elrond-go-core/data/transaction"
-	"github.com/ElrondNetwork/elrond-go-core/data/typeConverters"
-	"github.com/ElrondNetwork/elrond-go-core/hashing"
-	"github.com/ElrondNetwork/elrond-go-core/marshal"
-	crypto "github.com/ElrondNetwork/elrond-go-crypto"
-	"github.com/ElrondNetwork/elrond-go/cmd/node/factory"
-	"github.com/ElrondNetwork/elrond-go/common"
-	"github.com/ElrondNetwork/elrond-go/common/statistics"
-	"github.com/ElrondNetwork/elrond-go/consensus"
-	"github.com/ElrondNetwork/elrond-go/dataRetriever"
-	"github.com/ElrondNetwork/elrond-go/dblookupext"
-	"github.com/ElrondNetwork/elrond-go/epochStart"
-	"github.com/ElrondNetwork/elrond-go/epochStart/bootstrap"
-	"github.com/ElrondNetwork/elrond-go/heartbeat"
-	heartbeatData "github.com/ElrondNetwork/elrond-go/heartbeat/data"
-	"github.com/ElrondNetwork/elrond-go/ntp"
-	"github.com/ElrondNetwork/elrond-go/outport"
-	"github.com/ElrondNetwork/elrond-go/p2p"
-	"github.com/ElrondNetwork/elrond-go/process"
-	txSimData "github.com/ElrondNetwork/elrond-go/process/txsimulator/data"
-	"github.com/ElrondNetwork/elrond-go/sharding"
-	"github.com/ElrondNetwork/elrond-go/sharding/nodesCoordinator"
-	"github.com/ElrondNetwork/elrond-go/state"
-	"github.com/ElrondNetwork/elrond-go/storage"
-	"github.com/ElrondNetwork/elrond-go/update"
-	"github.com/ElrondNetwork/elrond-go/vm"
+	"github.com/multiversx/mx-chain-core-go/core"
+	"github.com/multiversx/mx-chain-core-go/data"
+	"github.com/multiversx/mx-chain-core-go/data/block"
+	"github.com/multiversx/mx-chain-core-go/data/endProcess"
+	"github.com/multiversx/mx-chain-core-go/data/transaction"
+	"github.com/multiversx/mx-chain-core-go/data/typeConverters"
+	"github.com/multiversx/mx-chain-core-go/hashing"
+	"github.com/multiversx/mx-chain-core-go/marshal"
+	crypto "github.com/multiversx/mx-chain-crypto-go"
+	"github.com/multiversx/mx-chain-go/cmd/node/factory"
+	"github.com/multiversx/mx-chain-go/common"
+	cryptoCommon "github.com/multiversx/mx-chain-go/common/crypto"
+	"github.com/multiversx/mx-chain-go/common/statistics"
+	"github.com/multiversx/mx-chain-go/consensus"
+	"github.com/multiversx/mx-chain-go/dataRetriever"
+	"github.com/multiversx/mx-chain-go/dblookupext"
+	"github.com/multiversx/mx-chain-go/epochStart"
+	"github.com/multiversx/mx-chain-go/epochStart/bootstrap"
+	"github.com/multiversx/mx-chain-go/genesis"
+	heartbeatData "github.com/multiversx/mx-chain-go/heartbeat/data"
+	"github.com/multiversx/mx-chain-go/node/external"
+	"github.com/multiversx/mx-chain-go/ntp"
+	"github.com/multiversx/mx-chain-go/outport"
+	"github.com/multiversx/mx-chain-go/p2p"
+	"github.com/multiversx/mx-chain-go/process"
+	txSimData "github.com/multiversx/mx-chain-go/process/transactionEvaluator/data"
+	"github.com/multiversx/mx-chain-go/sharding"
+	"github.com/multiversx/mx-chain-go/sharding/nodesCoordinator"
+	"github.com/multiversx/mx-chain-go/state"
+	"github.com/multiversx/mx-chain-go/storage"
+	"github.com/multiversx/mx-chain-go/update"
+	"github.com/multiversx/mx-chain-go/vm"
+	vmcommon "github.com/multiversx/mx-chain-vm-common-go"
 )
 
 // EpochStartNotifier defines which actions should be done for handling new epoch's events
@@ -72,7 +75,8 @@ type P2PAntifloodHandler interface {
 
 // PreferredPeersHolderHandler defines the behavior of a component able to handle preferred peers operations
 type PreferredPeersHolderHandler interface {
-	Put(publicKey []byte, peerID core.PeerID, shardID uint32)
+	PutConnectionAddress(peerID core.PeerID, address string)
+	PutShardID(peerID core.PeerID, shardID uint32)
 	Get() map[uint32][]core.PeerID
 	Contains(peerID core.PeerID) bool
 	Remove(peerID core.PeerID)
@@ -104,8 +108,6 @@ type CoreComponentsHolder interface {
 	Uint64ByteSliceConverter() typeConverters.Uint64ByteSliceConverter
 	AddressPubKeyConverter() core.PubkeyConverter
 	ValidatorPubKeyConverter() core.PubkeyConverter
-	StatusHandlerUtils() factory.StatusHandlersUtils
-	StatusHandler() core.AppStatusHandler
 	PathHandler() storage.PathManagerHandler
 	Watchdog() core.WatchdogTimer
 	AlarmScheduler() core.TimersScheduler
@@ -118,6 +120,7 @@ type CoreComponentsHolder interface {
 	GenesisNodesSetup() sharding.GenesisNodesSetupHandler
 	NodesShuffler() nodesCoordinator.NodesShuffler
 	EpochNotifier() process.EpochNotifier
+	EnableRoundsHandler() process.EnableRoundsHandler
 	RoundNotifier() process.RoundNotifier
 	EpochStartNotifierWithConfirm() EpochStartNotifierWithConfirm
 	ChanStopNodeProcess() chan endProcess.ArgEndProcess
@@ -127,8 +130,10 @@ type CoreComponentsHolder interface {
 	TxVersionChecker() process.TxVersionCheckerHandler
 	EncodedAddressLen() uint32
 	NodeTypeProvider() core.NodeTypeProviderHandler
-	ArwenChangeLocker() common.Locker
+	WasmVMChangeLocker() common.Locker
 	ProcessStatusHandler() common.ProcessStatusHandler
+	HardforkTriggerPubKey() []byte
+	EnableEpochsHandler() common.EnableEpochsHandler
 	IsInterfaceNil() bool
 }
 
@@ -138,26 +143,51 @@ type CoreComponentsHandler interface {
 	CoreComponentsHolder
 }
 
+// StatusCoreComponentsHolder holds the status core components
+type StatusCoreComponentsHolder interface {
+	ResourceMonitor() ResourceMonitor
+	NetworkStatistics() NetworkStatisticsProvider
+	TrieSyncStatistics() TrieSyncStatisticsProvider
+	AppStatusHandler() core.AppStatusHandler
+	StatusMetrics() external.StatusMetricsHandler
+	PersistentStatusHandler() PersistentStatusHandler
+	StateStatsHandler() common.StateStatisticsHandler
+	IsInterfaceNil() bool
+}
+
+// StatusCoreComponentsHandler defines the status core components handler actions
+type StatusCoreComponentsHandler interface {
+	ComponentHandler
+	StatusCoreComponentsHolder
+}
+
 // CryptoParamsHolder permits access to crypto parameters such as the private and public keys
 type CryptoParamsHolder interface {
 	PublicKey() crypto.PublicKey
 	PrivateKey() crypto.PrivateKey
 	PublicKeyString() string
 	PublicKeyBytes() []byte
-	PrivateKeyBytes() []byte
 }
 
 // CryptoComponentsHolder holds the crypto components
 type CryptoComponentsHolder interface {
 	CryptoParamsHolder
+	P2pPublicKey() crypto.PublicKey
+	P2pPrivateKey() crypto.PrivateKey
+	P2pSingleSigner() crypto.SingleSigner
 	TxSingleSigner() crypto.SingleSigner
 	BlockSigner() crypto.SingleSigner
-	MultiSigner() crypto.MultiSigner
+	SetMultiSignerContainer(container cryptoCommon.MultiSignerContainer) error
+	MultiSignerContainer() cryptoCommon.MultiSignerContainer
+	GetMultiSigner(epoch uint32) (crypto.MultiSigner, error)
 	PeerSignatureHandler() crypto.PeerSignatureHandler
-	SetMultiSigner(ms crypto.MultiSigner) error
 	BlockSignKeyGen() crypto.KeyGenerator
 	TxSignKeyGen() crypto.KeyGenerator
+	P2pKeyGen() crypto.KeyGenerator
 	MessageSignVerifier() vm.MessageSignVerifier
+	ConsensusSigningHandler() consensus.SigningHandler
+	ManagedPeersHolder() common.ManagedPeersHolder
+	KeysHandler() consensus.KeysHandler
 	Clone() interface{}
 	IsInterfaceNil() bool
 }
@@ -165,6 +195,8 @@ type CryptoComponentsHolder interface {
 // KeyLoaderHandler defines the loading of a key from a pem file and index
 type KeyLoaderHandler interface {
 	LoadKey(string, int) ([]byte, string, error)
+	LoadAllKeys(path string) ([][]byte, []string, error)
+	IsInterfaceNil() bool
 }
 
 // CryptoComponentsHandler defines the crypto components handler actions
@@ -184,7 +216,7 @@ type MiniBlockProvider interface {
 // DataComponentsHolder holds the data components
 type DataComponentsHolder interface {
 	Blockchain() data.ChainHandler
-	SetBlockchain(chain data.ChainHandler)
+	SetBlockchain(chain data.ChainHandler) error
 	StorageService() dataRetriever.StorageService
 	Datapool() dataRetriever.PoolsHolder
 	MiniBlocksProvider() MiniBlockProvider
@@ -216,6 +248,9 @@ type NetworkComponentsHolder interface {
 	PeerHonestyHandler() PeerHonestyHandler
 	PreferredPeersHolderHandler() PreferredPeersHolderHandler
 	PeersRatingHandler() p2p.PeersRatingHandler
+	PeersRatingMonitor() p2p.PeersRatingMonitor
+	FullArchiveNetworkMessenger() p2p.Messenger
+	FullArchivePreferredPeersHolderHandler() PreferredPeersHolderHandler
 	IsInterfaceNil() bool
 }
 
@@ -225,9 +260,10 @@ type NetworkComponentsHandler interface {
 	NetworkComponentsHolder
 }
 
-// TransactionSimulatorProcessor defines the actions which a transaction simulator processor has to implement
-type TransactionSimulatorProcessor interface {
-	ProcessTx(tx *transaction.Transaction) (*txSimData.SimulationResults, error)
+// TransactionEvaluator defines the transaction evaluator actions
+type TransactionEvaluator interface {
+	SimulateTransactionExecution(tx *transaction.Transaction) (*txSimData.SimulationResultsWithVMOutput, error)
+	ComputeTransactionGasLimit(tx *transaction.Transaction) (*transaction.CostResponse, error)
 	IsInterfaceNil() bool
 }
 
@@ -236,7 +272,9 @@ type ProcessComponentsHolder interface {
 	NodesCoordinator() nodesCoordinator.NodesCoordinator
 	ShardCoordinator() sharding.Coordinator
 	InterceptorsContainer() process.InterceptorsContainer
-	ResolversFinder() dataRetriever.ResolversFinder
+	FullArchiveInterceptorsContainer() process.InterceptorsContainer
+	ResolversContainer() dataRetriever.ResolversContainer
+	RequestersFinder() dataRetriever.RequestersFinder
 	RoundHandler() consensus.RoundHandler
 	EpochStartTrigger() epochStart.TriggerHandler
 	EpochStartNotifier() EpochStartNotifier
@@ -254,8 +292,9 @@ type ProcessComponentsHolder interface {
 	TxLogsProcessor() process.TransactionLogProcessorDatabase
 	HeaderConstructionValidator() process.HeaderConstructionValidator
 	PeerShardMapper() process.NetworkShardingCollector
+	FullArchivePeerShardMapper() process.NetworkShardingCollector
 	FallbackHeaderValidator() process.FallbackHeaderValidator
-	TransactionSimulatorProcessor() TransactionSimulatorProcessor
+	APITransactionEvaluator() TransactionEvaluator
 	WhiteListHandler() process.WhiteListHandler
 	WhiteListerVerifiedTxs() process.WhiteListHandler
 	HistoryRepository() dblookupext.HistoryRepository
@@ -265,6 +304,13 @@ type ProcessComponentsHolder interface {
 	CurrentEpochProvider() process.CurrentNetworkEpochProviderHandler
 	ScheduledTxsExecutionHandler() process.ScheduledTxsExecutionHandler
 	TxsSenderHandler() process.TxsSenderHandler
+	HardforkTrigger() HardforkTrigger
+	ProcessedMiniBlocksTracker() process.ProcessedMiniBlocksTracker
+	ESDTDataStorageHandlerForAPI() vmcommon.ESDTNFTStorageHandler
+	AccountsParser() genesis.AccountsParser
+	ReceiptsRepository() ReceiptsRepository
+	SentSignaturesTracker() process.SentSignaturesTracker
+	EpochSystemSCProcessor() process.EpochStartSystemSCProcessor
 	IsInterfaceNil() bool
 }
 
@@ -285,8 +331,11 @@ type StateComponentsHolder interface {
 	PeerAccounts() state.AccountsAdapter
 	AccountsAdapter() state.AccountsAdapter
 	AccountsAdapterAPI() state.AccountsAdapter
+	AccountsRepository() state.AccountsRepository
 	TriesContainer() common.TriesHolder
 	TrieStorageManagers() map[string]common.StorageManager
+	MissingTrieNodesNotifier() common.MissingTrieNodesNotifier
+	Close() error
 	IsInterfaceNil() bool
 }
 
@@ -294,6 +343,7 @@ type StateComponentsHolder interface {
 type StatusComponentsHolder interface {
 	OutportHandler() outport.OutportHandler
 	SoftwareVersionChecker() statistics.SoftwareVersionChecker
+	ManagedPeersMonitor() common.ManagedPeersMonitor
 	IsInterfaceNil() bool
 }
 
@@ -302,47 +352,27 @@ type StatusComponentsHandler interface {
 	ComponentHandler
 	StatusComponentsHolder
 	// SetForkDetector should be set before starting Polling for updates
-	SetForkDetector(forkDetector process.ForkDetector)
+	SetForkDetector(forkDetector process.ForkDetector) error
 	StartPolling() error
+	ManagedPeersMonitor() common.ManagedPeersMonitor
 }
 
-// HeartbeatSender sends heartbeat messages
-type HeartbeatSender interface {
-	SendHeartbeat() error
-	IsInterfaceNil() bool
-}
-
-// HeartbeatMonitor monitors the received heartbeat messages
-type HeartbeatMonitor interface {
-	ProcessReceivedMessage(message p2p.MessageP2P, fromConnectedPeer core.PeerID) error
+// HeartbeatV2Monitor monitors the cache of heartbeatV2 messages
+type HeartbeatV2Monitor interface {
 	GetHeartbeats() []heartbeatData.PubKeyHeartbeat
 	IsInterfaceNil() bool
-	Cleanup()
-	Close() error
 }
 
-// HeartbeatStorer provides storage functionality for the heartbeat component
-type HeartbeatStorer interface {
-	UpdateGenesisTime(genesisTime time.Time) error
-	LoadGenesisTime() (time.Time, error)
-	SaveKeys(peersSlice [][]byte) error
-	LoadKeys() ([][]byte, error)
+// HeartbeatV2ComponentsHolder holds the heartbeatV2 components
+type HeartbeatV2ComponentsHolder interface {
+	Monitor() HeartbeatV2Monitor
 	IsInterfaceNil() bool
 }
 
-// HeartbeatComponentsHolder holds the heartbeat components
-type HeartbeatComponentsHolder interface {
-	MessageHandler() heartbeat.MessageHandler
-	Monitor() HeartbeatMonitor
-	Sender() HeartbeatSender
-	Storer() HeartbeatStorer
-	IsInterfaceNil() bool
-}
-
-// HeartbeatComponentsHandler defines the heartbeat components handler actions
-type HeartbeatComponentsHandler interface {
+// HeartbeatV2ComponentsHandler defines the heartbeatV2 components handler actions
+type HeartbeatV2ComponentsHandler interface {
 	ComponentHandler
-	HeartbeatComponentsHolder
+	HeartbeatV2ComponentsHolder
 }
 
 // ConsensusWorker is the consensus worker handle for the exported functionality
@@ -356,7 +386,7 @@ type ConsensusWorker interface {
 	// RemoveAllReceivedMessagesCalls removes all the functions handlers
 	RemoveAllReceivedMessagesCalls()
 	// ProcessReceivedMessage method redirects the received message to the channel which should handle it
-	ProcessReceivedMessage(message p2p.MessageP2P, fromConnectedPeer core.PeerID) error
+	ProcessReceivedMessage(message p2p.MessageP2P, fromConnectedPeer core.PeerID, source p2p.MessageHandler) error
 	// Extend does an extension for the subround with subroundId
 	Extend(subroundId int)
 	// GetConsensusStateChangedChannel gets the channel for the consensusStateChanged
@@ -375,12 +405,13 @@ type ConsensusWorker interface {
 
 // HardforkTrigger defines the hard-fork trigger functionality
 type HardforkTrigger interface {
+	SetExportFactoryHandler(exportFactoryHandler update.ExportFactoryHandler) error
 	TriggerReceived(payload []byte, data []byte, pkBytes []byte) (bool, error)
 	RecordedTriggerMessage() ([]byte, bool)
 	Trigger(epoch uint32, withEarlyEndOfEpoch bool) error
 	CreateData() []byte
 	AddCloser(closer update.Closer) error
-	NotifyTriggerReceived() <-chan struct{}
+	NotifyTriggerReceivedV2() <-chan struct{}
 	IsSelfTrigger() bool
 	IsInterfaceNil() bool
 }
@@ -391,7 +422,6 @@ type ConsensusComponentsHolder interface {
 	ConsensusWorker() ConsensusWorker
 	BroadcastMessenger() consensus.BroadcastMessenger
 	ConsensusGroupSize() (int, error)
-	HardforkTrigger() HardforkTrigger
 	Bootstrapper() process.Bootstrapper
 	IsInterfaceNil() bool
 }
@@ -407,7 +437,7 @@ type BootstrapParamsHolder interface {
 	Epoch() uint32
 	SelfShardID() uint32
 	NumOfShards() uint32
-	NodesConfig() *nodesCoordinator.NodesCoordinatorRegistry
+	NodesConfig() nodesCoordinator.NodesCoordinatorRegistryHandler
 	IsInterfaceNil() bool
 }
 
@@ -420,7 +450,6 @@ type EpochStartBootstrapper interface {
 
 // BootstrapComponentsHolder holds the bootstrap components
 type BootstrapComponentsHolder interface {
-	RoundActivationHandler() process.RoundActivationHandler
 	EpochStartBootstrapper() EpochStartBootstrapper
 	EpochBootstrapParams() BootstrapParamsHolder
 	NodeType() core.NodeType
@@ -428,6 +457,8 @@ type BootstrapComponentsHolder interface {
 	VersionedHeaderFactory() factory.VersionedHeaderFactory
 	HeaderVersionHandler() factory.HeaderVersionHandler
 	HeaderIntegrityVerifier() factory.HeaderIntegrityVerifierHandler
+	GuardedAccountHandler() process.GuardedAccountHandler
+	NodesCoordinatorRegistryFactory() nodesCoordinator.NodesCoordinatorRegistryFactory
 	IsInterfaceNil() bool
 }
 
@@ -463,4 +494,64 @@ type EconomicsHandler interface {
 	GasPriceModifier() float64
 	ComputeFeeForProcessing(tx data.TransactionWithFeeHandler, gasToUse uint64) *big.Int
 	IsInterfaceNil() bool
+}
+
+// LogsFacade defines the interface of a logs facade
+type LogsFacade interface {
+	GetLog(logKey []byte, epoch uint32) (*transaction.ApiLogs, error)
+	IncludeLogsInTransactions(txs []*transaction.ApiTransactionResult, logsKeys [][]byte, epoch uint32) error
+	IsInterfaceNil() bool
+}
+
+// ReceiptsRepository defines the interface of a receiptsRepository
+type ReceiptsRepository interface {
+	SaveReceipts(holder common.ReceiptsHolder, header data.HeaderHandler, headerHash []byte) error
+	LoadReceipts(header data.HeaderHandler, headerHash []byte) (common.ReceiptsHolder, error)
+	IsInterfaceNil() bool
+}
+
+// ProcessDebuggerSetter allows setting a debugger on the process component
+type ProcessDebuggerSetter interface {
+	SetProcessDebugger(debugger process.Debugger) error
+}
+
+// ResourceMonitor defines the function implemented by a struct that can monitor resources
+type ResourceMonitor interface {
+	Close() error
+	IsInterfaceNil() bool
+}
+
+// NetworkStatisticsProvider is able to provide network statistics
+type NetworkStatisticsProvider interface {
+	BpsSent() uint64
+	BpsRecv() uint64
+	BpsSentPeak() uint64
+	BpsRecvPeak() uint64
+	PercentSent() uint64
+	PercentRecv() uint64
+	TotalBytesSentInCurrentEpoch() uint64
+	TotalBytesReceivedInCurrentEpoch() uint64
+	TotalSentInCurrentEpoch() string
+	TotalReceivedInCurrentEpoch() string
+	EpochConfirmed(epoch uint32, timestamp uint64)
+	Close() error
+	IsInterfaceNil() bool
+}
+
+// TrieSyncStatisticsProvider is able to provide trie sync statistics
+type TrieSyncStatisticsProvider interface {
+	data.SyncStatisticsHandler
+	AddNumBytesReceived(bytes uint64)
+	NumBytesReceived() uint64
+	NumTries() int
+	AddProcessingTime(duration time.Duration)
+	IncrementIteration()
+	ProcessingTime() time.Duration
+	NumIterations() int
+}
+
+// PersistentStatusHandler defines a persistent status handler
+type PersistentStatusHandler interface {
+	core.AppStatusHandler
+	SetStorage(store storage.Storer) error
 }

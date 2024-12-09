@@ -1,55 +1,55 @@
 package mock
 
 import (
-	"github.com/ElrondNetwork/elrond-go-core/data"
-	"github.com/ElrondNetwork/elrond-go-core/data/block"
+	"github.com/multiversx/mx-chain-core-go/data"
+	"github.com/multiversx/mx-chain-core-go/data/block"
 )
 
 // IntermediateTransactionHandlerStub -
 type IntermediateTransactionHandlerStub struct {
-	AddIntermediateTransactionsCalled        func(txs []data.TransactionHandler) error
+	AddIntermediateTransactionsCalled        func(txs []data.TransactionHandler, key []byte) error
 	GetNumOfCrossInterMbsAndTxsCalled        func() (int, int)
 	CreateAllInterMiniBlocksCalled           func() []*block.MiniBlock
 	VerifyInterMiniBlocksCalled              func(body *block.Body) error
 	SaveCurrentIntermediateTxToStorageCalled func()
 	CreateBlockStartedCalled                 func()
-	CreateMarshalizedDataCalled              func(txHashes [][]byte) ([][]byte, error)
+	CreateMarshalledDataCalled               func(txHashes [][]byte) ([][]byte, error)
 	GetAllCurrentFinishedTxsCalled           func() map[string]data.TransactionHandler
-	RemoveProcessedResultsCalled             func() [][]byte
-	InitProcessedResultsCalled               func()
+	RemoveProcessedResultsCalled             func(key []byte) [][]byte
+	InitProcessedResultsCalled               func(key []byte, parentKey []byte)
 	intermediateTransactions                 []data.TransactionHandler
 }
 
 // RemoveProcessedResults -
-func (ith *IntermediateTransactionHandlerStub) RemoveProcessedResults() [][]byte {
+func (ith *IntermediateTransactionHandlerStub) RemoveProcessedResults(key []byte) [][]byte {
 	if ith.RemoveProcessedResultsCalled != nil {
-		return ith.RemoveProcessedResultsCalled()
+		return ith.RemoveProcessedResultsCalled(key)
 	}
 	return nil
 }
 
 // InitProcessedResults -
-func (ith *IntermediateTransactionHandlerStub) InitProcessedResults() {
+func (ith *IntermediateTransactionHandlerStub) InitProcessedResults(key []byte, parentKey []byte) {
 	if ith.InitProcessedResultsCalled != nil {
-		ith.InitProcessedResultsCalled()
+		ith.InitProcessedResultsCalled(key, parentKey)
 	}
 }
 
-// CreateMarshalizedData -
-func (ith *IntermediateTransactionHandlerStub) CreateMarshalizedData(txHashes [][]byte) ([][]byte, error) {
-	if ith.CreateMarshalizedDataCalled == nil {
+// CreateMarshalledData -
+func (ith *IntermediateTransactionHandlerStub) CreateMarshalledData(txHashes [][]byte) ([][]byte, error) {
+	if ith.CreateMarshalledDataCalled == nil {
 		return nil, nil
 	}
-	return ith.CreateMarshalizedDataCalled(txHashes)
+	return ith.CreateMarshalledDataCalled(txHashes)
 }
 
 // AddIntermediateTransactions -
-func (ith *IntermediateTransactionHandlerStub) AddIntermediateTransactions(txs []data.TransactionHandler) error {
+func (ith *IntermediateTransactionHandlerStub) AddIntermediateTransactions(txs []data.TransactionHandler, key []byte) error {
 	if ith.AddIntermediateTransactionsCalled == nil {
 		ith.intermediateTransactions = append(ith.intermediateTransactions, txs...)
 		return nil
 	}
-	return ith.AddIntermediateTransactionsCalled(txs)
+	return ith.AddIntermediateTransactionsCalled(txs, key)
 }
 
 // GetIntermediateTransactions -

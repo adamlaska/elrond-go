@@ -1,11 +1,19 @@
-//go:generate protoc -I=proto -I=$GOPATH/src -I=$GOPATH/src/github.com/ElrondNetwork/protobuf/protobuf  --gogoslick_out=. accountWrapperMock.proto
+//go:generate protoc -I=. -I=$GOPATH/src -I=$GOPATH/src/github.com/multiversx/protobuf/protobuf  --gogoslick_out=. accountWrapperMock.proto
 package state
 
 import (
+	"context"
+	"fmt"
 	"math/big"
 
-	"github.com/ElrondNetwork/elrond-go/common"
-	"github.com/ElrondNetwork/elrond-go/state"
+	"github.com/multiversx/mx-chain-core-go/core"
+	"github.com/multiversx/mx-chain-go/common"
+	"github.com/multiversx/mx-chain-go/state"
+	"github.com/multiversx/mx-chain-go/state/trackableDataTrie"
+	"github.com/multiversx/mx-chain-go/testscommon/enableEpochsHandlerMock"
+	"github.com/multiversx/mx-chain-go/testscommon/hashingMocks"
+	"github.com/multiversx/mx-chain-go/testscommon/marshallerMock"
+	vmcommon "github.com/multiversx/mx-chain-vm-common-go"
 )
 
 var _ state.UserAccountHandler = (*AccountWrapMock)(nil)
@@ -13,18 +21,44 @@ var _ state.UserAccountHandler = (*AccountWrapMock)(nil)
 // AccountWrapMock -
 type AccountWrapMock struct {
 	AccountWrapMockData
-	dataTrie          common.Trie
 	nonce             uint64
 	code              []byte
 	CodeHash          []byte
 	CodeMetadata      []byte
 	RootHash          []byte
+	Owner             []byte
 	address           []byte
+	Balance           *big.Int
+	guarded           bool
 	trackableDataTrie state.DataTrieTracker
 
-	SetNonceWithJournalCalled    func(nonce uint64) error    `json:"-"`
-	SetCodeHashWithJournalCalled func(codeHash []byte) error `json:"-"`
-	SetCodeWithJournalCalled     func([]byte) error          `json:"-"`
+	SetNonceWithJournalCalled    func(nonce uint64) error           `json:"-"`
+	SetCodeHashWithJournalCalled func(codeHash []byte) error        `json:"-"`
+	SetCodeWithJournalCalled     func([]byte) error                 `json:"-"`
+	AccountDataHandlerCalled     func() vmcommon.AccountDataHandler `json:"-"`
+}
+
+var errInsufficientBalance = fmt.Errorf("insufficient balance")
+
+// NewAccountWrapMock -
+func NewAccountWrapMock(adr []byte) *AccountWrapMock {
+	tdt, _ := trackableDataTrie.NewTrackableDataTrie(
+		[]byte("identifier"),
+		&hashingMocks.HasherMock{},
+		&marshallerMock.MarshalizerMock{},
+		&enableEpochsHandlerMock.EnableEpochsHandlerStub{},
+	)
+
+	return &AccountWrapMock{
+		address:           adr,
+		trackableDataTrie: tdt,
+		Balance:           big.NewInt(0),
+	}
+}
+
+// SetTrackableDataTrie -
+func (awm *AccountWrapMock) SetTrackableDataTrie(tdt state.DataTrieTracker) {
+	awm.trackableDataTrie = tdt
 }
 
 // SetUserName -
@@ -37,18 +71,28 @@ func (awm *AccountWrapMock) GetUserName() []byte {
 }
 
 // AddToBalance -
-func (awm *AccountWrapMock) AddToBalance(_ *big.Int) error {
+func (awm *AccountWrapMock) AddToBalance(val *big.Int) error {
+	newBalance := big.NewInt(0).Add(awm.Balance, val)
+	if newBalance.Cmp(big.NewInt(0)) < 0 {
+		return errInsufficientBalance
+	}
+	awm.Balance = newBalance
 	return nil
 }
 
 // SubFromBalance -
-func (awm *AccountWrapMock) SubFromBalance(_ *big.Int) error {
+func (awm *AccountWrapMock) SubFromBalance(val *big.Int) error {
+	newBalance := big.NewInt(0).Sub(awm.Balance, val)
+	if newBalance.Cmp(big.NewInt(0)) < 0 {
+		return errInsufficientBalance
+	}
+	awm.Balance = newBalance
 	return nil
 }
 
 // GetBalance -
 func (awm *AccountWrapMock) GetBalance() *big.Int {
-	return nil
+	return awm.Balance
 }
 
 // ClaimDeveloperRewards -
@@ -72,21 +116,13 @@ func (awm *AccountWrapMock) ChangeOwnerAddress([]byte, []byte) error {
 }
 
 // SetOwnerAddress -
-func (awm *AccountWrapMock) SetOwnerAddress([]byte) {
-
+func (awm *AccountWrapMock) SetOwnerAddress(owner []byte) {
+	awm.Owner = owner
 }
 
 // GetOwnerAddress -
 func (awm *AccountWrapMock) GetOwnerAddress() []byte {
 	return nil
-}
-
-// NewAccountWrapMock -
-func NewAccountWrapMock(adr []byte) *AccountWrapMock {
-	return &AccountWrapMock{
-		address:           adr,
-		trackableDataTrie: state.NewTrackableDataTrie([]byte("identifier"), nil),
-	}
 }
 
 // IsInterfaceNil -
@@ -109,9 +145,19 @@ func (awm *AccountWrapMock) SetCode(code []byte) {
 	awm.code = code
 }
 
-// RetrieveValueFromDataTrieTracker -
-func (awm *AccountWrapMock) RetrieveValueFromDataTrieTracker(key []byte) ([]byte, error) {
+// GetCode -
+func (awm *AccountWrapMock) GetCode() []byte {
+	return awm.code
+}
+
+// RetrieveValue -
+func (awm *AccountWrapMock) RetrieveValue(key []byte) ([]byte, uint32, error) {
 	return awm.trackableDataTrie.RetrieveValue(key)
+}
+
+// SaveKeyValue -
+func (awm *AccountWrapMock) SaveKeyValue(key []byte, value []byte) error {
+	return awm.trackableDataTrie.SaveKeyValue(key, value)
 }
 
 // HasNewCode -
@@ -145,27 +191,44 @@ func (awm *AccountWrapMock) AddressBytes() []byte {
 }
 
 // DataTrie -
-func (awm *AccountWrapMock) DataTrie() common.Trie {
-	return awm.dataTrie
+func (awm *AccountWrapMock) DataTrie() common.DataTrieHandler {
+	return awm.trackableDataTrie.DataTrie()
+}
+
+// SaveDirtyData -
+func (awm *AccountWrapMock) SaveDirtyData(trie common.Trie) ([]core.TrieData, error) {
+	return awm.trackableDataTrie.SaveDirtyData(trie)
 }
 
 // SetDataTrie -
 func (awm *AccountWrapMock) SetDataTrie(trie common.Trie) {
-	awm.dataTrie = trie
 	awm.trackableDataTrie.SetDataTrie(trie)
 }
 
-// DataTrieTracker -
-func (awm *AccountWrapMock) DataTrieTracker() state.DataTrieTracker {
-	return awm.trackableDataTrie
-}
-
-//IncreaseNonce adds the given value to the current nonce
+// IncreaseNonce adds the given value to the current nonce
 func (awm *AccountWrapMock) IncreaseNonce(val uint64) {
 	awm.nonce = awm.nonce + val
+}
+
+// AccountDataHandler -
+func (awm *AccountWrapMock) AccountDataHandler() vmcommon.AccountDataHandler {
+	if awm.AccountDataHandlerCalled != nil {
+		return awm.AccountDataHandlerCalled()
+	}
+	return awm.trackableDataTrie
 }
 
 // GetNonce gets the nonce of the account
 func (awm *AccountWrapMock) GetNonce() uint64 {
 	return awm.nonce
+}
+
+// IsGuarded -
+func (awm *AccountWrapMock) IsGuarded() bool {
+	return awm.guarded
+}
+
+// GetAllLeaves -
+func (awm *AccountWrapMock) GetAllLeaves(_ *common.TrieIteratorChannels, _ context.Context) error {
+	return nil
 }

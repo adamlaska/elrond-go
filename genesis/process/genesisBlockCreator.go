@@ -7,32 +7,34 @@ import (
 	"path"
 	"path/filepath"
 
-	"github.com/ElrondNetwork/elrond-go-core/core"
-	"github.com/ElrondNetwork/elrond-go-core/core/check"
-	"github.com/ElrondNetwork/elrond-go-core/data"
-	"github.com/ElrondNetwork/elrond-go-core/data/block"
-	"github.com/ElrondNetwork/elrond-go/common/forking"
-	"github.com/ElrondNetwork/elrond-go/config"
-	"github.com/ElrondNetwork/elrond-go/dataRetriever"
-	"github.com/ElrondNetwork/elrond-go/dataRetriever/blockchain"
-	"github.com/ElrondNetwork/elrond-go/genesis"
-	"github.com/ElrondNetwork/elrond-go/genesis/process/disabled"
-	"github.com/ElrondNetwork/elrond-go/genesis/process/intermediate"
-	"github.com/ElrondNetwork/elrond-go/process"
-	"github.com/ElrondNetwork/elrond-go/process/smartContract/hooks"
-	"github.com/ElrondNetwork/elrond-go/sharding"
-	factoryState "github.com/ElrondNetwork/elrond-go/state/factory"
-	"github.com/ElrondNetwork/elrond-go/statusHandler"
-	"github.com/ElrondNetwork/elrond-go/storage"
-	"github.com/ElrondNetwork/elrond-go/storage/factory"
-	"github.com/ElrondNetwork/elrond-go/storage/storageUnit"
-	triesFactory "github.com/ElrondNetwork/elrond-go/trie/factory"
-	"github.com/ElrondNetwork/elrond-go/update"
-	hardForkProcess "github.com/ElrondNetwork/elrond-go/update/process"
-	"github.com/ElrondNetwork/elrond-go/update/storing"
-	vmcommonBuiltInFunctions "github.com/ElrondNetwork/elrond-vm-common/builtInFunctions"
-
-	hardfork "github.com/ElrondNetwork/elrond-go/update/genesis"
+	"github.com/multiversx/mx-chain-core-go/core"
+	"github.com/multiversx/mx-chain-core-go/core/check"
+	"github.com/multiversx/mx-chain-core-go/data"
+	"github.com/multiversx/mx-chain-core-go/data/block"
+	"github.com/multiversx/mx-chain-go/common/enablers"
+	"github.com/multiversx/mx-chain-go/common/forking"
+	"github.com/multiversx/mx-chain-go/config"
+	"github.com/multiversx/mx-chain-go/dataRetriever"
+	"github.com/multiversx/mx-chain-go/dataRetriever/blockchain"
+	factoryBlock "github.com/multiversx/mx-chain-go/factory/block"
+	"github.com/multiversx/mx-chain-go/genesis"
+	"github.com/multiversx/mx-chain-go/genesis/process/disabled"
+	"github.com/multiversx/mx-chain-go/genesis/process/intermediate"
+	"github.com/multiversx/mx-chain-go/process"
+	"github.com/multiversx/mx-chain-go/process/smartContract/hooks"
+	"github.com/multiversx/mx-chain-go/process/smartContract/hooks/counters"
+	"github.com/multiversx/mx-chain-go/sharding"
+	factoryState "github.com/multiversx/mx-chain-go/state/factory"
+	"github.com/multiversx/mx-chain-go/state/syncer"
+	"github.com/multiversx/mx-chain-go/statusHandler"
+	"github.com/multiversx/mx-chain-go/storage"
+	"github.com/multiversx/mx-chain-go/storage/factory"
+	"github.com/multiversx/mx-chain-go/storage/storageunit"
+	"github.com/multiversx/mx-chain-go/update"
+	hardfork "github.com/multiversx/mx-chain-go/update/genesis"
+	hardForkProcess "github.com/multiversx/mx-chain-go/update/process"
+	"github.com/multiversx/mx-chain-go/update/storing"
+	vmcommonBuiltInFunctions "github.com/multiversx/mx-chain-vm-common-go/builtInFunctions"
 )
 
 const accountStartNonce = uint64(0)
@@ -81,7 +83,7 @@ func getGenesisBlocksRoundNonceEpoch(arg ArgsGenesisBlockCreator) (uint64, uint6
 	if arg.HardForkConfig.AfterHardFork {
 		return arg.HardForkConfig.StartRound, arg.HardForkConfig.StartNonce, arg.HardForkConfig.StartEpoch
 	}
-	return 0, 0, 0
+	return arg.GenesisRound, arg.GenesisNonce, arg.GenesisEpoch
 }
 
 func (gbc *genesisBlockCreator) createHardForkImportHandler() error {
@@ -114,6 +116,8 @@ func (gbc *genesisBlockCreator) createHardForkImportHandler() error {
 		ShardID:             gbc.arg.ShardCoordinator.SelfId(),
 		StorageConfig:       gbc.arg.HardForkConfig.ImportStateStorageConfig,
 		TrieStorageManagers: gbc.arg.TrieStorageManagers,
+		AddressConverter:    gbc.arg.Core.AddressPubKeyConverter(),
+		EnableEpochsHandler: gbc.arg.Core.EnableEpochsHandler(),
 	}
 	importHandler, err := hardfork.NewStateImport(argsHardForkImport)
 	if err != nil {
@@ -127,9 +131,16 @@ func (gbc *genesisBlockCreator) createHardForkImportHandler() error {
 func createStorer(storageConfig config.StorageConfig, folder string) (storage.Storer, error) {
 	dbConfig := factory.GetDBFromConfig(storageConfig.DB)
 	dbConfig.FilePath = path.Join(folder, storageConfig.DB.FilePath)
-	store, err := storageUnit.NewStorageUnitFromConf(
+
+	persisterFactory, err := factory.NewPersisterFactory(storageConfig.DB)
+	if err != nil {
+		return nil, err
+	}
+
+	store, err := storageunit.NewStorageUnitFromConf(
 		factory.GetCacherFromConfig(storageConfig.Cache),
 		dbConfig,
+		persisterFactory,
 	)
 	if err != nil {
 		return nil, err
@@ -163,17 +174,11 @@ func checkArgumentsForBlockCreator(arg ArgsGenesisBlockCreator) error {
 	if check.IfNil(arg.Data.StorageService()) {
 		return process.ErrNilStore
 	}
-	if check.IfNil(arg.Data.Blockchain()) {
-		return process.ErrNilBlockChain
-	}
 	if check.IfNil(arg.Core.InternalMarshalizer()) {
 		return process.ErrNilMarshalizer
 	}
 	if check.IfNil(arg.Core.Hasher()) {
 		return process.ErrNilHasher
-	}
-	if check.IfNil(arg.Core.Uint64ByteSliceConverter()) {
-		return process.ErrNilUint64Converter
 	}
 	if check.IfNil(arg.Data.Datapool()) {
 		return process.ErrNilPoolsHolder
@@ -184,30 +189,24 @@ func checkArgumentsForBlockCreator(arg ArgsGenesisBlockCreator) error {
 	if check.IfNil(arg.GasSchedule) {
 		return process.ErrNilGasSchedule
 	}
-	if check.IfNil(arg.TxLogsProcessor) {
-		return process.ErrNilTxLogsProcessor
-	}
 	if check.IfNil(arg.SmartContractParser) {
 		return genesis.ErrNilSmartContractParser
 	}
 	if arg.TrieStorageManagers == nil {
 		return genesis.ErrNilTrieStorageManager
 	}
-	if check.IfNil(arg.ImportStartHandler) {
-		return update.ErrNilImportStartHandler
+	if check.IfNil(arg.HistoryRepository) {
+		return process.ErrNilHistoryRepository
 	}
-	if check.IfNil(arg.Core.TxMarshalizer()) {
-		return process.ErrNilMarshalizer
-	}
-	if arg.EpochConfig == nil {
-		return genesis.ErrNilEpochConfig
+	if check.IfNil(arg.TxExecutionOrderHandler) {
+		return process.ErrNilTxExecutionOrderHandler
 	}
 
 	return nil
 }
 
 func mustDoGenesisProcess(arg ArgsGenesisBlockCreator) bool {
-	genesisEpoch := uint32(0)
+	genesisEpoch := arg.GenesisEpoch
 	if arg.HardForkConfig.AfterHardFork {
 		genesisEpoch = arg.HardForkConfig.StartEpoch
 	}
@@ -220,7 +219,7 @@ func mustDoGenesisProcess(arg ArgsGenesisBlockCreator) bool {
 }
 
 func (gbc *genesisBlockCreator) createEmptyGenesisBlocks() (map[uint32]data.HeaderHandler, error) {
-	err := gbc.computeDNSAddresses(createGenesisConfig())
+	err := gbc.computeDNSAddresses(createGenesisConfig(gbc.arg.EpochConfig.EnableEpochs))
 	if err != nil {
 		return nil, err
 	}
@@ -355,7 +354,10 @@ func (gbc *genesisBlockCreator) createHeaders(
 				return fmt.Errorf("'%w' while generating genesis block for metachain", err)
 			}
 
-			metaArgsGenesisBlockCreator.Data.SetBlockchain(chain)
+			err = metaArgsGenesisBlockCreator.Data.SetBlockchain(chain)
+			if err != nil {
+				return fmt.Errorf("'%w' while setting blockchain for metachain", err)
+			}
 			genesisBlock, scResults, gbc.initialIndexingData[shardID], err = CreateMetaGenesisBlock(
 				metaArgsGenesisBlockCreator,
 				mapBodies[core.MetachainShardId],
@@ -402,7 +404,7 @@ func (gbc *genesisBlockCreator) createHeaders(
 }
 
 // in case of hardfork initial smart contracts deployment is not called as they are all imported from previous state
-func (gbc *genesisBlockCreator) computeDNSAddresses(enableEpochs config.EnableEpochs) error {
+func (gbc *genesisBlockCreator) computeDNSAddresses(enableEpochsConfig config.EnableEpochs) error {
 	var dnsSC genesis.InitialSmartContractHandler
 	for _, sc := range gbc.arg.SmartContractParser.InitialSmartContracts() {
 		if sc.GetType() == genesis.DNSType {
@@ -419,24 +421,32 @@ func (gbc *genesisBlockCreator) computeDNSAddresses(enableEpochs config.EnableEp
 		Epoch:     gbc.arg.StartEpochNum,
 		TimeStamp: gbc.arg.GenesisTime,
 	}
+	enableEpochsHandler, err := enablers.NewEnableEpochsHandler(enableEpochsConfig, epochNotifier)
+	if err != nil {
+		return err
+	}
 	epochNotifier.CheckEpoch(temporaryMetaHeader)
+
 	builtInFuncs := vmcommonBuiltInFunctions.NewBuiltInFunctionContainer()
 	argsHook := hooks.ArgBlockChainHook{
-		Accounts:              gbc.arg.Accounts,
-		PubkeyConv:            gbc.arg.Core.AddressPubKeyConverter(),
-		StorageService:        gbc.arg.Data.StorageService(),
-		BlockChain:            gbc.arg.Data.Blockchain(),
-		ShardCoordinator:      gbc.arg.ShardCoordinator,
-		Marshalizer:           gbc.arg.Core.InternalMarshalizer(),
-		Uint64Converter:       gbc.arg.Core.Uint64ByteSliceConverter(),
-		BuiltInFunctions:      builtInFuncs,
-		NFTStorageHandler:     &disabled.SimpleNFTStorage{},
-		GlobalSettingsHandler: &disabled.ESDTGlobalSettingsHandler{},
-		DataPool:              gbc.arg.Data.Datapool(),
-		CompiledSCPool:        gbc.arg.Data.Datapool().SmartContracts(),
-		EpochNotifier:         epochNotifier,
-		NilCompiledSCStore:    true,
-		EnableEpochs:          enableEpochs,
+		Accounts:                 gbc.arg.Accounts,
+		PubkeyConv:               gbc.arg.Core.AddressPubKeyConverter(),
+		StorageService:           gbc.arg.Data.StorageService(),
+		BlockChain:               gbc.arg.Data.Blockchain(),
+		ShardCoordinator:         gbc.arg.ShardCoordinator,
+		Marshalizer:              gbc.arg.Core.InternalMarshalizer(),
+		Uint64Converter:          gbc.arg.Core.Uint64ByteSliceConverter(),
+		BuiltInFunctions:         builtInFuncs,
+		NFTStorageHandler:        &disabled.SimpleNFTStorage{},
+		GlobalSettingsHandler:    &disabled.ESDTGlobalSettingsHandler{},
+		DataPool:                 gbc.arg.Data.Datapool(),
+		CompiledSCPool:           gbc.arg.Data.Datapool().SmartContracts(),
+		EpochNotifier:            epochNotifier,
+		EnableEpochsHandler:      enableEpochsHandler,
+		NilCompiledSCStore:       true,
+		GasSchedule:              gbc.arg.GasSchedule,
+		Counter:                  counters.NewDisabledCounter(),
+		MissingTrieNodesNotifier: syncer.NewMissingTrieNodesNotifier(),
 	}
 	blockChainHook, err := hooks.NewBlockChainHookImpl(argsHook)
 	if err != nil {
@@ -455,7 +465,12 @@ func (gbc *genesisBlockCreator) computeDNSAddresses(enableEpochs config.EnableEp
 		}
 
 		dnsSC.AddAddressBytes(scResultingAddress)
-		dnsSC.AddAddress(gbc.arg.Core.AddressPubKeyConverter().Encode(scResultingAddress))
+
+		encodedSCResultingAddress, err := gbc.arg.Core.AddressPubKeyConverter().Encode(scResultingAddress)
+		if err != nil {
+			return err
+		}
+		dnsSC.AddAddress(encodedSCResultingAddress)
 	}
 
 	return nil
@@ -465,18 +480,35 @@ func (gbc *genesisBlockCreator) getNewArgForShard(shardID uint32) (ArgsGenesisBl
 	var err error
 
 	isCurrentShard := shardID == gbc.arg.ShardCoordinator.SelfId()
+	newArgument := gbc.arg // copy the arguments
+	newArgument.versionedHeaderFactory, err = gbc.createVersionedHeaderFactory()
+	if err != nil {
+		return ArgsGenesisBlockCreator{}, fmt.Errorf("'%w' while generating a VersionedHeaderFactory instance for shard %d",
+			err, shardID)
+	}
+
 	if isCurrentShard {
-		newArgument := gbc.arg // copy the arguments
 		newArgument.Data = newArgument.Data.Clone().(dataComponentsHandler)
 		return newArgument, nil
 	}
 
-	newArgument := gbc.arg // copy the arguments
+	argsAccCreator := factoryState.ArgsAccountCreator{
+		Hasher:              newArgument.Core.Hasher(),
+		Marshaller:          newArgument.Core.InternalMarshalizer(),
+		EnableEpochsHandler: newArgument.Core.EnableEpochsHandler(),
+	}
+	accCreator, err := factoryState.NewAccountCreator(argsAccCreator)
+	if err != nil {
+		return ArgsGenesisBlockCreator{}, err
+	}
+
 	newArgument.Accounts, err = createAccountAdapter(
 		newArgument.Core.InternalMarshalizer(),
 		newArgument.Core.Hasher(),
-		factoryState.NewAccountCreator(),
-		gbc.arg.TrieStorageManagers[triesFactory.UserAccountTrie],
+		accCreator,
+		gbc.arg.TrieStorageManagers[dataRetriever.UserAccountsUnit.String()],
+		gbc.arg.Core.AddressPubKeyConverter(),
+		newArgument.Core.EnableEpochsHandler(),
 	)
 	if err != nil {
 		return ArgsGenesisBlockCreator{}, fmt.Errorf("'%w' while generating an in-memory accounts adapter for shard %d",
@@ -495,6 +527,25 @@ func (gbc *genesisBlockCreator) getNewArgForShard(shardID uint32) (ArgsGenesisBl
 	// create copy of components handlers we need to change temporarily
 	newArgument.Data = newArgument.Data.Clone().(dataComponentsHandler)
 	return newArgument, err
+}
+
+func (gbc *genesisBlockCreator) createVersionedHeaderFactory() (genesis.VersionedHeaderFactory, error) {
+	cacheConfig := factory.GetCacherFromConfig(gbc.arg.HeaderVersionConfigs.Cache)
+	cache, err := storageunit.NewCache(cacheConfig)
+	if err != nil {
+		return nil, err
+	}
+
+	headerVersionHandler, err := factoryBlock.NewHeaderVersionHandler(
+		gbc.arg.HeaderVersionConfigs.VersionsByEpochs,
+		gbc.arg.HeaderVersionConfigs.DefaultVersion,
+		cache,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	return factoryBlock.NewShardHeaderFactory(headerVersionHandler)
 }
 
 func (gbc *genesisBlockCreator) saveGenesisBlock(header data.HeaderHandler) error {

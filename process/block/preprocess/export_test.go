@@ -4,9 +4,9 @@ import (
 	"math/big"
 	"sync/atomic"
 
-	"github.com/ElrondNetwork/elrond-go-core/core"
-	"github.com/ElrondNetwork/elrond-go-core/data"
-	"github.com/ElrondNetwork/elrond-go-core/data/block"
+	"github.com/multiversx/mx-chain-core-go/core"
+	"github.com/multiversx/mx-chain-core-go/data"
+	"github.com/multiversx/mx-chain-core-go/data/block"
 )
 
 func (txs *transactions) ReceivedTransaction(txHash []byte, value interface{}) {
@@ -149,20 +149,20 @@ func (bc *balanceComputation) GetBalanceOfAddress(address []byte) *big.Int {
 	return big.NewInt(0).Set(currValue)
 }
 
-func (gc *gasComputation) GetTxHashesWithGasProvidedSinceLastReset() [][]byte {
-	return gc.getTxHashesWithGasProvidedSinceLastReset()
+func (gc *gasComputation) GetTxHashesWithGasProvidedSinceLastReset(key []byte) [][]byte {
+	return gc.getTxHashesWithGasProvidedSinceLastReset(key)
 }
 
-func (gc *gasComputation) GetTxHashesWithGasProvidedAsScheduledSinceLastReset() [][]byte {
-	return gc.getTxHashesWithGasProvidedAsScheduledSinceLastReset()
+func (gc *gasComputation) GetTxHashesWithGasProvidedAsScheduledSinceLastReset(key []byte) [][]byte {
+	return gc.getTxHashesWithGasProvidedAsScheduledSinceLastReset(key)
 }
 
-func (gc *gasComputation) GetTxHashesWithGasRefundedSinceLastReset() [][]byte {
-	return gc.getTxHashesWithGasRefundedSinceLastReset()
+func (gc *gasComputation) GetTxHashesWithGasRefundedSinceLastReset(key []byte) [][]byte {
+	return gc.getTxHashesWithGasRefundedSinceLastReset(key)
 }
 
-func (gc *gasComputation) GetTxHashesWithGasPenalizedSinceLastReset() [][]byte {
-	return gc.getTxHashesWithGasPenalizedSinceLastReset()
+func (gc *gasComputation) GetTxHashesWithGasPenalizedSinceLastReset(key []byte) [][]byte {
+	return gc.getTxHashesWithGasPenalizedSinceLastReset(key)
 }
 
 func (ste *scheduledTxsExecution) ComputeScheduledIntermediateTxs(

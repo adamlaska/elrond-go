@@ -3,14 +3,15 @@ package syncer
 import (
 	"context"
 
-	"github.com/ElrondNetwork/elrond-go-core/core"
-	"github.com/ElrondNetwork/elrond-go/common"
-	"github.com/ElrondNetwork/elrond-go/epochStart"
-	"github.com/ElrondNetwork/elrond-go/process/factory"
-	"github.com/ElrondNetwork/elrond-go/trie/statistics"
+	"github.com/multiversx/mx-chain-core-go/core"
+	"github.com/multiversx/mx-chain-core-go/core/check"
+	"github.com/multiversx/mx-chain-go/common"
+	"github.com/multiversx/mx-chain-go/process/factory"
+	"github.com/multiversx/mx-chain-go/state"
+	"github.com/multiversx/mx-chain-go/trie/statistics"
 )
 
-var _ epochStart.AccountsDBSyncer = (*validatorAccountsSyncer)(nil)
+var _ state.AccountsDBSyncer = (*validatorAccountsSyncer)(nil)
 
 type validatorAccountsSyncer struct {
 	*baseAccountsSyncer
@@ -34,19 +35,22 @@ func NewValidatorAccountsSyncer(args ArgsNewValidatorAccountsSyncer) (*validator
 	}
 
 	b := &baseAccountsSyncer{
-		hasher:                    args.Hasher,
-		marshalizer:               args.Marshalizer,
-		dataTries:                 make(map[string]struct{}),
-		trieStorageManager:        args.TrieStorageManager,
-		requestHandler:            args.RequestHandler,
-		timeoutHandler:            timeoutHandler,
-		shardId:                   core.MetachainShardId,
-		cacher:                    args.Cacher,
-		rootHash:                  nil,
-		maxTrieLevelInMemory:      args.MaxTrieLevelInMemory,
-		name:                      "peer accounts",
-		maxHardCapForMissingNodes: args.MaxHardCapForMissingNodes,
-		trieSyncerVersion:         args.TrieSyncerVersion,
+		hasher:                            args.Hasher,
+		marshalizer:                       args.Marshalizer,
+		dataTries:                         make(map[string]struct{}),
+		trieStorageManager:                args.TrieStorageManager,
+		requestHandler:                    args.RequestHandler,
+		timeoutHandler:                    timeoutHandler,
+		shardId:                           core.MetachainShardId,
+		cacher:                            args.Cacher,
+		maxTrieLevelInMemory:              args.MaxTrieLevelInMemory,
+		name:                              "peer accounts",
+		maxHardCapForMissingNodes:         args.MaxHardCapForMissingNodes,
+		trieSyncerVersion:                 args.TrieSyncerVersion,
+		checkNodesOnDisk:                  args.CheckNodesOnDisk,
+		userAccountsSyncStatisticsHandler: statistics.NewTrieSyncStatistics(),
+		appStatusHandler:                  args.AppStatusHandler,
+		enableEpochsHandler:               args.EnableEpochsHandler,
 	}
 
 	u := &validatorAccountsSyncer{
@@ -57,7 +61,12 @@ func NewValidatorAccountsSyncer(args ArgsNewValidatorAccountsSyncer) (*validator
 }
 
 // SyncAccounts will launch the syncing method to gather all the data needed for validatorAccounts - it is a blocking method
-func (v *validatorAccountsSyncer) SyncAccounts(rootHash []byte) error {
+// TODO: handle trie storage statistics here
+func (v *validatorAccountsSyncer) SyncAccounts(rootHash []byte, storageMarker common.StorageMarker) error {
+	if check.IfNil(storageMarker) {
+		return ErrNilStorageMarker
+	}
+
 	v.mutex.Lock()
 	defer v.mutex.Unlock()
 
@@ -69,18 +78,24 @@ func (v *validatorAccountsSyncer) SyncAccounts(rootHash []byte) error {
 		cancel()
 	}()
 
-	tss := statistics.NewTrieSyncStatistics()
-	go v.printStatistics(tss, ctx)
+	go v.printStatisticsAndUpdateMetrics(ctx)
 
-	mainTrie, err := v.syncMainTrie(rootHash, factory.ValidatorTrieNodesTopic, tss, ctx)
+	err := v.syncMainTrie(
+		rootHash,
+		factory.ValidatorTrieNodesTopic,
+		ctx,
+		nil, // not used for validator accounts syncer
+	)
 	if err != nil {
 		return err
 	}
 
-	err = mainTrie.GetStorageManager().Put([]byte(common.TrieSyncedKey), []byte(common.TrieSyncedVal))
-	if err != nil {
-		log.Warn("error while putting trieSynced value into main storer after sync", "error", err)
-	}
+	storageMarker.MarkStorerAsSyncedAndActive(v.trieStorageManager)
 
 	return nil
+}
+
+// IsInterfaceNil returns true if there is no value under the interface
+func (v *validatorAccountsSyncer) IsInterfaceNil() bool {
+	return v == nil
 }

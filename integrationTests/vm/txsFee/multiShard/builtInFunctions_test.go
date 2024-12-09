@@ -5,15 +5,14 @@ import (
 	"math/big"
 	"testing"
 
-	"github.com/ElrondNetwork/elrond-go-core/core"
-	"github.com/ElrondNetwork/elrond-go-core/data/block"
-	"github.com/ElrondNetwork/elrond-go-core/data/scheduled"
-	"github.com/ElrondNetwork/elrond-go-core/data/transaction"
-	"github.com/ElrondNetwork/elrond-go/config"
-	"github.com/ElrondNetwork/elrond-go/integrationTests/vm"
-	"github.com/ElrondNetwork/elrond-go/integrationTests/vm/txsFee/utils"
-	"github.com/ElrondNetwork/elrond-go/state"
-	vmcommon "github.com/ElrondNetwork/elrond-vm-common"
+	"github.com/multiversx/mx-chain-core-go/core"
+	"github.com/multiversx/mx-chain-core-go/data/scheduled"
+	"github.com/multiversx/mx-chain-go/config"
+	"github.com/multiversx/mx-chain-go/integrationTests"
+	"github.com/multiversx/mx-chain-go/integrationTests/vm"
+	"github.com/multiversx/mx-chain-go/integrationTests/vm/txsFee/utils"
+	"github.com/multiversx/mx-chain-go/state"
+	vmcommon "github.com/multiversx/mx-chain-vm-common-go"
 	"github.com/stretchr/testify/require"
 )
 
@@ -33,29 +32,32 @@ func getZeroGasAndFees() scheduled.GasAndFees {
 // 3. Do a ClaimDeveloperReward (cross shard call , the transaction will be executed on the source shard and the destination shard)
 // 4. Execute SCR from context destination on context source ( the new owner will receive the developer rewards)
 func TestBuiltInFunctionExecuteOnSourceAndDestinationShouldWork(t *testing.T) {
-	// TODO reinstate test after Arwen pointer fix
 	if testing.Short() {
-		t.Skip("cannot run with -race -short; requires Arwen fix")
+		t.Skip("this is not a short test")
 	}
 
 	testContextSource, err := vm.CreatePreparedTxProcessorWithVMsMultiShard(
 		0,
 		config.EnableEpochs{
-			PenalizedTooMuchGasEnableEpoch: 100,
-		})
+			PenalizedTooMuchGasEnableEpoch:                  integrationTests.UnreachableEpoch,
+			DynamicGasCostForDataTrieStorageLoadEnableEpoch: integrationTests.UnreachableEpoch,
+		},
+		1)
 	require.Nil(t, err)
 	defer testContextSource.Close()
 
 	testContextDst, err := vm.CreatePreparedTxProcessorWithVMsMultiShard(
 		1,
 		config.EnableEpochs{
-			PenalizedTooMuchGasEnableEpoch: 100,
-		})
+			PenalizedTooMuchGasEnableEpoch:                  integrationTests.UnreachableEpoch,
+			DynamicGasCostForDataTrieStorageLoadEnableEpoch: integrationTests.UnreachableEpoch,
+		},
+		1)
 	require.Nil(t, err)
 	defer testContextDst.Close()
 
-	pathToContract := "../../arwen/testdata/counter/output/counter.wasm"
-	scAddr, owner := utils.DoDeploy(t, testContextDst, pathToContract)
+	pathToContract := "../../wasm/testdata/counter/output/counter_old.wasm"
+	scAddr, owner := utils.DoDeployOldCounter(t, testContextDst, pathToContract)
 	require.Equal(t, uint32(1), testContextDst.ShardCoordinator.ComputeId(scAddr))
 	require.Equal(t, uint32(1), testContextDst.ShardCoordinator.ComputeId(owner))
 	gasAndFees := getZeroGasAndFees()
@@ -66,7 +68,7 @@ func TestBuiltInFunctionExecuteOnSourceAndDestinationShouldWork(t *testing.T) {
 	require.Equal(t, uint32(0), testContextDst.ShardCoordinator.ComputeId(newOwner))
 
 	gasPrice := uint64(10)
-	gasLimit := uint64(1000)
+	gasLimit := uint64(100000)
 
 	txData := []byte(core.BuiltInFunctionChangeOwnerAddress + "@" + hex.EncodeToString(newOwner))
 	tx := vm.CreateTransaction(1, big.NewInt(0), owner, scAddr, gasPrice, gasLimit, txData)
@@ -80,15 +82,7 @@ func TestBuiltInFunctionExecuteOnSourceAndDestinationShouldWork(t *testing.T) {
 	utils.CheckOwnerAddr(t, testContextDst, scAddr, newOwner)
 
 	accumulatedFees := testContextDst.TxFeeHandler.GetAccumulatedFees()
-	require.Equal(t, big.NewInt(850), accumulatedFees)
-
-	testIndexer := vm.CreateTestIndexer(t, testContextDst.ShardCoordinator, testContextDst.EconomicsData, false, testContextDst.TxsLogsProcessor)
-	testIndexer.SaveTransaction(tx, block.TxBlock, nil)
-
-	indexerTx := testIndexer.GetIndexerPreparedTransaction(t)
-	require.Equal(t, uint64(84), indexerTx.GasUsed)
-	require.Equal(t, "840", indexerTx.Fee)
-	require.Equal(t, transaction.TxStatusSuccess.String(), indexerTx.Status)
+	require.Equal(t, big.NewInt(1000000), accumulatedFees)
 
 	utils.CleanAccumulatedIntermediateTransactions(t, testContextDst)
 
@@ -101,8 +95,8 @@ func TestBuiltInFunctionExecuteOnSourceAndDestinationShouldWork(t *testing.T) {
 	scUserAcc := scStateAcc.(state.UserAccountHandler)
 	currentSCDevBalance := scUserAcc.GetDeveloperReward()
 
-	gasLimit = uint64(500)
-	_, _ = vm.CreateAccount(testContextDst.Accounts, sndAddr, 0, big.NewInt(10000))
+	gasLimit = uint64(50000)
+	_, _ = vm.CreateAccount(testContextDst.Accounts, sndAddr, 0, big.NewInt(100000000))
 	tx = vm.CreateTransaction(0, big.NewInt(0), sndAddr, scAddr, gasPrice, gasLimit, []byte("increment"))
 
 	retCode, err := testContextDst.TxProcessor.ProcessTransaction(tx)
@@ -112,27 +106,18 @@ func TestBuiltInFunctionExecuteOnSourceAndDestinationShouldWork(t *testing.T) {
 	_, err = testContextDst.Accounts.Commit()
 	require.Nil(t, err)
 
-	expectedBalance := big.NewInt(6130)
+	expectedBalance := big.NewInt(99843270)
 	vm.TestAccount(t, testContextDst.Accounts, sndAddr, 1, expectedBalance)
 
 	accumulatedFees = testContextDst.TxFeeHandler.GetAccumulatedFees()
-	require.Equal(t, big.NewInt(4720), accumulatedFees)
+	require.Equal(t, big.NewInt(1156730), accumulatedFees)
 
 	developerFees := testContextDst.TxFeeHandler.GetDeveloperFees()
-	require.Equal(t, big.NewInt(377), developerFees)
-
-	intermediateTxs := testContextDst.GetIntermediateTransactions(t)
-	testIndexer = vm.CreateTestIndexer(t, testContextDst.ShardCoordinator, testContextDst.EconomicsData, true, testContextDst.TxsLogsProcessor)
-	testIndexer.SaveTransaction(tx, block.TxBlock, intermediateTxs)
-
-	indexerTx = testIndexer.GetIndexerPreparedTransaction(t)
-	require.Equal(t, uint64(387), indexerTx.GasUsed)
-	require.Equal(t, "3870", indexerTx.Fee)
-	require.Equal(t, transaction.TxStatusSuccess.String(), indexerTx.Status)
+	require.Equal(t, big.NewInt(115578), developerFees)
 
 	// call get developer rewards
-	gasLimit = 500
-	_, _ = vm.CreateAccount(testContextSource.Accounts, newOwner, 0, big.NewInt(10000))
+	gasLimit = 500000
+	_, _ = vm.CreateAccount(testContextSource.Accounts, newOwner, 0, big.NewInt(10000000))
 	txData = []byte(core.BuiltInFunctionClaimDeveloperRewards)
 	tx = vm.CreateTransaction(0, big.NewInt(0), newOwner, scAddr, gasPrice, gasLimit, txData)
 
@@ -141,23 +126,14 @@ func TestBuiltInFunctionExecuteOnSourceAndDestinationShouldWork(t *testing.T) {
 	require.Equal(t, vmcommon.Ok, retCode)
 	require.Nil(t, err)
 
-	expectedBalance = big.NewInt(9770)
+	expectedBalance = big.NewInt(5000000)
 	utils.TestAccount(t, testContextSource.Accounts, newOwner, 1, expectedBalance)
 
 	accumulatedFees = testContextSource.TxFeeHandler.GetAccumulatedFees()
-	require.Equal(t, big.NewInt(230), accumulatedFees)
+	require.Equal(t, big.NewInt(5000000), accumulatedFees)
 
 	developerFees = testContextSource.TxFeeHandler.GetDeveloperFees()
-	require.Equal(t, big.NewInt(0), developerFees)
-
-	intermediateTxs = testContextSource.GetIntermediateTransactions(t)
-	testIndexer = vm.CreateTestIndexer(t, testContextSource.ShardCoordinator, testContextSource.EconomicsData, true, testContextDst.TxsLogsProcessor)
-	testIndexer.SaveTransaction(tx, block.TxBlock, intermediateTxs)
-
-	indexerTx = testIndexer.GetIndexerPreparedTransaction(t)
-	require.Equal(t, uint64(23), indexerTx.GasUsed)
-	require.Equal(t, "230", indexerTx.Fee)
-	require.Equal(t, transaction.TxStatusPending.String(), indexerTx.Status)
+	require.Equal(t, big.NewInt(499977), developerFees)
 
 	utils.CleanAccumulatedIntermediateTransactions(t, testContextDst)
 
@@ -169,17 +145,9 @@ func TestBuiltInFunctionExecuteOnSourceAndDestinationShouldWork(t *testing.T) {
 	txs := testContextDst.GetIntermediateTransactions(t)
 	scr := txs[0]
 
-	testIndexer = vm.CreateTestIndexer(t, testContextDst.ShardCoordinator, testContextDst.EconomicsData, true, testContextDst.TxsLogsProcessor)
-	testIndexer.SaveTransaction(tx, block.TxBlock, txs)
-
-	indexerTx = testIndexer.GetIndexerPreparedTransaction(t)
-	require.Equal(t, uint64(500), indexerTx.GasUsed)
-	require.Equal(t, "5000", indexerTx.Fee)
-	require.Equal(t, transaction.TxStatusSuccess.String(), indexerTx.Status)
-
 	utils.ProcessSCRResult(t, testContextSource, scr, vmcommon.Ok, nil)
 
-	expectedBalance = big.NewInt(9771 + 376 + currentSCDevBalance.Int64())
+	expectedBalance = big.NewInt(499977 + 4515686 + currentSCDevBalance.Int64())
 	utils.TestAccount(t, testContextSource.Accounts, newOwner, 1, expectedBalance)
 
 }

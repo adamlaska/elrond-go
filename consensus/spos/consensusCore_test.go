@@ -3,9 +3,10 @@ package spos_test
 import (
 	"testing"
 
-	"github.com/ElrondNetwork/elrond-go/consensus/mock"
-	"github.com/ElrondNetwork/elrond-go/consensus/spos"
-	"github.com/ElrondNetwork/elrond-go/testscommon/consensus"
+	"github.com/multiversx/mx-chain-go/consensus/mock"
+	"github.com/multiversx/mx-chain-go/consensus/spos"
+	"github.com/multiversx/mx-chain-go/testscommon/consensus"
+	"github.com/multiversx/mx-chain-go/testscommon/cryptoMocks"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -22,9 +23,7 @@ func createDefaultConsensusCoreArgs() *spos.ConsensusCoreArgs {
 		ChronologyHandler:             consensusCoreMock.Chronology(),
 		Hasher:                        consensusCoreMock.Hasher(),
 		Marshalizer:                   consensusCoreMock.Marshalizer(),
-		BlsPrivateKey:                 consensusCoreMock.PrivateKey(),
-		BlsSingleSigner:               consensusCoreMock.SingleSigner(),
-		MultiSigner:                   consensusCoreMock.MultiSigner(),
+		MultiSignerContainer:          consensusCoreMock.MultiSignerContainer(),
 		RoundHandler:                  consensusCoreMock.RoundHandler(),
 		ShardCoordinator:              consensusCoreMock.ShardCoordinator(),
 		NodesCoordinator:              consensusCoreMock.NodesCoordinator(),
@@ -36,6 +35,9 @@ func createDefaultConsensusCoreArgs() *spos.ConsensusCoreArgs {
 		FallbackHeaderValidator:       consensusCoreMock.FallbackHeaderValidator(),
 		NodeRedundancyHandler:         consensusCoreMock.NodeRedundancyHandler(),
 		ScheduledProcessor:            scheduledProcessor,
+		MessageSigningHandler:         consensusCoreMock.MessageSigningHandler(),
+		PeerBlacklistHandler:          consensusCoreMock.PeerBlacklistHandler(),
+		SigningHandler:                consensusCoreMock.SigningHandler(),
 	}
 	return args
 }
@@ -136,39 +138,25 @@ func TestConsensusCore_WithNilMarshalizerShouldFail(t *testing.T) {
 	assert.Equal(t, spos.ErrNilMarshalizer, err)
 }
 
-func TestConsensusCore_WithNilBlsPrivateKeyShouldFail(t *testing.T) {
+func TestConsensusCore_WithNilMultiSignerContainerShouldFail(t *testing.T) {
 	t.Parallel()
 
 	args := createDefaultConsensusCoreArgs()
-	args.BlsPrivateKey = nil
+	args.MultiSignerContainer = nil
 
 	consensusCore, err := spos.NewConsensusCore(
 		args,
 	)
 
 	assert.Nil(t, consensusCore)
-	assert.Equal(t, spos.ErrNilBlsPrivateKey, err)
-}
-
-func TestConsensusCore_WithNilBlsSingleSignerShouldFail(t *testing.T) {
-	t.Parallel()
-
-	args := createDefaultConsensusCoreArgs()
-	args.BlsSingleSigner = nil
-
-	consensusCore, err := spos.NewConsensusCore(
-		args,
-	)
-
-	assert.Nil(t, consensusCore)
-	assert.Equal(t, spos.ErrNilBlsSingleSigner, err)
+	assert.Equal(t, spos.ErrNilMultiSignerContainer, err)
 }
 
 func TestConsensusCore_WithNilMultiSignerShouldFail(t *testing.T) {
 	t.Parallel()
 
 	args := createDefaultConsensusCoreArgs()
-	args.MultiSigner = nil
+	args.MultiSignerContainer = cryptoMocks.NewMultiSignerContainerMock(nil)
 
 	consensusCore, err := spos.NewConsensusCore(
 		args,
@@ -302,6 +290,48 @@ func TestConsensusCore_WithNilNodeRedundancyHandlerShouldFail(t *testing.T) {
 
 	assert.Nil(t, consensusCore)
 	assert.Equal(t, spos.ErrNilNodeRedundancyHandler, err)
+}
+
+func TestConsensusCore_WithNilScheduledProcessorShouldFail(t *testing.T) {
+	t.Parallel()
+
+	args := createDefaultConsensusCoreArgs()
+	args.ScheduledProcessor = nil
+
+	consensusCore, err := spos.NewConsensusCore(
+		args,
+	)
+
+	assert.Nil(t, consensusCore)
+	assert.Equal(t, spos.ErrNilScheduledProcessor, err)
+}
+
+func TestConsensusCore_WithNilMessageSigningHandlerShouldFail(t *testing.T) {
+	t.Parallel()
+
+	args := createDefaultConsensusCoreArgs()
+	args.MessageSigningHandler = nil
+
+	consensusCore, err := spos.NewConsensusCore(
+		args,
+	)
+
+	assert.Nil(t, consensusCore)
+	assert.Equal(t, spos.ErrNilMessageSigningHandler, err)
+}
+
+func TestConsensusCore_WithNilPeerBlacklistHandlerShouldFail(t *testing.T) {
+	t.Parallel()
+
+	args := createDefaultConsensusCoreArgs()
+	args.PeerBlacklistHandler = nil
+
+	consensusCore, err := spos.NewConsensusCore(
+		args,
+	)
+
+	assert.Nil(t, consensusCore)
+	assert.Equal(t, spos.ErrNilPeerBlacklistHandler, err)
 }
 
 func TestConsensusCore_CreateConsensusCoreShouldWork(t *testing.T) {

@@ -5,15 +5,18 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/ElrondNetwork/elrond-go-core/core"
-	"github.com/ElrondNetwork/elrond-go-core/data"
-	"github.com/ElrondNetwork/elrond-go-core/data/block"
-	"github.com/ElrondNetwork/elrond-go-core/data/transaction"
-	"github.com/ElrondNetwork/elrond-go/dataRetriever"
-	"github.com/ElrondNetwork/elrond-go/process"
-	"github.com/ElrondNetwork/elrond-go/process/mock"
-	"github.com/ElrondNetwork/elrond-go/testscommon/hashingMocks"
+	"github.com/multiversx/mx-chain-core-go/core"
+	"github.com/multiversx/mx-chain-core-go/data"
+	"github.com/multiversx/mx-chain-core-go/data/block"
+	"github.com/multiversx/mx-chain-core-go/data/transaction"
 	"github.com/stretchr/testify/assert"
+
+	"github.com/multiversx/mx-chain-go/dataRetriever"
+	"github.com/multiversx/mx-chain-go/process"
+	"github.com/multiversx/mx-chain-go/process/mock"
+	"github.com/multiversx/mx-chain-go/testscommon/economicsmocks"
+	"github.com/multiversx/mx-chain-go/testscommon/hashingMocks"
+	"github.com/multiversx/mx-chain-go/testscommon/storage"
 )
 
 func TestNewOneMBPostProcessor_NilHasher(t *testing.T) {
@@ -23,10 +26,10 @@ func TestNewOneMBPostProcessor_NilHasher(t *testing.T) {
 		nil,
 		&mock.MarshalizerMock{},
 		mock.NewMultiShardsCoordinatorMock(5),
-		&mock.ChainStorerMock{},
+		&storage.ChainStorerStub{},
 		block.TxBlock,
 		dataRetriever.TransactionUnit,
-		&mock.FeeHandlerStub{},
+		&economicsmocks.EconomicsHandlerStub{},
 	)
 
 	assert.Nil(t, irp)
@@ -40,10 +43,10 @@ func TestNewOneMBPostProcessor_NilMarshalizer(t *testing.T) {
 		&hashingMocks.HasherMock{},
 		nil,
 		mock.NewMultiShardsCoordinatorMock(5),
-		&mock.ChainStorerMock{},
+		&storage.ChainStorerStub{},
 		block.TxBlock,
 		dataRetriever.TransactionUnit,
-		&mock.FeeHandlerStub{},
+		&economicsmocks.EconomicsHandlerStub{},
 	)
 
 	assert.Nil(t, irp)
@@ -57,10 +60,10 @@ func TestNewOneMBPostProcessor_NilShardCoord(t *testing.T) {
 		&hashingMocks.HasherMock{},
 		&mock.MarshalizerMock{},
 		nil,
-		&mock.ChainStorerMock{},
+		&storage.ChainStorerStub{},
 		block.TxBlock,
 		dataRetriever.TransactionUnit,
-		&mock.FeeHandlerStub{},
+		&economicsmocks.EconomicsHandlerStub{},
 	)
 
 	assert.Nil(t, irp)
@@ -77,7 +80,7 @@ func TestNewOneMBPostProcessor_NilStorer(t *testing.T) {
 		nil,
 		block.TxBlock,
 		dataRetriever.TransactionUnit,
-		&mock.FeeHandlerStub{},
+		&economicsmocks.EconomicsHandlerStub{},
 	)
 
 	assert.Nil(t, irp)
@@ -91,7 +94,7 @@ func TestNewOneMBPostProcessor_NilEconomicsFeeHandler(t *testing.T) {
 		&hashingMocks.HasherMock{},
 		&mock.MarshalizerMock{},
 		mock.NewMultiShardsCoordinatorMock(5),
-		&mock.ChainStorerMock{},
+		&storage.ChainStorerStub{},
 		block.TxBlock,
 		dataRetriever.TransactionUnit,
 		nil,
@@ -108,10 +111,10 @@ func TestNewOneMBPostProcessor_OK(t *testing.T) {
 		&hashingMocks.HasherMock{},
 		&mock.MarshalizerMock{},
 		mock.NewMultiShardsCoordinatorMock(5),
-		&mock.ChainStorerMock{},
+		&storage.ChainStorerStub{},
 		block.TxBlock,
 		dataRetriever.TransactionUnit,
-		&mock.FeeHandlerStub{},
+		&economicsmocks.EconomicsHandlerStub{},
 	)
 
 	assert.Nil(t, err)
@@ -125,10 +128,10 @@ func TestOneMBPostProcessor_CreateAllInterMiniBlocks(t *testing.T) {
 		&hashingMocks.HasherMock{},
 		&mock.MarshalizerMock{},
 		mock.NewMultiShardsCoordinatorMock(5),
-		&mock.ChainStorerMock{},
+		&storage.ChainStorerStub{},
 		block.TxBlock,
 		dataRetriever.TransactionUnit,
-		&mock.FeeHandlerStub{},
+		&economicsmocks.EconomicsHandlerStub{},
 	)
 
 	mbs := irp.CreateAllInterMiniBlocks()
@@ -142,17 +145,19 @@ func TestOneMBPostProcessor_CreateAllInterMiniBlocksOneMinBlock(t *testing.T) {
 		&hashingMocks.HasherMock{},
 		&mock.MarshalizerMock{},
 		mock.NewMultiShardsCoordinatorMock(5),
-		&mock.ChainStorerMock{},
+		&storage.ChainStorerStub{},
 		block.TxBlock,
 		dataRetriever.TransactionUnit,
-		&mock.FeeHandlerStub{},
+		&economicsmocks.EconomicsHandlerStub{},
 	)
 
 	txs := make([]data.TransactionHandler, 0)
 	txs = append(txs, &transaction.Transaction{})
 	txs = append(txs, &transaction.Transaction{})
 
-	err := irp.AddIntermediateTransactions(txs)
+	// with no InitProcessedResults, means that the transactions are added as scheduled transactions, not as
+	// processing results from the execution of other transactions or miniblocks
+	err := irp.AddIntermediateTransactions(txs, nil)
 	assert.Nil(t, err)
 
 	mbs := irp.CreateAllInterMiniBlocks()
@@ -166,10 +171,10 @@ func TestOneMBPostProcessor_VerifyNilBody(t *testing.T) {
 		&hashingMocks.HasherMock{},
 		&mock.MarshalizerMock{},
 		mock.NewMultiShardsCoordinatorMock(5),
-		&mock.ChainStorerMock{},
+		&storage.ChainStorerStub{},
 		block.TxBlock,
 		dataRetriever.TransactionUnit,
-		&mock.FeeHandlerStub{},
+		&economicsmocks.EconomicsHandlerStub{},
 	)
 
 	err := irp.VerifyInterMiniBlocks(&block.Body{})
@@ -183,10 +188,10 @@ func TestOneMBPostProcessor_VerifyTooManyBlock(t *testing.T) {
 		&hashingMocks.HasherMock{},
 		&mock.MarshalizerMock{},
 		mock.NewMultiShardsCoordinatorMock(5),
-		&mock.ChainStorerMock{},
+		&storage.ChainStorerStub{},
 		block.TxBlock,
 		dataRetriever.TransactionUnit,
-		&mock.FeeHandlerStub{},
+		&economicsmocks.EconomicsHandlerStub{},
 	)
 
 	txs := make([]data.TransactionHandler, 0)
@@ -196,7 +201,7 @@ func TestOneMBPostProcessor_VerifyTooManyBlock(t *testing.T) {
 	txs = append(txs, &transaction.Transaction{SndAddr: []byte("snd"), RcvAddr: []byte("recvaddr4")})
 	txs = append(txs, &transaction.Transaction{SndAddr: []byte("snd"), RcvAddr: []byte("recvaddr5")})
 
-	err := irp.AddIntermediateTransactions(txs)
+	err := irp.AddIntermediateTransactions(txs, nil)
 	assert.Nil(t, err)
 
 	miniBlock := &block.MiniBlock{
@@ -228,10 +233,10 @@ func TestOneMBPostProcessor_VerifyNilMiniBlocks(t *testing.T) {
 		&hashingMocks.HasherMock{},
 		&mock.MarshalizerMock{},
 		mock.NewMultiShardsCoordinatorMock(5),
-		&mock.ChainStorerMock{},
+		&storage.ChainStorerStub{},
 		block.TxBlock,
 		dataRetriever.TransactionUnit,
-		&mock.FeeHandlerStub{},
+		&economicsmocks.EconomicsHandlerStub{},
 	)
 
 	miniBlock := &block.MiniBlock{
@@ -252,10 +257,10 @@ func TestOneMBPostProcessor_VerifyOk(t *testing.T) {
 		&hashingMocks.HasherMock{},
 		&mock.MarshalizerMock{},
 		mock.NewMultiShardsCoordinatorMock(5),
-		&mock.ChainStorerMock{},
+		&storage.ChainStorerStub{},
 		block.TxBlock,
 		dataRetriever.TransactionUnit,
-		&mock.FeeHandlerStub{},
+		&economicsmocks.EconomicsHandlerStub{},
 	)
 
 	txs := make([]data.TransactionHandler, 0)
@@ -265,7 +270,7 @@ func TestOneMBPostProcessor_VerifyOk(t *testing.T) {
 	txs = append(txs, &transaction.Transaction{SndAddr: []byte("snd"), RcvAddr: []byte("recvaddr4")})
 	txs = append(txs, &transaction.Transaction{SndAddr: []byte("snd"), RcvAddr: []byte("recvaddr5")})
 
-	err := irp.AddIntermediateTransactions(txs)
+	err := irp.AddIntermediateTransactions(txs, nil)
 	assert.Nil(t, err)
 
 	miniBlock := &block.MiniBlock{

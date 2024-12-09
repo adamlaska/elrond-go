@@ -1,14 +1,14 @@
 package interceptorscontainer
 
 import (
-	"github.com/ElrondNetwork/elrond-go-core/core"
-	"github.com/ElrondNetwork/elrond-go-core/core/check"
-	"github.com/ElrondNetwork/elrond-go-core/core/throttler"
-	"github.com/ElrondNetwork/elrond-go-core/marshal"
-	"github.com/ElrondNetwork/elrond-go/process"
-	"github.com/ElrondNetwork/elrond-go/process/factory"
-	"github.com/ElrondNetwork/elrond-go/process/factory/containers"
-	interceptorFactory "github.com/ElrondNetwork/elrond-go/process/interceptors/factory"
+	"github.com/multiversx/mx-chain-core-go/core"
+	"github.com/multiversx/mx-chain-core-go/core/check"
+	"github.com/multiversx/mx-chain-core-go/core/throttler"
+	"github.com/multiversx/mx-chain-core-go/marshal"
+	"github.com/multiversx/mx-chain-go/process"
+	"github.com/multiversx/mx-chain-go/process/factory"
+	"github.com/multiversx/mx-chain-go/process/factory/containers"
+	interceptorFactory "github.com/multiversx/mx-chain-go/process/interceptors/factory"
 )
 
 var _ process.InterceptorsContainerFactory = (*shardInterceptorsContainerFactory)(nil)
@@ -29,7 +29,8 @@ func NewShardInterceptorsContainerFactory(
 		args.Accounts,
 		args.Store,
 		args.DataPool,
-		args.Messenger,
+		args.MainMessenger,
+		args.FullArchiveMessenger,
 		args.NodesCoordinator,
 		args.BlockBlackList,
 		args.AntifloodHandler,
@@ -37,6 +38,9 @@ func NewShardInterceptorsContainerFactory(
 		args.WhiteListerVerifiedTxs,
 		args.PreferredPeersHolder,
 		args.RequestHandler,
+		args.MainPeerShardMapper,
+		args.FullArchivePeerShardMapper,
+		args.HardforkTrigger,
 	)
 	if err != nil {
 		return nil, err
@@ -68,40 +72,57 @@ func NewShardInterceptorsContainerFactory(
 	if check.IfNil(args.PreferredPeersHolder) {
 		return nil, process.ErrNilPreferredPeersHolder
 	}
-
-	argInterceptorFactory := &interceptorFactory.ArgInterceptedDataFactory{
-		CoreComponents:            args.CoreComponents,
-		CryptoComponents:          args.CryptoComponents,
-		ShardCoordinator:          args.ShardCoordinator,
-		NodesCoordinator:          args.NodesCoordinator,
-		FeeHandler:                args.TxFeeHandler,
-		HeaderSigVerifier:         args.HeaderSigVerifier,
-		HeaderIntegrityVerifier:   args.HeaderIntegrityVerifier,
-		ValidityAttester:          args.ValidityAttester,
-		EpochStartTrigger:         args.EpochStartTrigger,
-		WhiteListerVerifiedTxs:    args.WhiteListerVerifiedTxs,
-		ArgsParser:                args.ArgumentsParser,
-		EnableSignTxWithHashEpoch: args.EnableSignTxWithHashEpoch,
+	if check.IfNil(args.SignaturesHandler) {
+		return nil, process.ErrNilSignaturesHandler
+	}
+	if check.IfNil(args.PeerSignatureHandler) {
+		return nil, process.ErrNilPeerSignatureHandler
+	}
+	if args.HeartbeatExpiryTimespanInSec < minTimespanDurationInSec {
+		return nil, process.ErrInvalidExpiryTimespan
 	}
 
-	container := containers.NewInterceptorsContainer()
+	argInterceptorFactory := &interceptorFactory.ArgInterceptedDataFactory{
+		CoreComponents:               args.CoreComponents,
+		CryptoComponents:             args.CryptoComponents,
+		ShardCoordinator:             args.ShardCoordinator,
+		NodesCoordinator:             args.NodesCoordinator,
+		FeeHandler:                   args.TxFeeHandler,
+		HeaderSigVerifier:            args.HeaderSigVerifier,
+		HeaderIntegrityVerifier:      args.HeaderIntegrityVerifier,
+		ValidityAttester:             args.ValidityAttester,
+		EpochStartTrigger:            args.EpochStartTrigger,
+		WhiteListerVerifiedTxs:       args.WhiteListerVerifiedTxs,
+		ArgsParser:                   args.ArgumentsParser,
+		PeerSignatureHandler:         args.PeerSignatureHandler,
+		SignaturesHandler:            args.SignaturesHandler,
+		HeartbeatExpiryTimespanInSec: args.HeartbeatExpiryTimespanInSec,
+		PeerID:                       args.MainMessenger.ID(),
+	}
+
 	base := &baseInterceptorsContainerFactory{
-		container:              container,
-		accounts:               args.Accounts,
-		shardCoordinator:       args.ShardCoordinator,
-		messenger:              args.Messenger,
-		store:                  args.Store,
-		dataPool:               args.DataPool,
-		nodesCoordinator:       args.NodesCoordinator,
-		argInterceptorFactory:  argInterceptorFactory,
-		blockBlackList:         args.BlockBlackList,
-		maxTxNonceDeltaAllowed: args.MaxTxNonceDeltaAllowed,
-		antifloodHandler:       args.AntifloodHandler,
-		whiteListHandler:       args.WhiteListHandler,
-		whiteListerVerifiedTxs: args.WhiteListerVerifiedTxs,
-		preferredPeersHolder:   args.PreferredPeersHolder,
-		hasher:                 args.CoreComponents.Hasher(),
-		requestHandler:         args.RequestHandler,
+		mainContainer:              containers.NewInterceptorsContainer(),
+		fullArchiveContainer:       containers.NewInterceptorsContainer(),
+		accounts:                   args.Accounts,
+		shardCoordinator:           args.ShardCoordinator,
+		mainMessenger:              args.MainMessenger,
+		fullArchiveMessenger:       args.FullArchiveMessenger,
+		store:                      args.Store,
+		dataPool:                   args.DataPool,
+		nodesCoordinator:           args.NodesCoordinator,
+		argInterceptorFactory:      argInterceptorFactory,
+		blockBlackList:             args.BlockBlackList,
+		maxTxNonceDeltaAllowed:     args.MaxTxNonceDeltaAllowed,
+		antifloodHandler:           args.AntifloodHandler,
+		whiteListHandler:           args.WhiteListHandler,
+		whiteListerVerifiedTxs:     args.WhiteListerVerifiedTxs,
+		preferredPeersHolder:       args.PreferredPeersHolder,
+		hasher:                     args.CoreComponents.Hasher(),
+		requestHandler:             args.RequestHandler,
+		mainPeerShardMapper:        args.MainPeerShardMapper,
+		fullArchivePeerShardMapper: args.FullArchivePeerShardMapper,
+		hardforkTrigger:            args.HardforkTrigger,
+		nodeOperationMode:          args.NodeOperationMode,
 	}
 
 	icf := &shardInterceptorsContainerFactory{
@@ -117,43 +138,63 @@ func NewShardInterceptorsContainerFactory(
 }
 
 // Create returns an interceptor container that will hold all interceptors in the system
-func (sicf *shardInterceptorsContainerFactory) Create() (process.InterceptorsContainer, error) {
+func (sicf *shardInterceptorsContainerFactory) Create() (process.InterceptorsContainer, process.InterceptorsContainer, error) {
 	err := sicf.generateTxInterceptors()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	err = sicf.generateUnsignedTxsInterceptors()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	err = sicf.generateRewardTxInterceptor()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	err = sicf.generateHeaderInterceptors()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	err = sicf.generateMiniBlocksInterceptors()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	err = sicf.generateMetachainHeaderInterceptors()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	err = sicf.generateTrieNodesInterceptors()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
-	return sicf.container, nil
+	err = sicf.generatePeerAuthenticationInterceptor()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	err = sicf.generateHeartbeatInterceptor()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	err = sicf.generatePeerShardInterceptor()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	err = sicf.generateValidatorInfoInterceptor()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return sicf.mainContainer, sicf.fullArchiveContainer, nil
 }
 
 func (sicf *shardInterceptorsContainerFactory) generateTrieNodesInterceptors() error {
@@ -171,7 +212,7 @@ func (sicf *shardInterceptorsContainerFactory) generateTrieNodesInterceptors() e
 	keys = append(keys, identifierTrieNodes)
 	interceptorsSlice = append(interceptorsSlice, interceptor)
 
-	return sicf.container.AddMultiple(keys, interceptorsSlice)
+	return sicf.addInterceptorsToContainers(keys, interceptorsSlice)
 }
 
 // ------- Reward transactions interceptors
@@ -191,7 +232,7 @@ func (sicf *shardInterceptorsContainerFactory) generateRewardTxInterceptor() err
 	keys = append(keys, identifierTx)
 	interceptorSlice = append(interceptorSlice, interceptor)
 
-	return sicf.container.AddMultiple(keys, interceptorSlice)
+	return sicf.addInterceptorsToContainers(keys, interceptorSlice)
 }
 
 // IsInterfaceNil returns true if there is no value under the interface

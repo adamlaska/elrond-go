@@ -3,15 +3,17 @@ package testscommon
 import (
 	"math/big"
 
-	"github.com/ElrondNetwork/elrond-go-core/data/smartContractResult"
-	"github.com/ElrondNetwork/elrond-go-core/data/transaction"
-	vmcommon "github.com/ElrondNetwork/elrond-vm-common"
+	"github.com/multiversx/mx-chain-core-go/data/smartContractResult"
+	"github.com/multiversx/mx-chain-core-go/data/transaction"
+	"github.com/multiversx/mx-chain-go/state"
+	vmcommon "github.com/multiversx/mx-chain-vm-common-go"
 )
 
 // TxProcessorMock -
 type TxProcessorMock struct {
 	ProcessTransactionCalled         func(transaction *transaction.Transaction) (vmcommon.ReturnCode, error)
 	VerifyTransactionCalled          func(tx *transaction.Transaction) error
+	VerifyGuardianCalled             func(tx *transaction.Transaction, account state.UserAccountHandler) error
 	SetBalancesToTrieCalled          func(accBalance map[string]*big.Int) (rootHash []byte, err error)
 	ProcessSmartContractResultCalled func(scr *smartContractResult.SmartContractResult) (vmcommon.ReturnCode, error)
 }
@@ -29,6 +31,15 @@ func (etm *TxProcessorMock) ProcessTransaction(transaction *transaction.Transact
 func (etm *TxProcessorMock) VerifyTransaction(tx *transaction.Transaction) error {
 	if etm.VerifyTransactionCalled != nil {
 		return etm.VerifyTransactionCalled(tx)
+	}
+
+	return nil
+}
+
+// VerifyGuardian -
+func (etm *TxProcessorMock) VerifyGuardian(tx *transaction.Transaction, account state.UserAccountHandler) error {
+	if etm.VerifyGuardianCalled != nil {
+		return etm.VerifyGuardianCalled(tx, account)
 	}
 
 	return nil

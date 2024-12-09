@@ -1,18 +1,27 @@
 generateConfig() {
   echo "Generating configuration using values from scripts/variables.sh..."
 
+  TMP_SHARD_OBSERVERCOUNT=$SHARD_OBSERVERCOUNT
+  TMP_META_OBSERVERCOUNT=$META_OBSERVERCOUNT
+  # set num of observers to 0, they will start with generated keys
+  if [[ $MULTI_KEY_NODES -eq 1 ]]; then
+    TMP_SHARD_OBSERVERCOUNT=0
+    TMP_META_OBSERVERCOUNT=0
+  fi
+
   pushd $TESTNETDIR/filegen
   ./filegen \
-    -output-directory $CONFIGGENERATOROUTPUTDIR           \
-    -num-of-shards $SHARDCOUNT                            \
-    -num-of-nodes-in-each-shard $SHARD_VALIDATORCOUNT     \
-    -num-of-observers-in-each-shard $SHARD_OBSERVERCOUNT  \
-    -consensus-group-size $SHARD_CONSENSUS_SIZE           \
-    -num-of-metachain-nodes $META_VALIDATORCOUNT          \
-    -num-of-observers-in-metachain $META_OBSERVERCOUNT    \
-    -metachain-consensus-group-size $META_CONSENSUS_SIZE  \
+    -output-directory $CONFIGGENERATOROUTPUTDIR               \
+    -num-of-shards $SHARDCOUNT                                \
+    -num-of-nodes-in-each-shard $SHARD_VALIDATORCOUNT         \
+    -num-of-observers-in-each-shard $TMP_SHARD_OBSERVERCOUNT  \
+    -consensus-group-size $SHARD_CONSENSUS_SIZE               \
+    -num-of-metachain-nodes $META_VALIDATORCOUNT              \
+    -num-of-observers-in-metachain $TMP_META_OBSERVERCOUNT    \
+    -metachain-consensus-group-size $META_CONSENSUS_SIZE      \
     -stake-type $GENESIS_STAKE_TYPE \
-    -hysteresis $HYSTERESIS
+    -hysteresis $HYSTERESIS \
+    -round-duration $ROUND_DURATION_IN_MS
   popd
 }
 
@@ -22,13 +31,32 @@ copyConfig() {
   cp ./filegen/"$CONFIGGENERATOROUTPUTDIR"/genesis.json ./node/config
   cp ./filegen/"$CONFIGGENERATOROUTPUTDIR"/nodesSetup.json ./node/config
   cp ./filegen/"$CONFIGGENERATOROUTPUTDIR"/*.pem ./node/config #there might be more .pem files there
+  if [[ $MULTI_KEY_NODES -eq 1 ]]; then
+      mv ./node/config/"$VALIDATOR_KEY_PEM_FILE" ./node/config/"$MULTI_KEY_PEM_FILE"
+      if [[ $EXTRA_KEYS -eq 1 ]]; then
+        cat $NODEDIR/config/testKeys/"${EXTRA_KEY_PEM_FILE}" >> ./node/config/"$MULTI_KEY_PEM_FILE"
+      fi
+  fi
   echo "Configuration files copied from the configuration generator to the working directories of the executables."
   popd
 }
 
 copySeednodeConfig() {
   pushd $TESTNETDIR
-  cp $SEEDNODEDIR/config/*.toml ./seednode/config
+  cp $SEEDNODEDIR/config/* ./seednode/config
+  popd
+
+  pushd $MULTIVERSXDIR/cmd/keygenerator
+
+  if [[ ! -f "p2pKey.pem" ]]; then
+      go build
+      ./keygenerator --key-type p2p
+  fi
+
+  cp p2pKey.pem $TESTNETDIR/seednode/config
+  GENERATED_P2P_PUB_KEY=$(grep for  ./p2pKey.pem | head -1 | grep -oP '[^[:blank:]-]*' | tail -1)
+  export P2P_SEEDNODE_ADDRESS="/ip4/$SEEDNODE_IP/tcp/$PORT_SEEDNODE/p2p/$GENERATED_P2P_PUB_KEY"
+
   popd
 }
 
@@ -55,6 +83,7 @@ copyNodeConfig() {
   cp $NODEDIR/config/prefs.toml ./node/config
   cp $NODEDIR/config/external.toml ./node/config
   cp $NODEDIR/config/p2p.toml ./node/config
+  cp $NODEDIR/config/fullArchiveP2P.toml ./node/config
   cp $NODEDIR/config/enableEpochs.toml ./node/config
   cp $NODEDIR/config/enableRounds.toml ./node/config
   cp $NODEDIR/config/systemSmartContractsConfig.toml ./node/config
@@ -89,6 +118,13 @@ updateNodeConfig() {
 		updateTOMLValue config_observer.toml "ChainID" "\"local-testnet"\"
 	fi
 
+	if [ $ROUNDS_PER_EPOCH -ne 0 ]; then
+    sed -i "s,RoundsPerEpoch.*$,RoundsPerEpoch = $ROUNDS_PER_EPOCH," config_observer.toml
+    sed -i "s,MinRoundsBetweenEpochs.*$,MinRoundsBetweenEpochs = $ROUNDS_PER_EPOCH," config_observer.toml
+	  sed -i "s,RoundsPerEpoch.*$,RoundsPerEpoch = $ROUNDS_PER_EPOCH," config_validator.toml
+    sed -i "s,MinRoundsBetweenEpochs.*$,MinRoundsBetweenEpochs = $ROUNDS_PER_EPOCH," config_validator.toml
+	fi
+
   cp nodesSetup_edit.json nodesSetup.json
   rm nodesSetup_edit.json
 
@@ -97,8 +133,51 @@ updateNodeConfig() {
      sed -i '/\[Antiflood\]/,/\[Logger\]/ s/true/false/' config_observer.toml
   fi
 
+  updateConfigsForStakingV4
+
   echo "Updated configuration for Nodes."
   popd
+}
+
+updateConfigsForStakingV4() {
+  config=$(cat enableEpochs.toml)
+
+  echo "Updating staking v4 configs"
+
+  # Get the StakingV4Step3EnableEpoch value
+  staking_enable_epoch=$(echo "$config" | awk -F '=' '/  StakingV4Step3EnableEpoch/{gsub(/^[ \t]+|[ \t]+$/,"", $2); print $2; exit}')
+  # Count the number of entries in MaxNodesChangeEnableEpoch
+  entry_count=$(echo "$config" | awk '/MaxNodesChangeEnableEpoch/,/\]/{if ($0 ~ /\{/) {count++}} END {print count}')
+
+  # Check if entry_count is less than 2
+  if [ "$entry_count" -lt 2 ]; then
+    echo "Not enough entries found to update"
+  else
+    # Find all entries in MaxNodesChangeEnableEpoch
+    all_entries=$(awk '/MaxNodesChangeEnableEpoch/,/\]/{if ($0 ~ /^[[:space:]]*\{/) {p=1}; if (p) print; if ($0 ~ /\]/) p=0}' enableEpochs.toml | grep -vE '^\s*#' | sed '/^\s*$/d')
+
+    # Get the index of the entry with EpochEnable equal to StakingV4Step3EnableEpoch
+    index=$(echo "$all_entries" | grep -n "EpochEnable = $staking_enable_epoch" | cut -d: -f1)
+
+    if [[ -z "${index// }" ]]; then
+      echo -e "\033[1;33mWarning: MaxNodesChangeEnableEpoch does not contain an entry enable epoch for StakingV4Step3EnableEpoch, nodes might fail to start...\033[0m"
+    else
+      prev_entry=$(echo "$all_entries" | sed -n "$((index-1))p")
+      curr_entry=$(echo "$all_entries" | sed -n "$((index))p")
+
+      # Extract the value of MaxNumNodes & NodesToShufflePerShard from prev_entry
+      max_nodes_from_prev_epoch=$(echo "$prev_entry" | awk -F 'MaxNumNodes = ' '{print $2}' | cut -d ',' -f1)
+      nodes_to_shuffle_per_shard=$(echo "$prev_entry" | awk -F 'NodesToShufflePerShard = ' '{gsub(/[^0-9]+/, "", $2); print $2}')
+
+      # Calculate the new MaxNumNodes value based on the formula
+      new_max_nodes=$((max_nodes_from_prev_epoch - (SHARDCOUNT + 1) * nodes_to_shuffle_per_shard))
+      curr_entry_updated=$(echo "$curr_entry" | awk -v new_max_nodes="$new_max_nodes" '{gsub(/MaxNumNodes = [0-9]+,/, "MaxNumNodes = " new_max_nodes ",")}1')
+
+      echo "Updating entry in MaxNodesChangeEnableEpoch from $curr_entry to $curr_entry_updated"
+
+      sed -i "/$staking_enable_epoch/,/$staking_enable_epoch/ s|.*$curr_entry.*|$curr_entry_updated|" enableEpochs.toml
+    fi
+  fi
 }
 
 copyProxyConfig() {

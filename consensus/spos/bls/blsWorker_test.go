@@ -3,10 +3,11 @@ package bls_test
 import (
 	"testing"
 
-	"github.com/ElrondNetwork/elrond-go-core/core/check"
-	"github.com/ElrondNetwork/elrond-go/consensus"
-	"github.com/ElrondNetwork/elrond-go/consensus/spos"
-	"github.com/ElrondNetwork/elrond-go/consensus/spos/bls"
+	"github.com/multiversx/mx-chain-core-go/core/check"
+	"github.com/multiversx/mx-chain-go/consensus"
+	"github.com/multiversx/mx-chain-go/consensus/spos"
+	"github.com/multiversx/mx-chain-go/consensus/spos/bls"
+	"github.com/multiversx/mx-chain-go/testscommon"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -19,6 +20,10 @@ func createEligibleList(size int) []string {
 }
 
 func initConsensusState() *spos.ConsensusState {
+	return initConsensusStateWithKeysHandler(&testscommon.KeysHandlerStub{})
+}
+
+func initConsensusStateWithKeysHandler(keysHandler consensus.KeysHandler) *spos.ConsensusState {
 	consensusGroupSize := 9
 	eligibleList := createEligibleList(consensusGroupSize)
 
@@ -28,10 +33,12 @@ func initConsensusState() *spos.ConsensusState {
 	}
 
 	indexLeader := 1
-	rcns := spos.NewRoundConsensus(
+	rcns, _ := spos.NewRoundConsensus(
 		eligibleNodesPubKeys,
 		consensusGroupSize,
-		eligibleList[indexLeader])
+		eligibleList[indexLeader],
+		keysHandler,
+	)
 
 	rcns.SetConsensusGroup(eligibleList)
 	rcns.ResetRoundState()
@@ -79,6 +86,7 @@ func TestWorker_InitReceivedMessagesShouldWork(t *testing.T) {
 	receivedMessages[bls.MtBlockHeader] = make([]*consensus.Message, 0)
 	receivedMessages[bls.MtSignature] = make([]*consensus.Message, 0)
 	receivedMessages[bls.MtBlockHeaderFinalInfo] = make([]*consensus.Message, 0)
+	receivedMessages[bls.MtInvalidSigners] = make([]*consensus.Message, 0)
 
 	assert.Equal(t, len(receivedMessages), len(messages))
 	assert.NotNil(t, messages[bls.MtBlockBodyAndHeader])
@@ -86,6 +94,7 @@ func TestWorker_InitReceivedMessagesShouldWork(t *testing.T) {
 	assert.NotNil(t, messages[bls.MtBlockHeader])
 	assert.NotNil(t, messages[bls.MtSignature])
 	assert.NotNil(t, messages[bls.MtBlockHeaderFinalInfo])
+	assert.NotNil(t, messages[bls.MtInvalidSigners])
 }
 
 func TestWorker_GetMessageRangeShouldWork(t *testing.T) {
@@ -97,7 +106,7 @@ func TestWorker_GetMessageRangeShouldWork(t *testing.T) {
 	messagesRange := blsService.GetMessageRange()
 	assert.NotNil(t, messagesRange)
 
-	for i := bls.MtBlockBodyAndHeader; i <= bls.MtBlockHeaderFinalInfo; i++ {
+	for i := bls.MtBlockBodyAndHeader; i <= bls.MtInvalidSigners; i++ {
 		v = append(v, i)
 	}
 	assert.NotNil(t, v)
@@ -338,6 +347,18 @@ func TestWorker_IsMessageWithFinalInfo(t *testing.T) {
 	assert.True(t, ret)
 }
 
+func TestWorker_IsMessageWithInvalidSigners(t *testing.T) {
+	t.Parallel()
+
+	service, _ := bls.NewConsensusService()
+
+	ret := service.IsMessageWithInvalidSigners(bls.MtBlockHeaderFinalInfo)
+	assert.False(t, ret)
+
+	ret = service.IsMessageWithInvalidSigners(bls.MtInvalidSigners)
+	assert.True(t, ret)
+}
+
 func TestWorker_IsSubroundSignature(t *testing.T) {
 	t.Parallel()
 
@@ -372,4 +393,24 @@ func TestWorker_IsMessageTypeValid(t *testing.T) {
 
 	ret = service.IsMessageTypeValid(666)
 	assert.False(t, ret)
+}
+
+func TestWorker_GetMaxNumOfMessageTypeAccepted(t *testing.T) {
+	t.Parallel()
+
+	service, _ := bls.NewConsensusService()
+	t.Run("message type signature", func(t *testing.T) {
+		t.Parallel()
+
+		assert.Equal(t, bls.MaxNumOfMessageTypeSignatureAccepted, service.GetMaxNumOfMessageTypeAccepted(bls.MtSignature))
+	})
+	t.Run("other message types", func(t *testing.T) {
+		t.Parallel()
+
+		assert.Equal(t, bls.DefaultMaxNumOfMessageTypeAccepted, service.GetMaxNumOfMessageTypeAccepted(bls.MtUnknown))
+		assert.Equal(t, bls.DefaultMaxNumOfMessageTypeAccepted, service.GetMaxNumOfMessageTypeAccepted(bls.MtBlockBody))
+		assert.Equal(t, bls.DefaultMaxNumOfMessageTypeAccepted, service.GetMaxNumOfMessageTypeAccepted(bls.MtBlockHeader))
+		assert.Equal(t, bls.DefaultMaxNumOfMessageTypeAccepted, service.GetMaxNumOfMessageTypeAccepted(bls.MtBlockBodyAndHeader))
+		assert.Equal(t, bls.DefaultMaxNumOfMessageTypeAccepted, service.GetMaxNumOfMessageTypeAccepted(bls.MtBlockHeaderFinalInfo))
+	})
 }

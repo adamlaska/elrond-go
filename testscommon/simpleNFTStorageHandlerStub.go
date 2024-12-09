@@ -3,9 +3,9 @@ package testscommon
 import (
 	"math/big"
 
-	"github.com/ElrondNetwork/elrond-go-core/data"
-	"github.com/ElrondNetwork/elrond-go-core/data/esdt"
-	vmcommon "github.com/ElrondNetwork/elrond-vm-common"
+	"github.com/multiversx/mx-chain-core-go/data"
+	"github.com/multiversx/mx-chain-core-go/data/esdt"
+	vmcommon "github.com/multiversx/mx-chain-vm-common-go"
 )
 
 // SimpleNFTStorageHandlerStub -
@@ -22,8 +22,8 @@ func (s *SimpleNFTStorageHandlerStub) GetESDTNFTTokenOnDestination(accnt vmcommo
 	return &esdt.ESDigitalToken{Value: big.NewInt(0)}, true, nil
 }
 
-// SaveNFTMetaDataToSystemAccount -
-func (s *SimpleNFTStorageHandlerStub) SaveNFTMetaDataToSystemAccount(tx data.TransactionHandler) error {
+// SaveNFTMetaData -
+func (s *SimpleNFTStorageHandlerStub) SaveNFTMetaData(tx data.TransactionHandler) error {
 	if s.SaveNFTMetaDataToSystemAccountCalled != nil {
 		return s.SaveNFTMetaDataToSystemAccountCalled(tx)
 	}

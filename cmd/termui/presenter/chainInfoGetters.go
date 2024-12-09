@@ -1,8 +1,9 @@
 package presenter
 
 import (
-	"github.com/ElrondNetwork/elrond-go-core/core"
-	"github.com/ElrondNetwork/elrond-go/common"
+	"github.com/multiversx/mx-chain-core-go/core"
+	"github.com/multiversx/mx-chain-go/cmd/termui/provider"
+	"github.com/multiversx/mx-chain-go/common"
 )
 
 var maxSpeedHistorySaved = 2000
@@ -37,12 +38,12 @@ func (psh *PresenterStatusHandler) GetRoundTime() uint64 {
 	return psh.getFromCacheAsUint64(common.MetricRoundTime)
 }
 
-// GetLiveValidatorNodes will return how many validator nodes are in blockchain
+// GetLiveValidatorNodes will return how many validator nodes are in blockchain and known by the current node to be active
 func (psh *PresenterStatusHandler) GetLiveValidatorNodes() uint64 {
 	return psh.getFromCacheAsUint64(common.MetricLiveValidatorNodes)
 }
 
-// GetConnectedNodes will return how many nodes are connected
+// GetConnectedNodes will return how many intra-shard nodes are connected
 func (psh *PresenterStatusHandler) GetConnectedNodes() uint64 {
 	return psh.getFromCacheAsUint64(common.MetricConnectedNodes)
 }
@@ -50,6 +51,11 @@ func (psh *PresenterStatusHandler) GetConnectedNodes() uint64 {
 // GetNumConnectedPeers will return how many peers are connected
 func (psh *PresenterStatusHandler) GetNumConnectedPeers() uint64 {
 	return psh.getFromCacheAsUint64(common.MetricNumConnectedPeers)
+}
+
+// GetIntraShardValidators will return how many intra-shard validator nodes are and known by the current node to be active
+func (psh *PresenterStatusHandler) GetIntraShardValidators() uint64 {
+	return psh.getFromCacheAsUint64(common.MetricNumIntraShardValidatorNodes)
 }
 
 // GetCurrentRound will return current round of node
@@ -173,4 +179,40 @@ func (psh *PresenterStatusHandler) GetEpochInfo() (uint64, uint64, int, string) 
 	epochLoadPercent := 100 - int(float64(roundsRemained)/float64(roundsPerEpoch)*100.0)
 
 	return currentRound, epochFinishRound, epochLoadPercent, remainingTime
+}
+
+// GetTrieSyncNumProcessedNodes will return the number of processed nodes during trie sync
+func (psh *PresenterStatusHandler) GetTrieSyncNumProcessedNodes() uint64 {
+	return psh.getFromCacheAsUint64(common.MetricTrieSyncNumProcessedNodes)
+}
+
+// GetTrieSyncProcessedPercentage will return the number of processed nodes during trie sync
+func (psh *PresenterStatusHandler) GetTrieSyncProcessedPercentage() core.OptionalUint64 {
+	numEstimatedNodes := psh.getFromCacheAsUint64(provider.AccountsSnapshotNumNodesMetric)
+	if numEstimatedNodes <= 0 {
+		return core.OptionalUint64{
+			Value:    0,
+			HasValue: false,
+		}
+	}
+
+	numProcessedNodes := psh.GetTrieSyncNumProcessedNodes()
+
+	percentage := (numProcessedNodes * 100) / numEstimatedNodes
+	if percentage > 100 {
+		return core.OptionalUint64{
+			Value:    100,
+			HasValue: true,
+		}
+	}
+
+	return core.OptionalUint64{
+		Value:    percentage,
+		HasValue: true,
+	}
+}
+
+// GetTrieSyncNumBytesReceived will return the number of bytes synced during trie sync
+func (psh *PresenterStatusHandler) GetTrieSyncNumBytesReceived() uint64 {
+	return psh.getFromCacheAsUint64(common.MetricTrieSyncNumReceivedBytes)
 }

@@ -3,9 +3,11 @@ package disabled
 import (
 	"time"
 
-	"github.com/ElrondNetwork/elrond-go-core/data"
-	"github.com/ElrondNetwork/elrond-go-core/data/block"
-	"github.com/ElrondNetwork/elrond-go/process"
+	"github.com/multiversx/mx-chain-core-go/data"
+	"github.com/multiversx/mx-chain-core-go/data/block"
+
+	"github.com/multiversx/mx-chain-go/process"
+	"github.com/multiversx/mx-chain-go/process/block/processedMb"
 )
 
 // TxCoordinator implements the TransactionCoordinator interface but does nothing as it is disabled
@@ -27,8 +29,8 @@ func (txCoordinator *TxCoordinator) ComputeTransactionType(_ data.TransactionHan
 	return 0, 0
 }
 
-// RequestMiniBlocks does nothing as it is disabled
-func (txCoordinator *TxCoordinator) RequestMiniBlocks(_ data.HeaderHandler) {
+// RequestMiniBlocksAndTransactions does nothing as it is disabled
+func (txCoordinator *TxCoordinator) RequestMiniBlocksAndTransactions(_ data.HeaderHandler) {
 }
 
 // RequestBlockTransactions does nothing as it is disabled
@@ -71,7 +73,7 @@ func (txCoordinator *TxCoordinator) CreateBlockStarted() {
 // CreateMbsAndProcessCrossShardTransactionsDstMe does nothing as it is disabled
 func (txCoordinator *TxCoordinator) CreateMbsAndProcessCrossShardTransactionsDstMe(
 	_ data.HeaderHandler,
-	_ map[string]struct{},
+	_ map[string]*processedMb.ProcessedMiniBlockInfo,
 	_ func() bool,
 	_ func() bool,
 	_ bool,
@@ -99,9 +101,9 @@ func (txCoordinator *TxCoordinator) VerifyCreatedBlockTransactions(_ data.Header
 	return nil
 }
 
-// CreateMarshalizedReceipts does nothing as it is disabled
-func (txCoordinator *TxCoordinator) CreateMarshalizedReceipts() ([]byte, error) {
-	return nil, nil
+// GetCreatedInShardMiniBlocks returns nil as is it disabled
+func (txCoordinator *TxCoordinator) GetCreatedInShardMiniBlocks() []*block.MiniBlock {
+	return nil
 }
 
 // VerifyCreatedMiniBlocks does nothing as it is disabled
@@ -110,7 +112,7 @@ func (txCoordinator *TxCoordinator) VerifyCreatedMiniBlocks(_ data.HeaderHandler
 }
 
 // AddIntermediateTransactions does nothing as it is disabled
-func (txCoordinator *TxCoordinator) AddIntermediateTransactions(_ map[block.Type][]data.TransactionHandler) error {
+func (txCoordinator *TxCoordinator) AddIntermediateTransactions(_ map[block.Type][]data.TransactionHandler, _ []byte) error {
 	return nil
 }
 

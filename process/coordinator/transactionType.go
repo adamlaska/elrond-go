@@ -3,38 +3,36 @@ package coordinator
 import (
 	"bytes"
 
-	"github.com/ElrondNetwork/elrond-go-core/core"
-	"github.com/ElrondNetwork/elrond-go-core/core/atomic"
-	"github.com/ElrondNetwork/elrond-go-core/core/check"
-	"github.com/ElrondNetwork/elrond-go-core/data"
-	"github.com/ElrondNetwork/elrond-go-core/data/smartContractResult"
-	"github.com/ElrondNetwork/elrond-go-core/data/vm"
-	"github.com/ElrondNetwork/elrond-go/process"
-	"github.com/ElrondNetwork/elrond-go/sharding"
-	vmcommon "github.com/ElrondNetwork/elrond-vm-common"
+	"github.com/multiversx/mx-chain-core-go/core"
+	"github.com/multiversx/mx-chain-core-go/core/check"
+	"github.com/multiversx/mx-chain-core-go/data"
+	"github.com/multiversx/mx-chain-core-go/data/smartContractResult"
+	"github.com/multiversx/mx-chain-core-go/data/vm"
+	"github.com/multiversx/mx-chain-go/common"
+	"github.com/multiversx/mx-chain-go/process"
+	"github.com/multiversx/mx-chain-go/sharding"
+	vmcommon "github.com/multiversx/mx-chain-vm-common-go"
 )
 
 var _ process.TxTypeHandler = (*txTypeHandler)(nil)
 
 type txTypeHandler struct {
-	pubkeyConv             core.PubkeyConverter
-	shardCoordinator       sharding.Coordinator
-	builtInFunctions       vmcommon.BuiltInFunctionContainer
-	argumentParser         process.CallArgumentsParser
-	flagRelayedTxV2        atomic.Flag
-	relayedTxV2EnableEpoch uint32
-	esdtTransferParser     vmcommon.ESDTTransferParser
+	pubkeyConv          core.PubkeyConverter
+	shardCoordinator    sharding.Coordinator
+	builtInFunctions    vmcommon.BuiltInFunctionContainer
+	argumentParser      process.CallArgumentsParser
+	esdtTransferParser  vmcommon.ESDTTransferParser
+	enableEpochsHandler common.EnableEpochsHandler
 }
 
 // ArgNewTxTypeHandler defines the arguments needed to create a new tx type handler
 type ArgNewTxTypeHandler struct {
-	PubkeyConverter        core.PubkeyConverter
-	ShardCoordinator       sharding.Coordinator
-	BuiltInFunctions       vmcommon.BuiltInFunctionContainer
-	ArgumentParser         process.CallArgumentsParser
-	RelayedTxV2EnableEpoch uint32
-	EpochNotifier          process.EpochNotifier
-	ESDTTransferParser     vmcommon.ESDTTransferParser
+	PubkeyConverter     core.PubkeyConverter
+	ShardCoordinator    sharding.Coordinator
+	BuiltInFunctions    vmcommon.BuiltInFunctionContainer
+	ArgumentParser      process.CallArgumentsParser
+	ESDTTransferParser  vmcommon.ESDTTransferParser
+	EnableEpochsHandler common.EnableEpochsHandler
 }
 
 // NewTxTypeHandler creates a transaction type handler
@@ -53,24 +51,27 @@ func NewTxTypeHandler(
 	if check.IfNil(args.BuiltInFunctions) {
 		return nil, process.ErrNilBuiltInFunction
 	}
-	if check.IfNil(args.EpochNotifier) {
-		return nil, process.ErrNilEpochNotifier
-	}
 	if check.IfNil(args.ESDTTransferParser) {
 		return nil, process.ErrNilESDTTransferParser
 	}
-
-	tc := &txTypeHandler{
-		pubkeyConv:             args.PubkeyConverter,
-		shardCoordinator:       args.ShardCoordinator,
-		argumentParser:         args.ArgumentParser,
-		builtInFunctions:       args.BuiltInFunctions,
-		relayedTxV2EnableEpoch: args.RelayedTxV2EnableEpoch,
-		esdtTransferParser:     args.ESDTTransferParser,
+	if check.IfNil(args.EnableEpochsHandler) {
+		return nil, process.ErrNilEnableEpochsHandler
+	}
+	err := core.CheckHandlerCompatibility(args.EnableEpochsHandler, []core.EnableEpochFlag{
+		common.ESDTMetadataContinuousCleanupFlag,
+	})
+	if err != nil {
+		return nil, err
 	}
 
-	args.EpochNotifier.RegisterNotifyHandler(tc)
-	log.Debug("txTypeHandler: enable epoch for relayed transactions v2", "epoch", args.RelayedTxV2EnableEpoch)
+	tc := &txTypeHandler{
+		pubkeyConv:          args.PubkeyConverter,
+		shardCoordinator:    args.ShardCoordinator,
+		argumentParser:      args.ArgumentParser,
+		builtInFunctions:    args.BuiltInFunctions,
+		esdtTransferParser:  args.ESDTTransferParser,
+		enableEpochsHandler: args.EnableEpochsHandler,
+	}
 
 	return tc, nil
 }
@@ -89,7 +90,6 @@ func (tth *txTypeHandler) ComputeTransactionType(tx data.TransactionHandler) (pr
 		}
 		return process.InvalidTransaction, process.InvalidTransaction
 	}
-
 	if len(tx.GetData()) == 0 {
 		return process.MoveBalance, process.MoveBalance
 	}
@@ -104,7 +104,7 @@ func (tth *txTypeHandler) ComputeTransactionType(tx data.TransactionHandler) (pr
 		return process.BuiltInFunctionCall, process.BuiltInFunctionCall
 	}
 
-	if isAsynchronousCallBack(tx) {
+	if isCallOfType(tx, vm.AsynchronousCallBack) {
 		return process.SCInvoking, process.SCInvoking
 	}
 
@@ -132,16 +132,20 @@ func (tth *txTypeHandler) ComputeTransactionType(tx data.TransactionHandler) (pr
 	return process.MoveBalance, process.MoveBalance
 }
 
-func isAsynchronousCallBack(tx data.TransactionHandler) bool {
+func isCallOfType(tx data.TransactionHandler, callType vm.CallType) bool {
 	scr, ok := tx.(*smartContractResult.SmartContractResult)
 	if !ok {
 		return false
 	}
 
-	return scr.CallType == vm.AsynchronousCallBack
+	return scr.CallType == callType
 }
 
 func (tth *txTypeHandler) isSCCallAfterBuiltIn(function string, args [][]byte, tx data.TransactionHandler) bool {
+	isTransferAndAsyncCallbackFixFlagSet := tth.enableEpochsHandler.IsFlagEnabled(common.ESDTMetadataContinuousCleanupFlag)
+	if isTransferAndAsyncCallbackFixFlagSet && isCallOfType(tx, vm.AsynchronousCallBack) {
+		return true
+	}
 	if len(args) <= 2 {
 		return false
 	}
@@ -183,9 +187,6 @@ func (tth *txTypeHandler) isRelayedTransactionV1(functionName string) bool {
 }
 
 func (tth *txTypeHandler) isRelayedTransactionV2(functionName string) bool {
-	if !tth.flagRelayedTxV2.IsSet() {
-		return false
-	}
 	return functionName == core.RelayedTransactionV2
 }
 
@@ -211,12 +212,6 @@ func (tth *txTypeHandler) checkTxValidity(tx data.TransactionHandler) error {
 	}
 
 	return nil
-}
-
-// EpochConfirmed is called whenever a new epoch is confirmed
-func (tth *txTypeHandler) EpochConfirmed(epoch uint32, _ uint64) {
-	tth.flagRelayedTxV2.SetValue(epoch >= tth.relayedTxV2EnableEpoch)
-	log.Debug("txTypeHandler: relayed transactions v2", "enabled", tth.flagRelayedTxV2.IsSet())
 }
 
 // IsInterfaceNil returns true if there is no value under the interface

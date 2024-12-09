@@ -1,4 +1,4 @@
-//go:generate protoc -I=. -I=$GOPATH/src -I=$GOPATH/src/github.com/ElrondNetwork/protobuf/protobuf  --gogoslick_out=. delegation.proto
+//go:generate protoc -I=. -I=$GOPATH/src -I=$GOPATH/src/github.com/multiversx/protobuf/protobuf  --gogoslick_out=. delegation.proto
 package systemSmartContracts
 
 import (
@@ -8,13 +8,13 @@ import (
 	"math/big"
 	"sync"
 
-	"github.com/ElrondNetwork/elrond-go-core/core"
-	"github.com/ElrondNetwork/elrond-go-core/core/atomic"
-	"github.com/ElrondNetwork/elrond-go-core/core/check"
-	"github.com/ElrondNetwork/elrond-go-core/marshal"
-	"github.com/ElrondNetwork/elrond-go/config"
-	"github.com/ElrondNetwork/elrond-go/vm"
-	vmcommon "github.com/ElrondNetwork/elrond-vm-common"
+	"github.com/multiversx/mx-chain-core-go/core"
+	"github.com/multiversx/mx-chain-core-go/core/check"
+	"github.com/multiversx/mx-chain-core-go/marshal"
+	"github.com/multiversx/mx-chain-go/common"
+	"github.com/multiversx/mx-chain-go/config"
+	"github.com/multiversx/mx-chain-go/vm"
+	vmcommon "github.com/multiversx/mx-chain-vm-common-go"
 )
 
 const delegationManagementKey = "delegationManagement"
@@ -23,29 +23,25 @@ const delegationContractsList = "delegationContracts"
 var nextAddressAdd = big.NewInt(1 << 24)
 
 type delegationManager struct {
-	eei                              vm.SystemEI
-	delegationMgrSCAddress           []byte
-	stakingSCAddr                    []byte
-	validatorSCAddr                  []byte
-	configChangeAddr                 []byte
-	gasCost                          vm.GasCost
-	marshalizer                      marshal.Marshalizer
-	delegationMgrEnabled             atomic.Flag
-	enableDelegationMgrEpoch         uint32
-	minCreationDeposit               *big.Int
-	minDelegationAmount              *big.Int
-	minFee                           uint64
-	maxFee                           uint64
-	mutExecution                     sync.RWMutex
-	flagValidatorToDelegation        atomic.Flag
-	validatorToDelegationEnableEpoch uint32
+	eei                    vm.SystemEI
+	delegationMgrSCAddress []byte
+	stakingSCAddr          []byte
+	validatorSCAddr        []byte
+	configChangeAddr       []byte
+	gasCost                vm.GasCost
+	marshalizer            marshal.Marshalizer
+	minCreationDeposit     *big.Int
+	minDelegationAmount    *big.Int
+	minFee                 uint64
+	maxFee                 uint64
+	enableEpochsHandler    common.EnableEpochsHandler
+	mutExecution           sync.RWMutex
 }
 
 // ArgsNewDelegationManager defines the arguments to create the delegation manager system smart contract
 type ArgsNewDelegationManager struct {
 	DelegationMgrSCConfig  config.DelegationManagerSystemSCConfig
 	DelegationSCConfig     config.DelegationSystemSCConfig
-	EpochConfig            config.EpochConfig
 	Eei                    vm.SystemEI
 	DelegationMgrSCAddress []byte
 	StakingSCAddress       []byte
@@ -53,7 +49,7 @@ type ArgsNewDelegationManager struct {
 	ConfigChangeAddress    []byte
 	GasCost                vm.GasCost
 	Marshalizer            marshal.Marshalizer
-	EpochNotifier          vm.EpochNotifier
+	EnableEpochsHandler    common.EnableEpochsHandler
 }
 
 // NewDelegationManagerSystemSC creates a new delegation manager system SC
@@ -76,8 +72,17 @@ func NewDelegationManagerSystemSC(args ArgsNewDelegationManager) (*delegationMan
 	if check.IfNil(args.Marshalizer) {
 		return nil, vm.ErrNilMarshalizer
 	}
-	if check.IfNil(args.EpochNotifier) {
-		return nil, vm.ErrNilEpochNotifier
+	if check.IfNil(args.EnableEpochsHandler) {
+		return nil, vm.ErrNilEnableEpochsHandler
+	}
+	err := core.CheckHandlerCompatibility(args.EnableEpochsHandler, []core.EnableEpochFlag{
+		common.DelegationManagerFlag,
+		common.ValidatorToDelegationFlag,
+		common.FixDelegationChangeOwnerOnAccountFlag,
+		common.MultiClaimOnDelegationFlag,
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	minCreationDeposit, okConvert := big.NewInt(0).SetString(args.DelegationMgrSCConfig.MinCreationDeposit, conversionBase)
@@ -91,25 +96,19 @@ func NewDelegationManagerSystemSC(args ArgsNewDelegationManager) (*delegationMan
 	}
 
 	d := &delegationManager{
-		eei:                              args.Eei,
-		stakingSCAddr:                    args.StakingSCAddress,
-		validatorSCAddr:                  args.ValidatorSCAddress,
-		delegationMgrSCAddress:           args.DelegationMgrSCAddress,
-		configChangeAddr:                 args.ConfigChangeAddress,
-		gasCost:                          args.GasCost,
-		marshalizer:                      args.Marshalizer,
-		delegationMgrEnabled:             atomic.Flag{},
-		enableDelegationMgrEpoch:         args.EpochConfig.EnableEpochs.DelegationManagerEnableEpoch,
-		minCreationDeposit:               minCreationDeposit,
-		minDelegationAmount:              minDelegationAmount,
-		minFee:                           args.DelegationSCConfig.MinServiceFee,
-		maxFee:                           args.DelegationSCConfig.MaxServiceFee,
-		validatorToDelegationEnableEpoch: args.EpochConfig.EnableEpochs.ValidatorToDelegationEnableEpoch,
+		eei:                    args.Eei,
+		stakingSCAddr:          args.StakingSCAddress,
+		validatorSCAddr:        args.ValidatorSCAddress,
+		delegationMgrSCAddress: args.DelegationMgrSCAddress,
+		configChangeAddr:       args.ConfigChangeAddress,
+		gasCost:                args.GasCost,
+		marshalizer:            args.Marshalizer,
+		minCreationDeposit:     minCreationDeposit,
+		minDelegationAmount:    minDelegationAmount,
+		minFee:                 args.DelegationSCConfig.MinServiceFee,
+		maxFee:                 args.DelegationSCConfig.MaxServiceFee,
+		enableEpochsHandler:    args.EnableEpochsHandler,
 	}
-	log.Debug("delegationManager: enable epoch for delegation manager", "epoch", d.enableDelegationMgrEpoch)
-	log.Debug("delegationManager: enable epoch for validator to delegation", "epoch", d.validatorToDelegationEnableEpoch)
-
-	args.EpochNotifier.RegisterNotifyHandler(d)
 
 	return d, nil
 }
@@ -125,7 +124,7 @@ func (d *delegationManager) Execute(args *vmcommon.ContractCallInput) vmcommon.R
 		return vmcommon.UserError
 	}
 
-	if !d.delegationMgrEnabled.IsSet() {
+	if !d.enableEpochsHandler.IsFlagEnabled(common.DelegationManagerFlag) {
 		d.eei.AddReturnMessage("delegation manager contract is not enabled")
 		return vmcommon.UserError
 	}
@@ -154,6 +153,10 @@ func (d *delegationManager) Execute(args *vmcommon.ContractCallInput) vmcommon.R
 		return d.mergeValidatorToDelegation(args, d.checkCallerIsOwnerOfContract)
 	case "mergeValidatorToDelegationWithWhitelist":
 		return d.mergeValidatorToDelegation(args, d.isAddressWhiteListedForMerge)
+	case "claimMulti":
+		return d.claimMulti(args)
+	case "reDelegateMulti":
+		return d.reDelegateMulti(args)
 	}
 
 	d.eei.AddReturnMessage("invalid function to call")
@@ -206,7 +209,9 @@ func (d *delegationManager) createNewDelegationContract(args *vmcommon.ContractC
 		return vmcommon.UserError
 	}
 
-	return d.deployNewContract(args, true, core.SCDeployInitFunctionName, args.CallerAddr, args.CallValue, args.Arguments)
+	_, returnCode := d.deployNewContract(args, true, core.SCDeployInitFunctionName, args.CallerAddr, args.CallValue, args.Arguments)
+
+	return returnCode
 }
 
 func (d *delegationManager) deployNewContract(
@@ -216,23 +221,23 @@ func (d *delegationManager) deployNewContract(
 	deployerAddr []byte,
 	depositValue *big.Int,
 	arguments [][]byte,
-) vmcommon.ReturnCode {
+) ([]byte, vmcommon.ReturnCode) {
 	delegationManagement, err := d.getDelegationManagementData()
 	if err != nil {
 		d.eei.AddReturnMessage(err.Error())
-		return vmcommon.UserError
+		return nil, vmcommon.UserError
 	}
 
 	minValue := big.NewInt(0).Set(delegationManagement.MinDeposit)
 	if args.CallValue.Cmp(minValue) < 0 && checkMinDeposit {
 		d.eei.AddReturnMessage("not enough call value")
-		return vmcommon.UserError
+		return nil, vmcommon.UserError
 	}
 
 	delegationList, err := getDelegationContractList(d.eei, d.marshalizer, d.delegationMgrSCAddress)
 	if err != nil {
 		d.eei.AddReturnMessage(err.Error())
-		return vmcommon.UserError
+		return nil, vmcommon.UserError
 	}
 
 	newAddress := createNewAddress(delegationManagement.LastAddress)
@@ -240,10 +245,10 @@ func (d *delegationManager) deployNewContract(
 	returnCode, err := d.eei.DeploySystemSC(vm.FirstDelegationSCAddress, newAddress, deployerAddr, initFunction, depositValue, arguments)
 	if err != nil {
 		d.eei.AddReturnMessage(err.Error())
-		return vmcommon.UserError
+		return nil, vmcommon.UserError
 	}
 	if returnCode != vmcommon.Ok {
-		return returnCode
+		return nil, returnCode
 	}
 
 	delegationManagement.NumOfContracts += 1
@@ -257,18 +262,26 @@ func (d *delegationManager) deployNewContract(
 	err = saveDelegationManagementData(d.eei, d.marshalizer, d.delegationMgrSCAddress, delegationManagement)
 	if err != nil {
 		d.eei.AddReturnMessage(err.Error())
-		return vmcommon.UserError
+		return nil, vmcommon.UserError
 	}
 
 	err = d.saveDelegationContractList(delegationList)
 	if err != nil {
 		d.eei.AddReturnMessage(err.Error())
-		return vmcommon.UserError
+		return nil, vmcommon.UserError
 	}
 
 	d.eei.Finish(newAddress)
 
-	return vmcommon.Ok
+	return newAddress, vmcommon.Ok
+}
+
+func (d *delegationManager) correctOwnerOnAccount(newAddress []byte, caller []byte) error {
+	if !d.enableEpochsHandler.IsFlagEnabled(common.FixDelegationChangeOwnerOnAccountFlag) {
+		return nil // backwards compatibility
+	}
+
+	return d.eei.UpdateCodeDeployerAddress(string(newAddress), caller)
 }
 
 func (d *delegationManager) makeNewContractFromValidatorData(args *vmcommon.ContractCallInput) vmcommon.ReturnCode {
@@ -286,11 +299,22 @@ func (d *delegationManager) makeNewContractFromValidatorData(args *vmcommon.Cont
 	}
 
 	arguments := append([][]byte{args.CallerAddr}, args.Arguments...)
-	return d.deployNewContract(args, false, initFromValidatorData, d.delegationMgrSCAddress, big.NewInt(0), arguments)
+	newAddress, returnCode := d.deployNewContract(args, false, initFromValidatorData, d.delegationMgrSCAddress, big.NewInt(0), arguments)
+	if returnCode != vmcommon.Ok {
+		return returnCode
+	}
+
+	err := d.correctOwnerOnAccount(newAddress, args.CallerAddr)
+	if err != nil {
+		d.eei.AddReturnMessage(err.Error())
+		return vmcommon.UserError
+	}
+
+	return vmcommon.Ok
 }
 
 func (d *delegationManager) checkValidatorToDelegationInput(args *vmcommon.ContractCallInput) vmcommon.ReturnCode {
-	if !d.flagValidatorToDelegation.IsSet() {
+	if !d.enableEpochsHandler.IsFlagEnabled(common.ValidatorToDelegationFlag) {
 		d.eei.AddReturnMessage("invalid function to call")
 		return vmcommon.UserError
 	}
@@ -505,6 +529,92 @@ func (d *delegationManager) getContractConfig(args *vmcommon.ContractCallInput) 
 	return vmcommon.Ok
 }
 
+func (d *delegationManager) claimMulti(args *vmcommon.ContractCallInput) vmcommon.ReturnCode {
+	returnCode := d.executeFuncOnListAddresses(args, claimRewards)
+	if returnCode != vmcommon.Ok {
+		return returnCode
+	}
+	totalSent := d.eei.GetTotalSentToUser(args.CallerAddr)
+	d.eei.Finish(totalSent.Bytes())
+
+	return vmcommon.Ok
+}
+
+func (d *delegationManager) reDelegateMulti(args *vmcommon.ContractCallInput) vmcommon.ReturnCode {
+	returnCode := d.executeFuncOnListAddresses(args, reDelegateRewards)
+	if returnCode != vmcommon.Ok {
+		return returnCode
+	}
+	logs := d.eei.GetLogs()
+	totalReDelegated := getTotalReDelegatedFromLogs(logs)
+	d.eei.Finish(totalReDelegated.Bytes())
+
+	return vmcommon.Ok
+}
+
+func getTotalReDelegatedFromLogs(logs []*vmcommon.LogEntry) *big.Int {
+	totalReDelegated := big.NewInt(0)
+	for _, reDelegateLog := range logs {
+		if len(reDelegateLog.Topics) < 1 {
+			continue
+		}
+		if !bytes.Equal(reDelegateLog.Identifier, []byte(delegate)) {
+			continue
+		}
+		valueFromFirstTopic := big.NewInt(0).SetBytes(reDelegateLog.Topics[0])
+		totalReDelegated.Add(totalReDelegated, valueFromFirstTopic)
+	}
+
+	return totalReDelegated
+}
+
+func (d *delegationManager) executeFuncOnListAddresses(
+	args *vmcommon.ContractCallInput,
+	funcName string,
+) vmcommon.ReturnCode {
+	if !d.enableEpochsHandler.IsFlagEnabled(common.MultiClaimOnDelegationFlag) {
+		d.eei.AddReturnMessage("invalid function to call")
+		return vmcommon.UserError
+	}
+	if len(args.Arguments) < 1 {
+		d.eei.AddReturnMessage(vm.ErrInvalidNumOfArguments.Error())
+		return vmcommon.UserError
+	}
+	err := d.eei.UseGas(d.gasCost.MetaChainSystemSCsCost.DelegationOps)
+	if err != nil {
+		d.eei.AddReturnMessage(err.Error())
+		return vmcommon.UserError
+	}
+
+	mapAddresses := make(map[string]struct{})
+	var vmOutput *vmcommon.VMOutput
+	var found bool
+	for _, address := range args.Arguments {
+		if len(address) != len(args.CallerAddr) {
+			d.eei.AddReturnMessage(vm.ErrInvalidArgument.Error())
+			return vmcommon.UserError
+		}
+		_, found = mapAddresses[string(address)]
+		if found {
+			d.eei.AddReturnMessage("duplicated input")
+			return vmcommon.UserError
+		}
+
+		mapAddresses[string(address)] = struct{}{}
+		vmOutput, err = d.eei.ExecuteOnDestContext(address, args.CallerAddr, big.NewInt(0), []byte(funcName))
+		if err != nil {
+			d.eei.AddReturnMessage(err.Error())
+			return vmcommon.UserError
+		}
+
+		if vmOutput.ReturnCode != vmcommon.Ok {
+			return vmOutput.ReturnCode
+		}
+	}
+
+	return vmcommon.Ok
+}
+
 func createNewAddress(lastAddress []byte) []byte {
 	i := 0
 	for ; i < len(lastAddress) && lastAddress[i] == 0; i++ {
@@ -586,18 +696,9 @@ func (d *delegationManager) SetNewGasCost(gasCost vm.GasCost) {
 	d.mutExecution.Unlock()
 }
 
-// EpochConfirmed is called whenever a new epoch is confirmed
-func (d *delegationManager) EpochConfirmed(epoch uint32, _ uint64) {
-	d.delegationMgrEnabled.SetValue(epoch >= d.enableDelegationMgrEpoch)
-	log.Debug("delegationManagerSC: delegationManager", "enabled", d.delegationMgrEnabled.IsSet())
-
-	d.flagValidatorToDelegation.SetValue(epoch >= d.validatorToDelegationEnableEpoch)
-	log.Debug("delegationManagerSC: validator to delegation", "enabled", d.flagValidatorToDelegation.IsSet())
-}
-
 // CanUseContract returns true if contract can be used
 func (d *delegationManager) CanUseContract() bool {
-	return d.delegationMgrEnabled.IsSet()
+	return d.enableEpochsHandler.IsFlagEnabled(common.DelegationManagerFlag)
 }
 
 // IsInterfaceNil returns true if underlying object is nil

@@ -5,9 +5,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/ElrondNetwork/elrond-go/p2p"
-	"github.com/ElrondNetwork/elrond-go/process/throttle/antiflood/floodPreventers"
-	"github.com/ElrondNetwork/elrond-go/storage/storageUnit"
+	"github.com/multiversx/mx-chain-go/p2p"
+	"github.com/multiversx/mx-chain-go/process/throttle/antiflood/floodPreventers"
+	"github.com/multiversx/mx-chain-go/storage/storageunit"
 )
 
 // DurationBootstrapingTime -
@@ -16,7 +16,7 @@ const DurationBootstrapingTime = 2 * time.Second
 // FloodTheNetwork -
 func FloodTheNetwork(peer p2p.Messenger, topic string, isFlooding *atomic.Value, messageSize uint64) {
 	for {
-		_ = peer.BroadcastOnChannelBlocking(topic, topic, make([]byte, messageSize))
+		peer.BroadcastOnChannel(topic, topic, make([]byte, messageSize))
 
 		if !isFlooding.Load().(bool) {
 			return
@@ -41,8 +41,8 @@ func CreateTopicsAndMockInterceptors(
 			return nil, fmt.Errorf("%w, pid: %s", err, p.ID())
 		}
 
-		cacherCfg := storageUnit.CacheConfig{Capacity: 100, Type: storageUnit.LRUCache, Shards: 1}
-		antifloodPool, _ := storageUnit.NewCache(cacherCfg)
+		cacherCfg := storageunit.CacheConfig{Capacity: 100, Type: storageunit.LRUCache, Shards: 1}
+		antifloodPool, _ := storageunit.NewCache(cacherCfg)
 
 		interceptors[idx] = newMessageProcessor()
 		statusHandlers := []floodPreventers.QuotaStatusHandler{&nilQuotaStatusHandler{}}

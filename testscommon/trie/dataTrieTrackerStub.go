@@ -1,47 +1,81 @@
 package trie
 
 import (
-	"github.com/ElrondNetwork/elrond-go/common"
+	"github.com/multiversx/mx-chain-core-go/core"
+	"github.com/multiversx/mx-chain-core-go/core/check"
+	"github.com/multiversx/mx-chain-go/common"
+	vmcommon "github.com/multiversx/mx-chain-vm-common-go"
 )
 
 // DataTrieTrackerStub -
 type DataTrieTrackerStub struct {
-	ClearDataCachesCalled func()
-	DirtyDataCalled       func() map[string][]byte
-	RetrieveValueCalled   func(key []byte) ([]byte, error)
-	SaveKeyValueCalled    func(key []byte, value []byte) error
-	SetDataTrieCalled     func(tr common.Trie)
-	DataTrieCalled        func() common.Trie
-}
+	dataTrie common.Trie
 
-// ClearDataCaches -
-func (dtts *DataTrieTrackerStub) ClearDataCaches() {
-	dtts.ClearDataCachesCalled()
-}
-
-// DirtyData -
-func (dtts *DataTrieTrackerStub) DirtyData() map[string][]byte {
-	return dtts.DirtyDataCalled()
+	RetrieveValueCalled         func(key []byte) ([]byte, uint32, error)
+	SaveKeyValueCalled          func(key []byte, value []byte) error
+	SetDataTrieCalled           func(tr common.Trie)
+	DataTrieCalled              func() common.Trie
+	SaveDirtyDataCalled         func(trie common.Trie) ([]core.TrieData, error)
+	SaveTrieDataCalled          func(trieData core.TrieData) error
+	MigrateDataTrieLeavesCalled func(args vmcommon.ArgsMigrateDataTrieLeaves) error
 }
 
 // RetrieveValue -
-func (dtts *DataTrieTrackerStub) RetrieveValue(key []byte) ([]byte, error) {
-	return dtts.RetrieveValueCalled(key)
+func (dtts *DataTrieTrackerStub) RetrieveValue(key []byte) ([]byte, uint32, error) {
+	if dtts.RetrieveValueCalled != nil {
+		return dtts.RetrieveValueCalled(key)
+	}
+
+	return []byte{}, 0, nil
 }
 
 // SaveKeyValue -
 func (dtts *DataTrieTrackerStub) SaveKeyValue(key []byte, value []byte) error {
-	return dtts.SaveKeyValueCalled(key, value)
+	if dtts.SaveKeyValueCalled != nil {
+		return dtts.SaveKeyValueCalled(key, value)
+	}
+
+	return nil
 }
 
 // SetDataTrie -
 func (dtts *DataTrieTrackerStub) SetDataTrie(tr common.Trie) {
-	dtts.SetDataTrieCalled(tr)
+	if dtts.SetDataTrieCalled != nil {
+		dtts.SetDataTrieCalled(tr)
+	}
+
+	dtts.dataTrie = tr
 }
 
 // DataTrie -
-func (dtts *DataTrieTrackerStub) DataTrie() common.Trie {
-	return dtts.DataTrieCalled()
+func (dtts *DataTrieTrackerStub) DataTrie() common.DataTrieHandler {
+	if dtts.DataTrieCalled != nil {
+		return dtts.DataTrieCalled()
+	}
+
+	if !check.IfNil(dtts.dataTrie) {
+		return dtts.dataTrie
+	}
+
+	return nil
+}
+
+// SaveDirtyData -
+func (dtts *DataTrieTrackerStub) SaveDirtyData(mainTrie common.Trie) ([]core.TrieData, error) {
+	if dtts.SaveDirtyDataCalled != nil {
+		return dtts.SaveDirtyDataCalled(mainTrie)
+	}
+
+	return make([]core.TrieData, 0), nil
+}
+
+// MigrateDataTrieLeaves -
+func (dtts *DataTrieTrackerStub) MigrateDataTrieLeaves(args vmcommon.ArgsMigrateDataTrieLeaves) error {
+	if dtts.MigrateDataTrieLeavesCalled != nil {
+		return dtts.MigrateDataTrieLeavesCalled(args)
+	}
+
+	return nil
 }
 
 // IsInterfaceNil returns true if there is no value under the interface

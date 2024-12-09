@@ -8,17 +8,19 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ElrondNetwork/elrond-go-core/core"
-	"github.com/ElrondNetwork/elrond-go-core/core/keyValStorage"
-	"github.com/ElrondNetwork/elrond-go-core/data/api"
-	"github.com/ElrondNetwork/elrond-go/node/mock"
-	"github.com/ElrondNetwork/elrond-go/process"
-	"github.com/ElrondNetwork/elrond-go/state"
-	stateMock "github.com/ElrondNetwork/elrond-go/testscommon/state"
-	trieMock "github.com/ElrondNetwork/elrond-go/testscommon/trie"
-	"github.com/ElrondNetwork/elrond-go/vm"
-	"github.com/ElrondNetwork/elrond-go/vm/systemSmartContracts"
-	vmcommon "github.com/ElrondNetwork/elrond-vm-common"
+	"github.com/multiversx/mx-chain-core-go/core/keyValStorage"
+	"github.com/multiversx/mx-chain-core-go/data/api"
+	"github.com/multiversx/mx-chain-go/common"
+	"github.com/multiversx/mx-chain-go/node/mock"
+	"github.com/multiversx/mx-chain-go/process"
+	"github.com/multiversx/mx-chain-go/state"
+	"github.com/multiversx/mx-chain-go/state/accounts"
+	"github.com/multiversx/mx-chain-go/testscommon"
+	stateMock "github.com/multiversx/mx-chain-go/testscommon/state"
+	trieMock "github.com/multiversx/mx-chain-go/testscommon/trie"
+	"github.com/multiversx/mx-chain-go/vm"
+	"github.com/multiversx/mx-chain-go/vm/systemSmartContracts"
+	vmcommon "github.com/multiversx/mx-chain-vm-common-go"
 	"github.com/stretchr/testify/require"
 )
 
@@ -33,8 +35,19 @@ func createMockArgs() ArgTrieIteratorProcessor {
 	return ArgTrieIteratorProcessor{
 		Accounts:           createAccountsWrapper(),
 		QueryService:       &mock.SCQueryServiceStub{},
-		PublicKeyConverter: &mock.PubkeyConverterMock{},
+		PublicKeyConverter: &testscommon.PubkeyConverterMock{},
 	}
+}
+
+func getAccountWithDataTrie(tr common.Trie) state.UserAccountHandler {
+	dtt := &trieMock.DataTrieTrackerStub{
+		DataTrieCalled: func() common.Trie {
+			return tr
+		},
+	}
+
+	acc, _ := accounts.NewUserAccount([]byte("newaddress"), dtt, &trieMock.TrieLeafParserStub{})
+	return acc
 }
 
 func TestNewTotalStakedValueProcessor(t *testing.T) {
@@ -108,7 +121,7 @@ func TestTotalStakedValueProcessor_GetTotalStakedValue_CannotGetAccount(t *testi
 	expectedErr := errors.New("expected error")
 	arg := createMockArgs()
 	arg.Accounts.AccountsAdapter = &stateMock.AccountsStub{
-		RecreateTrieCalled: func(rootHash []byte) error {
+		RecreateTrieCalled: func(rootHash common.RootHashHolder) error {
 			return nil
 		},
 		GetExistingAccountCalled: func(addressContainer []byte) (vmcommon.AccountHandler, error) {
@@ -149,7 +162,7 @@ func TestTotalStakedValueProcessor_GetTotalStakedValue_CannotCastAccount(t *test
 		GetExistingAccountCalled: func(addressContainer []byte) (vmcommon.AccountHandler, error) {
 			return nil, nil
 		},
-		RecreateTrieCalled: func(rootHash []byte) error {
+		RecreateTrieCalled: func(rootHash common.RootHashHolder) error {
 			return nil
 		},
 	}
@@ -164,19 +177,19 @@ func TestTotalStakedValueProcessor_GetTotalStakedValue_CannotGetRootHash(t *test
 	t.Parallel()
 
 	expectedErr := errors.New("expected error")
-	acc, _ := state.NewUserAccount([]byte("newaddress"))
-	acc.SetDataTrie(&trieMock.TrieStub{
+	tr := &trieMock.TrieStub{
 		RootCalled: func() ([]byte, error) {
 			return nil, expectedErr
 		},
-	})
+	}
+	acc := getAccountWithDataTrie(tr)
 
 	arg := createMockArgs()
 	arg.Accounts.AccountsAdapter = &stateMock.AccountsStub{
 		GetExistingAccountCalled: func(addressContainer []byte) (vmcommon.AccountHandler, error) {
 			return acc, nil
 		},
-		RecreateTrieCalled: func(rootHash []byte) error {
+		RecreateTrieCalled: func(rootHash common.RootHashHolder) error {
 			return nil
 		},
 	}
@@ -190,24 +203,25 @@ func TestTotalStakedValueProcessor_GetTotalStakedValue_CannotGetRootHash(t *test
 func TestTotalStakedValueProcessor_GetTotalStakedValue_ContextShouldTimeout(t *testing.T) {
 	t.Parallel()
 
-	acc, _ := state.NewUserAccount([]byte("newaddress"))
-	acc.SetDataTrie(&trieMock.TrieStub{
-		GetAllLeavesOnChannelCalled: func(chLeaves chan core.KeyValueHolder, _ context.Context, _ []byte) error {
+	tr := &trieMock.TrieStub{
+		GetAllLeavesOnChannelCalled: func(leavesChannels *common.TrieIteratorChannels, _ context.Context, _ []byte, _ common.KeyBuilder, _ common.TrieLeafParser) error {
 			time.Sleep(time.Second)
-			close(chLeaves)
+			close(leavesChannels.LeavesChan)
+			leavesChannels.ErrChan.Close()
 			return nil
 		},
 		RootCalled: func() ([]byte, error) {
 			return nil, nil
 		},
-	})
+	}
+	acc := getAccountWithDataTrie(tr)
 
 	arg := createMockArgs()
 	arg.Accounts.AccountsAdapter = &stateMock.AccountsStub{
 		GetExistingAccountCalled: func(addressContainer []byte) (vmcommon.AccountHandler, error) {
 			return acc, nil
 		},
-		RecreateTrieCalled: func(rootHash []byte) error {
+		RecreateTrieCalled: func(rootHash common.RootHashHolder) error {
 			return nil
 		},
 	}
@@ -225,22 +239,24 @@ func TestTotalStakedValueProcessor_GetTotalStakedValue_CannotGetAllLeaves(t *tes
 	t.Parallel()
 
 	expectedErr := errors.New("expected error")
-	acc, _ := state.NewUserAccount([]byte("newaddress"))
-	acc.SetDataTrie(&trieMock.TrieStub{
-		GetAllLeavesOnChannelCalled: func(_ chan core.KeyValueHolder, _ context.Context, _ []byte) error {
+
+	tr := &trieMock.TrieStub{
+		GetAllLeavesOnChannelCalled: func(_ *common.TrieIteratorChannels, _ context.Context, _ []byte, _ common.KeyBuilder, _ common.TrieLeafParser) error {
 			return expectedErr
 		},
 		RootCalled: func() ([]byte, error) {
 			return nil, nil
 		},
-	})
+	}
+
+	acc := getAccountWithDataTrie(tr)
 
 	arg := createMockArgs()
 	arg.Accounts.AccountsAdapter = &stateMock.AccountsStub{
 		GetExistingAccountCalled: func(addressContainer []byte) (vmcommon.AccountHandler, error) {
 			return acc, nil
 		},
-		RecreateTrieCalled: func(rootHash []byte) error {
+		RecreateTrieCalled: func(rootHash common.RootHashHolder) error {
 			return nil
 		},
 	}
@@ -270,37 +286,40 @@ func TestTotalStakedValueProcessor_GetTotalStakedValue(t *testing.T) {
 	leafKey4 := "0123456783"
 	leafKey5 := "0123456780"
 	leafKey6 := "0123456788"
-	acc, _ := state.NewUserAccount([]byte("newaddress"))
-	acc.SetDataTrie(&trieMock.TrieStub{
+
+	tr := &trieMock.TrieStub{
 		RootCalled: func() ([]byte, error) {
 			return rootHash, nil
 		},
-		GetAllLeavesOnChannelCalled: func(ch chan core.KeyValueHolder, ctx context.Context, rootHash []byte) error {
+		GetAllLeavesOnChannelCalled: func(channels *common.TrieIteratorChannels, ctx context.Context, rootHash []byte, _ common.KeyBuilder, _ common.TrieLeafParser) error {
 			go func() {
 				leaf1 := keyValStorage.NewKeyValStorage(rootHash, append(marshalledData, suffix...))
-				ch <- leaf1
+				channels.LeavesChan <- leaf1
 
 				leaf2 := keyValStorage.NewKeyValStorage([]byte(leafKey2), nil)
-				ch <- leaf2
+				channels.LeavesChan <- leaf2
 
 				leaf3 := keyValStorage.NewKeyValStorage([]byte(leafKey3), nil)
-				ch <- leaf3
+				channels.LeavesChan <- leaf3
 
 				leaf4 := keyValStorage.NewKeyValStorage([]byte(leafKey4), nil)
-				ch <- leaf4
+				channels.LeavesChan <- leaf4
 
 				leaf5 := keyValStorage.NewKeyValStorage([]byte(leafKey5), nil)
-				ch <- leaf5
+				channels.LeavesChan <- leaf5
 
 				leaf6 := keyValStorage.NewKeyValStorage([]byte(leafKey6), nil)
-				ch <- leaf6
+				channels.LeavesChan <- leaf6
 
-				close(ch)
+				close(channels.LeavesChan)
+				channels.ErrChan.Close()
 			}()
 
 			return nil
 		},
-	})
+	}
+
+	acc := getAccountWithDataTrie(tr)
 
 	expectedErr := errors.New("expected error")
 	arg := createMockArgs()
@@ -308,41 +327,41 @@ func TestTotalStakedValueProcessor_GetTotalStakedValue(t *testing.T) {
 		GetExistingAccountCalled: func(addressContainer []byte) (vmcommon.AccountHandler, error) {
 			return acc, nil
 		},
-		RecreateTrieCalled: func(rootHash []byte) error {
+		RecreateTrieCalled: func(rootHash common.RootHashHolder) error {
 			return nil
 		},
 	}
 	arg.QueryService = &mock.SCQueryServiceStub{
-		ExecuteQueryCalled: func(query *process.SCQuery) (*vmcommon.VMOutput, error) {
+		ExecuteQueryCalled: func(query *process.SCQuery) (*vmcommon.VMOutput, common.BlockInfo, error) {
 			switch string(query.Arguments[0]) {
 			case leafKey3:
 				return &vmcommon.VMOutput{
 					ReturnCode: vmcommon.UserError,
-				}, nil
+				}, nil, nil
 
 			case leafKey4:
-				return &vmcommon.VMOutput{}, nil
+				return &vmcommon.VMOutput{}, nil, nil
 
 			case leafKey5:
 				return &vmcommon.VMOutput{
 					ReturnData: [][]byte{
 						big.NewInt(50).Bytes(), big.NewInt(100).Bytes(), big.NewInt(0).Bytes(),
 					},
-				}, nil
+				}, nil, nil
 
 			case leafKey6:
 				return &vmcommon.VMOutput{
 					ReturnData: [][]byte{
 						big.NewInt(60).Bytes(), big.NewInt(500).Bytes(), big.NewInt(0).Bytes(),
 					},
-				}, nil
+				}, nil, nil
 
 			default:
-				return nil, expectedErr
+				return nil, nil, expectedErr
 			}
 		},
 	}
-	arg.PublicKeyConverter = mock.NewPubkeyConverterMock(10)
+	arg.PublicKeyConverter = testscommon.NewPubkeyConverterMock(10)
 	totalStakedProc, _ := NewTotalStakedValueProcessor(arg)
 
 	stakeValues, err := totalStakedProc.GetTotalStakedValue(context.Background())

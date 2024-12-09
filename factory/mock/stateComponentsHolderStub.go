@@ -1,17 +1,19 @@
 package mock
 
 import (
-	"github.com/ElrondNetwork/elrond-go/common"
-	"github.com/ElrondNetwork/elrond-go/state"
+	"github.com/multiversx/mx-chain-go/common"
+	"github.com/multiversx/mx-chain-go/state"
 )
 
 // StateComponentsHolderStub -
 type StateComponentsHolderStub struct {
-	PeerAccountsCalled        func() state.AccountsAdapter
-	AccountsAdapterCalled     func() state.AccountsAdapter
-	AccountsAdapterAPICalled  func() state.AccountsAdapter
-	TriesContainerCalled      func() common.TriesHolder
-	TrieStorageManagersCalled func() map[string]common.StorageManager
+	PeerAccountsCalled             func() state.AccountsAdapter
+	AccountsAdapterCalled          func() state.AccountsAdapter
+	AccountsAdapterAPICalled       func() state.AccountsAdapter
+	AccountsRepositoryCalled       func() state.AccountsRepository
+	TriesContainerCalled           func() common.TriesHolder
+	TrieStorageManagersCalled      func() map[string]common.StorageManager
+	MissingTrieNodesNotifierCalled func() common.MissingTrieNodesNotifier
 }
 
 // PeerAccounts -
@@ -41,6 +43,15 @@ func (s *StateComponentsHolderStub) AccountsAdapterAPI() state.AccountsAdapter {
 	return nil
 }
 
+// AccountsRepository -
+func (s *StateComponentsHolderStub) AccountsRepository() state.AccountsRepository {
+	if s.AccountsRepositoryCalled != nil {
+		return s.AccountsRepositoryCalled()
+	}
+
+	return nil
+}
+
 // TriesContainer -
 func (s *StateComponentsHolderStub) TriesContainer() common.TriesHolder {
 	if s.TriesContainerCalled != nil {
@@ -56,6 +67,20 @@ func (s *StateComponentsHolderStub) TrieStorageManagers() map[string]common.Stor
 		return s.TrieStorageManagersCalled()
 	}
 
+	return nil
+}
+
+// MissingTrieNodesNotifier -
+func (s *StateComponentsHolderStub) MissingTrieNodesNotifier() common.MissingTrieNodesNotifier {
+	if s.MissingTrieNodesNotifierCalled != nil {
+		return s.MissingTrieNodesNotifierCalled()
+	}
+
+	return nil
+}
+
+// Close -
+func (s *StateComponentsHolderStub) Close() error {
 	return nil
 }
 

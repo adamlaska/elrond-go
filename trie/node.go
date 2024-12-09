@@ -1,22 +1,24 @@
-//go:generate protoc -I=. -I=$GOPATH/src -I=$GOPATH/src/github.com/ElrondNetwork/protobuf/protobuf  --gogoslick_out=. node.proto
+//go:generate protoc -I=. -I=$GOPATH/src -I=$GOPATH/src/github.com/multiversx/protobuf/protobuf  --gogoslick_out=. node.proto
 package trie
 
 import (
 	"context"
-	"encoding/hex"
-	"fmt"
+	"runtime/debug"
 	"time"
 
-	"github.com/ElrondNetwork/elrond-go-core/hashing"
-	"github.com/ElrondNetwork/elrond-go-core/marshal"
-	"github.com/ElrondNetwork/elrond-go/common"
+	"github.com/multiversx/mx-chain-core-go/core"
+	"github.com/multiversx/mx-chain-core-go/hashing"
+	"github.com/multiversx/mx-chain-core-go/marshal"
+	"github.com/multiversx/mx-chain-go/common"
+	"github.com/multiversx/mx-chain-go/trie/keyBuilder"
+	logger "github.com/multiversx/mx-chain-logger-go"
+	vmcommon "github.com/multiversx/mx-chain-vm-common-go"
 )
 
 const (
 	nrOfChildren         = 17
 	firstByte            = 0
 	hexTerminator        = 16
-	nibbleSize           = 4
 	nibbleMask           = 0x0f
 	pointerSizeInBytes   = 8
 	numNodeInnerPointers = 2 // each trie node contains a marshalizer and a hasher
@@ -73,18 +75,13 @@ func encodeNodeAndGetHash(n node) ([]byte, error) {
 }
 
 // encodeNodeAndCommitToDB will encode and save provided node. It returns the node's value in bytes
-func encodeNodeAndCommitToDB(n node, db common.DBWriteCacher) (int, error) {
+func encodeNodeAndCommitToDB(n node, db common.BaseStorer) (int, error) {
 	key, err := computeAndSetNodeHash(n)
 	if err != nil {
 		return 0, err
 	}
 
-	n, err = n.getCollapsed()
-	if err != nil {
-		return 0, err
-	}
-
-	val, err := n.getEncodedNode()
+	val, err := collapseAndEncodeNode(n)
 	if err != nil {
 		return 0, err
 	}
@@ -94,6 +91,15 @@ func encodeNodeAndCommitToDB(n node, db common.DBWriteCacher) (int, error) {
 	err = db.Put(key, val)
 
 	return len(val), err
+}
+
+func collapseAndEncodeNode(n node) ([]byte, error) {
+	n, err := n.getCollapsed()
+	if err != nil {
+		return nil, err
+	}
+
+	return n.getEncodedNode()
 }
 
 func computeAndSetNodeHash(n node) ([]byte, error) {
@@ -111,35 +117,43 @@ func computeAndSetNodeHash(n node) ([]byte, error) {
 	return key, nil
 }
 
-func getNodeFromDBAndDecode(n []byte, db common.DBWriteCacher, marshalizer marshal.Marshalizer, hasher hashing.Hasher) (node, error) {
+func getNodeFromDBAndDecode(n []byte, db common.TrieStorageInteractor, marshalizer marshal.Marshalizer, hasher hashing.Hasher) (node, error) {
 	encChild, err := db.Get(n)
 	if err != nil {
-		log.Trace(common.GetNodeFromDBErrorString, "error", err, "key", n)
-		return nil, fmt.Errorf(common.GetNodeFromDBErrorString+" %w for key %v", err, hex.EncodeToString(n))
+		treatLogError(log, err, n)
+
+		return nil, core.NewGetNodeFromDBErrWithKey(n, err, db.GetIdentifier())
 	}
 
-	decodedNode, err := decodeNode(encChild, marshalizer, hasher)
-	if err != nil {
-		return nil, err
-	}
-
-	return decodedNode, nil
+	return decodeNode(encChild, marshalizer, hasher)
 }
 
-func resolveIfCollapsed(n node, pos byte, db common.DBWriteCacher) error {
+func treatLogError(logInstance logger.Logger, err error, key []byte) {
+	if logInstance.GetLevel() != logger.LogTrace {
+		return
+	}
+
+	logInstance.Trace(core.GetNodeFromDBErrorString, "error", err, "key", key, "stack trace", string(debug.Stack()))
+}
+
+func resolveIfCollapsed(n node, pos byte, db common.TrieStorageInteractor) error {
 	err := n.isEmptyOrNil()
 	if err != nil {
 		return err
 	}
 
-	if n.isPosCollapsed(int(pos)) {
-		err = n.resolveCollapsed(pos, db)
-		if err != nil {
-			return err
-		}
+	if !n.isPosCollapsed(int(pos)) {
+		handleStorageInteractorStats(db)
+		return nil
 	}
 
-	return nil
+	return n.resolveCollapsed(pos, db)
+}
+
+func handleStorageInteractorStats(db common.TrieStorageInteractor) {
+	if db != nil {
+		db.GetStateStatsHandler().IncrementTrie()
+	}
 }
 
 func concat(s1 []byte, s2 ...byte) []byte {
@@ -216,31 +230,12 @@ func keyBytesToHex(str []byte) []byte {
 	nibbles[hexLength-1] = hexTerminator
 
 	for i := hexLength - 2; i > 0; i -= 2 {
-		nibbles[i] = str[hexSliceIndex] >> nibbleSize
+		nibbles[i] = str[hexSliceIndex] >> keyBuilder.NibbleSize
 		nibbles[i-1] = str[hexSliceIndex] & nibbleMask
 		hexSliceIndex++
 	}
 
 	return nibbles
-}
-
-// hexToKeyBytes transforms hex nibbles into key bytes. The hex terminator is removed from the end of the hex slice,
-// and then the hex slice is reversed when forming the key bytes.
-func hexToKeyBytes(hex []byte) ([]byte, error) {
-	hex = hex[:len(hex)-1]
-	length := len(hex)
-	if length%2 != 0 {
-		return nil, ErrInvalidLength
-	}
-
-	key := make([]byte, length/2)
-	hexSliceIndex := 0
-	for i := len(key) - 1; i >= 0; i-- {
-		key[i] = hex[hexSliceIndex+1]<<nibbleSize | hex[hexSliceIndex]
-		hexSliceIndex += 2
-	}
-
-	return key, nil
 }
 
 // prefixLen returns the length of the common prefix of a and b.
@@ -260,7 +255,7 @@ func prefixLen(a, b []byte) int {
 	return i
 }
 
-func shouldStopIfContextDone(ctx context.Context, idleProvider IdleNodeProvider) bool {
+func shouldStopIfContextDoneBlockingIfBusy(ctx context.Context, idleProvider IdleNodeProvider) bool {
 	for {
 		select {
 		case <-ctx.Done():
@@ -278,4 +273,38 @@ func shouldStopIfContextDone(ctx context.Context, idleProvider IdleNodeProvider)
 		case <-time.After(pollingIdleNode):
 		}
 	}
+}
+
+func treatCommitSnapshotError(err error, hash []byte, missingNodesChan chan []byte) (nodeIsMissing bool, error error) {
+	if err == nil {
+		return false, nil
+	}
+
+	if !core.IsGetNodeFromDBError(err) {
+		return false, err
+	}
+
+	log.Error("error during trie snapshot", "err", err.Error(), "hash", hash)
+	missingNodesChan <- hash
+	return true, nil
+}
+
+func shouldMigrateCurrentNode(
+	currentNode node,
+	migrationArgs vmcommon.ArgsMigrateDataTrieLeaves,
+) (bool, error) {
+	version, err := currentNode.getVersion()
+	if err != nil {
+		return false, err
+	}
+
+	if version == migrationArgs.NewVersion {
+		return false, nil
+	}
+
+	if version != migrationArgs.OldVersion && version != core.NotSpecified {
+		return false, nil
+	}
+
+	return true, nil
 }

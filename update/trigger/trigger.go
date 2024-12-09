@@ -10,12 +10,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ElrondNetwork/elrond-go-core/core/check"
-	"github.com/ElrondNetwork/elrond-go-core/data/endProcess"
-	logger "github.com/ElrondNetwork/elrond-go-logger"
-	"github.com/ElrondNetwork/elrond-go/facade"
-	"github.com/ElrondNetwork/elrond-go/process"
-	"github.com/ElrondNetwork/elrond-go/update"
+	"github.com/multiversx/mx-chain-core-go/core/check"
+	"github.com/multiversx/mx-chain-core-go/data/endProcess"
+	"github.com/multiversx/mx-chain-go/facade"
+	"github.com/multiversx/mx-chain-go/process"
+	"github.com/multiversx/mx-chain-go/update"
+	logger "github.com/multiversx/mx-chain-logger-go"
 )
 
 const hardforkTriggerString = "hardfork trigger"
@@ -69,7 +69,7 @@ type trigger struct {
 	chanStopNodeProcess          chan endProcess.ArgEndProcess
 	mutClosers                   sync.RWMutex
 	closers                      []update.Closer
-	chanTriggerReceived          chan struct{}
+	chanTriggerReceivedV2        chan struct{}
 	importStartHandler           update.ImportStartHandler
 	isWithEarlyEndOfEpoch        bool
 	roundHandler                 update.RoundHandler
@@ -112,21 +112,21 @@ func NewTrigger(arg ArgHardforkTrigger) (*trigger, error) {
 	}
 
 	t := &trigger{
-		enabled:              arg.Enabled,
-		enabledAuthenticated: arg.EnabledAuthenticated,
-		selfPubKey:           arg.SelfPubKeyBytes,
-		triggerPubKey:        arg.TriggerPubKeyBytes,
-		triggerReceived:      false,
-		triggerExecuting:     false,
-		argumentParser:       arg.ArgumentParser,
-		epochProvider:        arg.EpochProvider,
-		exportFactoryHandler: arg.ExportFactoryHandler,
-		closeAfterInMinutes:  arg.CloseAfterExportInMinutes,
-		chanStopNodeProcess:  arg.ChanStopNodeProcess,
-		closers:              make([]update.Closer, 0),
-		chanTriggerReceived:  make(chan struct{}, 1), //buffer with one value as there might be async calls
-		importStartHandler:   arg.ImportStartHandler,
-		roundHandler:         arg.RoundHandler,
+		enabled:               arg.Enabled,
+		enabledAuthenticated:  arg.EnabledAuthenticated,
+		selfPubKey:            arg.SelfPubKeyBytes,
+		triggerPubKey:         arg.TriggerPubKeyBytes,
+		triggerReceived:       false,
+		triggerExecuting:      false,
+		argumentParser:        arg.ArgumentParser,
+		epochProvider:         arg.EpochProvider,
+		exportFactoryHandler:  arg.ExportFactoryHandler,
+		closeAfterInMinutes:   arg.CloseAfterExportInMinutes,
+		chanStopNodeProcess:   arg.ChanStopNodeProcess,
+		closers:               make([]update.Closer, 0),
+		chanTriggerReceivedV2: make(chan struct{}, 1), // buffer with one value as there might be async calls
+		importStartHandler:    arg.ImportStartHandler,
+		roundHandler:          arg.RoundHandler,
 	}
 
 	t.isTriggerSelf = bytes.Equal(arg.TriggerPubKeyBytes, arg.SelfPubKeyBytes)
@@ -171,7 +171,17 @@ func (t *trigger) computeTriggerStartOfEpoch(receivedTrigger uint32) bool {
 	return true
 }
 
-// Trigger will start the hardfork process
+// SetExportFactoryHandler sets the exportFactoryHandler with the provided one
+func (t *trigger) SetExportFactoryHandler(exportFactoryHandler update.ExportFactoryHandler) error {
+	if check.IfNil(exportFactoryHandler) {
+		return update.ErrNilExportFactoryHandler
+	}
+
+	t.exportFactoryHandler = exportFactoryHandler
+	return nil
+}
+
+// Trigger starts the hardfork process
 func (t *trigger) Trigger(epoch uint32, withEarlyEndOfEpoch bool) error {
 	if !t.enabled {
 		return update.ErrTriggerNotEnabled
@@ -244,7 +254,7 @@ func (t *trigger) computeAndSetTrigger(epoch uint32, originalPayload []byte, wit
 	}
 
 	if len(originalPayload) == 0 {
-		t.writeOnNotifyChan()
+		t.writeOnNotifyChanV2()
 	}
 
 	shouldSetTriggerFromEpochChange := epoch > t.epochProvider.MetaEpoch()
@@ -262,10 +272,10 @@ func (t *trigger) computeAndSetTrigger(epoch uint32, originalPayload []byte, wit
 	return true, nil
 }
 
-func (t *trigger) writeOnNotifyChan() {
-	//writing on the notification chan should not be blocking as to allow self to initiate the hardfork process
+func (t *trigger) writeOnNotifyChanV2() {
+	// writing on the notification chan should not be blocking as to allow self to initiate the hardfork process
 	select {
-	case t.chanTriggerReceived <- struct{}{}:
+	case t.chanTriggerReceivedV2 <- struct{}{}:
 	default:
 	}
 }
@@ -328,7 +338,7 @@ func (t *trigger) TriggerReceived(originalPayload []byte, data []byte, pkBytes [
 
 	isTriggerEnabled := t.enabled && t.enabledAuthenticated
 	if !isTriggerEnabled {
-		//should not return error as to allow the message to get to other peers
+		// should not return error as to allow the message to get to other peers
 		return true, nil
 	}
 
@@ -455,7 +465,7 @@ func (t *trigger) CreateData() []byte {
 	return []byte(payload)
 }
 
-// AddCloser will add a closer interface on the existing list
+// AddCloser adds a closer interface on the existing list
 func (t *trigger) AddCloser(closer update.Closer) error {
 	if check.IfNil(closer) {
 		return update.ErrNilCloser
@@ -468,10 +478,10 @@ func (t *trigger) AddCloser(closer update.Closer) error {
 	return nil
 }
 
-// NotifyTriggerReceived will write a struct{}{} on the provided channel as soon as a trigger is received
+// NotifyTriggerReceivedV2 writes a struct{}{} on the provided channel as soon as a trigger is received
 // this is done to decrease the latency of the heartbeat sending system
-func (t *trigger) NotifyTriggerReceived() <-chan struct{} {
-	return t.chanTriggerReceived
+func (t *trigger) NotifyTriggerReceivedV2() <-chan struct{} {
+	return t.chanTriggerReceivedV2
 }
 
 // IsInterfaceNil returns true if there is no value under the interface

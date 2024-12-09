@@ -1,8 +1,3 @@
-//go:build !race
-// +build !race
-
-// TODO remove build condition above to allow -race -short, after Arwen fix
-
 package multiShard
 
 import (
@@ -10,24 +5,33 @@ import (
 	"math/big"
 	"testing"
 
-	"github.com/ElrondNetwork/elrond-go-core/data/block"
-	"github.com/ElrondNetwork/elrond-go/config"
-	"github.com/ElrondNetwork/elrond-go/integrationTests/vm"
-	"github.com/ElrondNetwork/elrond-go/integrationTests/vm/txsFee/utils"
-	vmcommon "github.com/ElrondNetwork/elrond-vm-common"
+	"github.com/multiversx/mx-chain-core-go/core"
+	"github.com/multiversx/mx-chain-go/config"
+	"github.com/multiversx/mx-chain-go/integrationTests"
+	"github.com/multiversx/mx-chain-go/integrationTests/vm"
+	"github.com/multiversx/mx-chain-go/integrationTests/vm/txsFee/utils"
+	vmcommon "github.com/multiversx/mx-chain-vm-common-go"
 	"github.com/stretchr/testify/require"
 )
 
 func TestAsyncESDTTransferWithSCCallShouldWork(t *testing.T) {
-	testContextSender, err := vm.CreatePreparedTxProcessorWithVMsMultiShard(0, config.EnableEpochs{})
+	if testing.Short() {
+		t.Skip("this is not a short test")
+	}
+
+	enableEpochs := config.EnableEpochs{
+		DynamicGasCostForDataTrieStorageLoadEnableEpoch: integrationTests.UnreachableEpoch,
+	}
+
+	testContextSender, err := vm.CreatePreparedTxProcessorWithVMsMultiShard(0, enableEpochs, 1)
 	require.Nil(t, err)
 	defer testContextSender.Close()
 
-	testContextFirstContract, err := vm.CreatePreparedTxProcessorWithVMsMultiShard(1, config.EnableEpochs{})
+	testContextFirstContract, err := vm.CreatePreparedTxProcessorWithVMsMultiShard(1, enableEpochs, 1)
 	require.Nil(t, err)
 	defer testContextFirstContract.Close()
 
-	testContextSecondContract, err := vm.CreatePreparedTxProcessorWithVMsMultiShard(2, config.EnableEpochs{})
+	testContextSecondContract, err := vm.CreatePreparedTxProcessorWithVMsMultiShard(2, enableEpochs, 1)
 	require.Nil(t, err)
 	defer testContextSecondContract.Close()
 
@@ -43,7 +47,7 @@ func TestAsyncESDTTransferWithSCCallShouldWork(t *testing.T) {
 	token := []byte("miiutoken")
 	egldBalance := big.NewInt(10000000)
 	esdtBalance := big.NewInt(10000000)
-	utils.CreateAccountWithESDTBalance(t, testContextSender.Accounts, senderAddr, egldBalance, token, 0, esdtBalance)
+	utils.CreateAccountWithESDTBalance(t, testContextSender.Accounts, senderAddr, egldBalance, token, 0, esdtBalance, uint32(core.Fungible))
 
 	// create accounts for owners
 	_, _ = vm.CreateAccount(testContextFirstContract.Accounts, firstContractOwner, 0, egldBalance)
@@ -87,13 +91,6 @@ func TestAsyncESDTTransferWithSCCallShouldWork(t *testing.T) {
 	expectedAccumulatedFees := big.NewInt(950)
 	require.Equal(t, expectedAccumulatedFees, testContextSender.TxFeeHandler.GetAccumulatedFees())
 
-	testIndexer := vm.CreateTestIndexer(t, testContextSender.ShardCoordinator, testContextSender.EconomicsData, false, testContextSender.TxsLogsProcessor)
-	testIndexer.SaveTransaction(tx, block.TxBlock, nil)
-
-	indexerTx := testIndexer.GetIndexerPreparedTransaction(t)
-	require.Equal(t, uint64(94), indexerTx.GasUsed)
-	require.Equal(t, "940", indexerTx.Fee)
-
 	// execute on the destination shard
 	retCode, err = testContextFirstContract.TxProcessor.ProcessTransaction(tx)
 	require.Equal(t, vmcommon.Ok, retCode)
@@ -102,21 +99,15 @@ func TestAsyncESDTTransferWithSCCallShouldWork(t *testing.T) {
 	_, err = testContextSender.Accounts.Commit()
 	require.Nil(t, err)
 
-	expectedAccumulatedFees = big.NewInt(189880)
+	expectedAccumulatedFees = big.NewInt(1146530)
 	require.Equal(t, expectedAccumulatedFees, testContextFirstContract.TxFeeHandler.GetAccumulatedFees())
 
-	developerFees := big.NewInt(18988)
+	developerFees := big.NewInt(114653)
 	require.Equal(t, developerFees, testContextFirstContract.TxFeeHandler.GetDeveloperFees())
 
 	utils.CheckESDTBalance(t, testContextFirstContract, firstSCAddress, token, big.NewInt(2500))
 
 	intermediateTxs := testContextFirstContract.GetIntermediateTransactions(t)
-	testIndexer = vm.CreateTestIndexer(t, testContextFirstContract.ShardCoordinator, testContextFirstContract.EconomicsData, true, testContextFirstContract.TxsLogsProcessor)
-	testIndexer.SaveTransaction(tx, block.TxBlock, intermediateTxs)
-
-	indexerTx = testIndexer.GetIndexerPreparedTransaction(t)
-	require.Equal(t, uint64(500000), indexerTx.GasUsed)
-	require.Equal(t, "5000000", indexerTx.Fee)
 
 	scrForSecondContract := intermediateTxs[1]
 	require.Equal(t, scrForSecondContract.GetSndAddr(), firstSCAddress)
@@ -125,10 +116,10 @@ func TestAsyncESDTTransferWithSCCallShouldWork(t *testing.T) {
 
 	utils.CheckESDTBalance(t, testContextSecondContract, secondSCAddress, token, big.NewInt(2500))
 
-	accumulatedFee := big.NewInt(62330)
+	accumulatedFee := big.NewInt(540660)
 	require.Equal(t, accumulatedFee, testContextSecondContract.TxFeeHandler.GetAccumulatedFees())
 
-	developerFees = big.NewInt(6233)
+	developerFees = big.NewInt(54066)
 	require.Equal(t, developerFees, testContextSecondContract.TxFeeHandler.GetDeveloperFees())
 
 	intermediateTxs = testContextSecondContract.GetIntermediateTransactions(t)
@@ -136,19 +127,27 @@ func TestAsyncESDTTransferWithSCCallShouldWork(t *testing.T) {
 
 	utils.ProcessSCRResult(t, testContextFirstContract, intermediateTxs[1], vmcommon.Ok, nil)
 
-	require.Equal(t, big.NewInt(4936710), testContextFirstContract.TxFeeHandler.GetAccumulatedFees())
+	require.Equal(t, big.NewInt(4458400), testContextFirstContract.TxFeeHandler.GetAccumulatedFees())
 }
 
 func TestAsyncESDTTransferWithSCCallSecondContractAnotherToken(t *testing.T) {
-	testContextSender, err := vm.CreatePreparedTxProcessorWithVMsMultiShard(0, config.EnableEpochs{})
+	if testing.Short() {
+		t.Skip("this is not a short test")
+	}
+
+	enableEpochs := config.EnableEpochs{
+		DynamicGasCostForDataTrieStorageLoadEnableEpoch: integrationTests.UnreachableEpoch,
+	}
+
+	testContextSender, err := vm.CreatePreparedTxProcessorWithVMsMultiShard(0, enableEpochs, 1)
 	require.Nil(t, err)
 	defer testContextSender.Close()
 
-	testContextFirstContract, err := vm.CreatePreparedTxProcessorWithVMsMultiShard(1, config.EnableEpochs{})
+	testContextFirstContract, err := vm.CreatePreparedTxProcessorWithVMsMultiShard(1, enableEpochs, 1)
 	require.Nil(t, err)
 	defer testContextFirstContract.Close()
 
-	testContextSecondContract, err := vm.CreatePreparedTxProcessorWithVMsMultiShard(2, config.EnableEpochs{})
+	testContextSecondContract, err := vm.CreatePreparedTxProcessorWithVMsMultiShard(2, enableEpochs, 1)
 	require.Nil(t, err)
 	defer testContextSecondContract.Close()
 
@@ -164,7 +163,7 @@ func TestAsyncESDTTransferWithSCCallSecondContractAnotherToken(t *testing.T) {
 	token := []byte("miiutoken")
 	egldBalance := big.NewInt(10000000)
 	esdtBalance := big.NewInt(10000000)
-	utils.CreateAccountWithESDTBalance(t, testContextSender.Accounts, senderAddr, egldBalance, token, 0, esdtBalance)
+	utils.CreateAccountWithESDTBalance(t, testContextSender.Accounts, senderAddr, egldBalance, token, 0, esdtBalance, uint32(core.Fungible))
 
 	// create accounts for owners
 	_, _ = vm.CreateAccount(testContextFirstContract.Accounts, firstContractOwner, 0, egldBalance)
@@ -205,13 +204,6 @@ func TestAsyncESDTTransferWithSCCallSecondContractAnotherToken(t *testing.T) {
 	expectedAccumulatedFees := big.NewInt(950)
 	require.Equal(t, expectedAccumulatedFees, testContextSender.TxFeeHandler.GetAccumulatedFees())
 
-	testIndexer := vm.CreateTestIndexer(t, testContextSender.ShardCoordinator, testContextSender.EconomicsData, false, testContextSender.TxsLogsProcessor)
-	testIndexer.SaveTransaction(tx, block.TxBlock, nil)
-
-	indexerTx := testIndexer.GetIndexerPreparedTransaction(t)
-	require.Equal(t, uint64(94), indexerTx.GasUsed)
-	require.Equal(t, "940", indexerTx.Fee)
-
 	// execute on the destination shard
 	retCode, err = testContextFirstContract.TxProcessor.ProcessTransaction(tx)
 	require.Equal(t, vmcommon.Ok, retCode)
@@ -220,22 +212,15 @@ func TestAsyncESDTTransferWithSCCallSecondContractAnotherToken(t *testing.T) {
 	_, err = testContextSender.Accounts.Commit()
 	require.Nil(t, err)
 
-	expectedAccumulatedFees = big.NewInt(189880)
+	expectedAccumulatedFees = big.NewInt(1146530)
 	require.Equal(t, expectedAccumulatedFees, testContextFirstContract.TxFeeHandler.GetAccumulatedFees())
 
-	developerFees := big.NewInt(18988)
+	developerFees := big.NewInt(114653)
 	require.Equal(t, developerFees, testContextFirstContract.TxFeeHandler.GetDeveloperFees())
 
 	utils.CheckESDTBalance(t, testContextFirstContract, firstSCAddress, token, big.NewInt(2500))
 
 	intermediateTxs := testContextFirstContract.GetIntermediateTransactions(t)
-	testIndexer = vm.CreateTestIndexer(t, testContextFirstContract.ShardCoordinator, testContextFirstContract.EconomicsData, true, testContextFirstContract.TxsLogsProcessor)
-	testIndexer.SaveTransaction(tx, block.TxBlock, intermediateTxs)
-
-	indexerTx = testIndexer.GetIndexerPreparedTransaction(t)
-	require.Equal(t, uint64(500000), indexerTx.GasUsed)
-	require.Equal(t, "5000000", indexerTx.Fee)
-
 	scrForSecondContract := intermediateTxs[1]
 	require.Equal(t, scrForSecondContract.GetSndAddr(), firstSCAddress)
 	require.Equal(t, scrForSecondContract.GetRcvAddr(), secondSCAddress)
@@ -243,7 +228,7 @@ func TestAsyncESDTTransferWithSCCallSecondContractAnotherToken(t *testing.T) {
 
 	utils.CheckESDTBalance(t, testContextSecondContract, secondSCAddress, token, big.NewInt(0))
 
-	accumulatedFee := big.NewInt(3720770)
+	accumulatedFee := big.NewInt(2764130)
 	require.Equal(t, accumulatedFee, testContextSecondContract.TxFeeHandler.GetAccumulatedFees())
 
 	developerFees = big.NewInt(0)
@@ -254,5 +239,5 @@ func TestAsyncESDTTransferWithSCCallSecondContractAnotherToken(t *testing.T) {
 
 	utils.ProcessSCRResult(t, testContextFirstContract, intermediateTxs[0], vmcommon.Ok, nil)
 
-	require.Equal(t, big.NewInt(1278270), testContextFirstContract.TxFeeHandler.GetAccumulatedFees())
+	require.Equal(t, big.NewInt(2234930), testContextFirstContract.TxFeeHandler.GetAccumulatedFees())
 }

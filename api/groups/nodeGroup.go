@@ -5,24 +5,34 @@ import (
 	"net/http"
 	"sync"
 
-	"github.com/ElrondNetwork/elrond-go-core/core"
-	"github.com/ElrondNetwork/elrond-go-core/core/check"
-	"github.com/ElrondNetwork/elrond-go/api/errors"
-	"github.com/ElrondNetwork/elrond-go/api/shared"
-	"github.com/ElrondNetwork/elrond-go/debug"
-	"github.com/ElrondNetwork/elrond-go/heartbeat/data"
-	"github.com/ElrondNetwork/elrond-go/node/external"
 	"github.com/gin-gonic/gin"
+	"github.com/multiversx/mx-chain-core-go/core"
+	"github.com/multiversx/mx-chain-core-go/core/check"
+	"github.com/multiversx/mx-chain-go/api/errors"
+	"github.com/multiversx/mx-chain-go/api/shared"
+	"github.com/multiversx/mx-chain-go/common"
+	"github.com/multiversx/mx-chain-go/debug"
+	"github.com/multiversx/mx-chain-go/heartbeat/data"
+	"github.com/multiversx/mx-chain-go/node/external"
 )
 
 const (
-	pidQueryParam       = "pid"
-	debugPath           = "/debug"
-	heartbeatStatusPath = "/heartbeatstatus"
-	metricsPath         = "/metrics"
-	p2pStatusPath       = "/p2pstatus"
-	peerInfoPath        = "/peerinfo"
-	statusPath          = "/status"
+	pidQueryParam             = "pid"
+	debugPath                 = "/debug"
+	heartbeatStatusPath       = "/heartbeatstatus"
+	metricsPath               = "/metrics"
+	p2pStatusPath             = "/p2pstatus"
+	peerInfoPath              = "/peerinfo"
+	statusPath                = "/status"
+	epochStartDataForEpoch    = "/epoch-start/:epoch"
+	bootstrapStatusPath       = "/bootstrapstatus"
+	connectedPeersRatingsPath = "/connected-peers-ratings"
+	managedKeys               = "/managed-keys"
+	loadedKeys                = "/loaded-keys"
+	managedKeysCount          = "/managed-keys/count"
+	eligibleManagedKeys       = "/managed-keys/eligible"
+	waitingManagedKeys        = "/managed-keys/waiting"
+	epochsLeftInWaiting       = "/waiting-epochs-left/:key"
 )
 
 // nodeFacadeHandler defines the methods to be implemented by a facade for node requests
@@ -30,7 +40,15 @@ type nodeFacadeHandler interface {
 	GetHeartbeats() ([]data.PubKeyHeartbeat, error)
 	StatusMetrics() external.StatusMetricsHandler
 	GetQueryHandler(name string) (debug.QueryHandler, error)
+	GetEpochStartDataAPI(epoch uint32) (*common.EpochStartDataAPI, error)
 	GetPeerInfo(pid string) ([]core.QueryP2PPeerInfo, error)
+	GetConnectedPeersRatingsOnMainNetwork() (string, error)
+	GetManagedKeysCount() int
+	GetManagedKeys() []string
+	GetLoadedKeys() []string
+	GetEligibleManagedKeys() ([]string, error)
+	GetWaitingManagedKeys() ([]string, error)
+	GetWaitingEpochsLeftForPublicKey(publicKey string) (uint32, error)
 	IsInterfaceNil() bool
 }
 
@@ -87,6 +105,51 @@ func NewNodeGroup(facade nodeFacadeHandler) (*nodeGroup, error) {
 			Path:    peerInfoPath,
 			Method:  http.MethodGet,
 			Handler: ng.peerInfo,
+		},
+		{
+			Path:    epochStartDataForEpoch,
+			Method:  http.MethodGet,
+			Handler: ng.epochStartDataForEpoch,
+		},
+		{
+			Path:    bootstrapStatusPath,
+			Method:  http.MethodGet,
+			Handler: ng.bootstrapMetrics,
+		},
+		{
+			Path:    connectedPeersRatingsPath,
+			Method:  http.MethodGet,
+			Handler: ng.connectedPeersRatings,
+		},
+		{
+			Path:    managedKeysCount,
+			Method:  http.MethodGet,
+			Handler: ng.managedKeysCount,
+		},
+		{
+			Path:    managedKeys,
+			Method:  http.MethodGet,
+			Handler: ng.managedKeys,
+		},
+		{
+			Path:    loadedKeys,
+			Method:  http.MethodGet,
+			Handler: ng.loadedKeys,
+		},
+		{
+			Path:    eligibleManagedKeys,
+			Method:  http.MethodGet,
+			Handler: ng.managedKeysEligible,
+		},
+		{
+			Path:    waitingManagedKeys,
+			Method:  http.MethodGet,
+			Handler: ng.managedKeysWaiting,
+		},
+		{
+			Path:    epochsLeftInWaiting,
+			Method:  http.MethodGet,
+			Handler: ng.waitingEpochsLeft,
 		},
 	}
 	ng.endpoints = endpoints
@@ -241,6 +304,23 @@ func (ng *nodeGroup) peerInfo(c *gin.Context) {
 	)
 }
 
+// epochStartDataForEpoch returns epoch start data for the provided epoch
+func (ng *nodeGroup) epochStartDataForEpoch(c *gin.Context) {
+	epoch, err := getQueryParamEpoch(c)
+	if err != nil {
+		shared.RespondWithValidationError(c, errors.ErrValidation, errors.ErrBadUrlParams)
+		return
+	}
+
+	epochStartData, err := ng.getFacade().GetEpochStartDataAPI(epoch)
+	if err != nil {
+		shared.RespondWithInternalError(c, errors.ErrGetEpochStartData, err)
+		return
+	}
+
+	shared.RespondWithSuccess(c, gin.H{"epochStart": epochStartData})
+}
+
 // prometheusMetrics is the endpoint which will return the data in the way that prometheus expects them
 func (ng *nodeGroup) prometheusMetrics(c *gin.Context) {
 	metrics, err := ng.getFacade().StatusMetrics().StatusMetricsWithoutP2PPrometheusString()
@@ -260,6 +340,143 @@ func (ng *nodeGroup) prometheusMetrics(c *gin.Context) {
 		http.StatusOK,
 		metrics,
 	)
+}
+
+// bootstrapMetrics returns the node's bootstrap statistics exported by a StatusMetricsHandler
+func (ng *nodeGroup) bootstrapMetrics(c *gin.Context) {
+	metrics, err := ng.getFacade().StatusMetrics().BootstrapMetrics()
+	if err != nil {
+		c.JSON(
+			http.StatusInternalServerError,
+			shared.GenericAPIResponse{
+				Data:  nil,
+				Error: err.Error(),
+				Code:  shared.ReturnCodeInternalError,
+			},
+		)
+		return
+	}
+
+	c.JSON(
+		http.StatusOK,
+		shared.GenericAPIResponse{
+			Data:  gin.H{"metrics": metrics},
+			Error: "",
+			Code:  shared.ReturnCodeSuccess,
+		},
+	)
+}
+
+// connectedPeersRatings returns the node's connected peers ratings
+func (ng *nodeGroup) connectedPeersRatings(c *gin.Context) {
+	ratings, err := ng.getFacade().GetConnectedPeersRatingsOnMainNetwork()
+	if err != nil {
+		c.JSON(
+			http.StatusInternalServerError,
+			shared.GenericAPIResponse{
+				Data:  nil,
+				Error: err.Error(),
+				Code:  shared.ReturnCodeInternalError,
+			},
+		)
+		return
+	}
+
+	c.JSON(
+		http.StatusOK,
+		shared.GenericAPIResponse{
+			Data:  gin.H{"ratings": ratings},
+			Error: "",
+			Code:  shared.ReturnCodeSuccess,
+		},
+	)
+}
+
+// managedKeysCount returns the node's number of managed keys
+func (ng *nodeGroup) managedKeysCount(c *gin.Context) {
+	count := ng.getFacade().GetManagedKeysCount()
+	c.JSON(
+		http.StatusOK,
+		shared.GenericAPIResponse{
+			Data:  gin.H{"count": count},
+			Error: "",
+			Code:  shared.ReturnCodeSuccess,
+		},
+	)
+}
+
+// managedKeys returns all keys managed by the current node
+func (ng *nodeGroup) managedKeys(c *gin.Context) {
+	keys := ng.getFacade().GetManagedKeys()
+	c.JSON(
+		http.StatusOK,
+		shared.GenericAPIResponse{
+			Data:  gin.H{"managedKeys": keys},
+			Error: "",
+			Code:  shared.ReturnCodeSuccess,
+		},
+	)
+}
+
+// loadedKeys returns all keys loaded by the current node
+func (ng *nodeGroup) loadedKeys(c *gin.Context) {
+	keys := ng.getFacade().GetLoadedKeys()
+	c.JSON(
+		http.StatusOK,
+		shared.GenericAPIResponse{
+			Data:  gin.H{"loadedKeys": keys},
+			Error: "",
+			Code:  shared.ReturnCodeSuccess,
+		},
+	)
+}
+
+// managedKeysEligible returns the node's eligible managed keys
+func (ng *nodeGroup) managedKeysEligible(c *gin.Context) {
+	keys, err := ng.getFacade().GetEligibleManagedKeys()
+	if err != nil {
+		shared.RespondWithInternalError(c, errors.ErrGetEligibleManagedKeys, err)
+		return
+	}
+
+	c.JSON(
+		http.StatusOK,
+		shared.GenericAPIResponse{
+			Data:  gin.H{"eligibleKeys": keys},
+			Error: "",
+			Code:  shared.ReturnCodeSuccess,
+		},
+	)
+}
+
+// managedKeysWaiting returns the node's waiting managed keys
+func (ng *nodeGroup) managedKeysWaiting(c *gin.Context) {
+	keys, err := ng.getFacade().GetWaitingManagedKeys()
+	if err != nil {
+		shared.RespondWithInternalError(c, errors.ErrGetWaitingManagedKeys, err)
+		return
+	}
+
+	c.JSON(
+		http.StatusOK,
+		shared.GenericAPIResponse{
+			Data:  gin.H{"waitingKeys": keys},
+			Error: "",
+			Code:  shared.ReturnCodeSuccess,
+		},
+	)
+}
+
+// waitingEpochsLeft returns the number of epochs left for the public key until it becomes eligible
+func (ng *nodeGroup) waitingEpochsLeft(c *gin.Context) {
+	publicKey := c.Param("key")
+	epochsLeft, err := ng.getFacade().GetWaitingEpochsLeftForPublicKey(publicKey)
+	if err != nil {
+		shared.RespondWithInternalError(c, errors.ErrGetWaitingEpochsLeftForPublicKey, err)
+		return
+	}
+
+	shared.RespondWithSuccess(c, gin.H{"epochsLeft": epochsLeft})
 }
 
 func (ng *nodeGroup) getFacade() nodeFacadeHandler {

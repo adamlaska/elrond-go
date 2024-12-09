@@ -4,20 +4,11 @@ import (
 	"errors"
 )
 
-// ErrInvalidShardId signals that the shard id is invalid
-var ErrInvalidShardId = errors.New("invalid shard id")
+// ErrNilNetworkStatisticsProvider signals that a nil network statistics provider was provided
+var ErrNilNetworkStatisticsProvider = errors.New("nil network statistics provider")
 
-// ErrInvalidRoundDuration signals that an invalid round duration was provided
-var ErrInvalidRoundDuration = errors.New("invalid round duration")
+// ErrInvalidRefreshIntervalValue signals that an invalid value for the refresh interval was provided
+var ErrInvalidRefreshIntervalValue = errors.New("invalid refresh interval value")
 
-// ErrNilStatusHandler signals that a nil status handler has been provided
-var ErrNilStatusHandler = errors.New("nil status handler")
-
-// ErrNilInitialTPSBenchmarks signals that nil TPS benchmarks have been provided
-var ErrNilInitialTPSBenchmarks = errors.New("nil initial TPS benchmarks")
-
-// ErrNilConfig signals that a nil config was provided
-var ErrNilConfig = errors.New("nil config")
-
-// ErrNilPathHandler signals that a nil path handler was provided
-var ErrNilPathHandler = errors.New("nil path handler")
+// ErrNilStateStatsHandler signals that a nil state statistics handler was provided
+var ErrNilStateStatsHandler = errors.New("nil state statistics handler")
