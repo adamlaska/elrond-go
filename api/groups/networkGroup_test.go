@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -12,16 +12,16 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ElrondNetwork/elrond-go-core/data/api"
-	apiErrors "github.com/ElrondNetwork/elrond-go/api/errors"
-	"github.com/ElrondNetwork/elrond-go/api/groups"
-	"github.com/ElrondNetwork/elrond-go/api/mock"
-	"github.com/ElrondNetwork/elrond-go/api/shared"
-	"github.com/ElrondNetwork/elrond-go/common"
-	"github.com/ElrondNetwork/elrond-go/config"
-	"github.com/ElrondNetwork/elrond-go/node/external"
-	"github.com/ElrondNetwork/elrond-go/statusHandler"
-	"github.com/ElrondNetwork/elrond-go/testscommon"
+	"github.com/multiversx/mx-chain-core-go/data/api"
+	apiErrors "github.com/multiversx/mx-chain-go/api/errors"
+	"github.com/multiversx/mx-chain-go/api/groups"
+	"github.com/multiversx/mx-chain-go/api/mock"
+	"github.com/multiversx/mx-chain-go/api/shared"
+	"github.com/multiversx/mx-chain-go/common"
+	"github.com/multiversx/mx-chain-go/config"
+	"github.com/multiversx/mx-chain-go/node/external"
+	"github.com/multiversx/mx-chain-go/statusHandler"
+	"github.com/multiversx/mx-chain-go/testscommon"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -62,6 +62,16 @@ type genesisNodesConfigData struct {
 	Nodes groups.GenesisNodesConfig `json:"nodes"`
 }
 
+type genesisBalancesResponse struct {
+	Data  genesisBalancesResponseData `json:"data"`
+	Error string                      `json:"error"`
+	Code  string                      `json:"code"`
+}
+
+type genesisBalancesResponseData struct {
+	Balances []*common.InitialAccountAPI `json:"balances"`
+}
+
 type ratingsConfigResponse struct {
 	Data struct {
 		Config map[string]interface{} `json:"config"`
@@ -70,13 +80,23 @@ type ratingsConfigResponse struct {
 	Code  string `json:"code"`
 }
 
+type gasConfigsResponse struct {
+	Data  gasConfigsData `json:"data"`
+	Error string         `json:"error"`
+	Code  string         `json:"code"`
+}
+
+type gasConfigsData struct {
+	Configs groups.GasConfig `json:"gasConfigs"`
+}
+
 func TestNetworkConfigMetrics_ShouldWork(t *testing.T) {
 	t.Parallel()
 
 	statusMetricsProvider := statusHandler.NewStatusMetrics()
 	key := common.MetricMinGasLimit
-	value := uint64(37)
-	statusMetricsProvider.SetUInt64Value(key, value)
+	val := uint64(37)
+	statusMetricsProvider.SetUInt64Value(key, val)
 
 	facade := mock.FacadeStub{}
 	facade.StatusMetricsHandler = func() external.StatusMetricsHandler {
@@ -92,17 +112,15 @@ func TestNetworkConfigMetrics_ShouldWork(t *testing.T) {
 	resp := httptest.NewRecorder()
 	ws.ServeHTTP(resp, req)
 
-	respBytes, _ := ioutil.ReadAll(resp.Body)
+	respBytes, _ := io.ReadAll(resp.Body)
 	respStr := string(respBytes)
 	assert.Equal(t, resp.Code, http.StatusOK)
 
-	keyAndValueFoundInResponse := strings.Contains(respStr, key) && strings.Contains(respStr, fmt.Sprintf("%d", value))
+	keyAndValueFoundInResponse := strings.Contains(respStr, key) && strings.Contains(respStr, fmt.Sprintf("%d", val))
 	assert.True(t, keyAndValueFoundInResponse)
 }
 
 func TestGetNetworkConfig_ShouldReturnErrorIfFacadeReturnsError(t *testing.T) {
-	expectedErr := errors.New("i am an error")
-
 	facade := mock.FacadeStub{
 		StatusMetricsHandler: func() external.StatusMetricsHandler {
 			return &testscommon.StatusMetricsStub{
@@ -131,8 +149,6 @@ func TestGetNetworkConfig_ShouldReturnErrorIfFacadeReturnsError(t *testing.T) {
 }
 
 func TestGetNetworkStatus_ShouldReturnErrorIfFacadeReturnsError(t *testing.T) {
-	expectedErr := errors.New("i am an error")
-
 	facade := mock.FacadeStub{
 		StatusMetricsHandler: func() external.StatusMetricsHandler {
 			return &testscommon.StatusMetricsStub{
@@ -160,13 +176,73 @@ func TestGetNetworkStatus_ShouldReturnErrorIfFacadeReturnsError(t *testing.T) {
 	assert.Equal(t, expectedErr.Error(), response.Error)
 }
 
+func TestNetworkConfigMetrics_GasLimitGuardedTxShouldWork(t *testing.T) {
+	t.Parallel()
+
+	statusMetricsProvider := statusHandler.NewStatusMetrics()
+	key := common.MetricExtraGasLimitGuardedTx
+	val := uint64(37)
+	statusMetricsProvider.SetUInt64Value(key, val)
+
+	facade := mock.FacadeStub{}
+	facade.StatusMetricsHandler = func() external.StatusMetricsHandler {
+		return statusMetricsProvider
+	}
+
+	networkGroup, err := groups.NewNetworkGroup(&facade)
+	require.NoError(t, err)
+
+	ws := startWebServer(networkGroup, "network", getNetworkRoutesConfig())
+
+	req, _ := http.NewRequest("GET", "/network/config", nil)
+	resp := httptest.NewRecorder()
+	ws.ServeHTTP(resp, req)
+
+	respBytes, _ := io.ReadAll(resp.Body)
+	respStr := string(respBytes)
+	assert.Equal(t, resp.Code, http.StatusOK)
+
+	keyAndValueFoundInResponse := strings.Contains(respStr, key) && strings.Contains(respStr, fmt.Sprintf("%d", val))
+	assert.True(t, keyAndValueFoundInResponse)
+}
+
+func TestNetworkConfigMetrics_GasLimitRelayedTxShouldWork(t *testing.T) {
+	t.Parallel()
+
+	statusMetricsProvider := statusHandler.NewStatusMetrics()
+	key := common.MetricExtraGasLimitRelayedTx
+	val := uint64(123)
+	statusMetricsProvider.SetUInt64Value(key, val)
+
+	facade := mock.FacadeStub{}
+	facade.StatusMetricsHandler = func() external.StatusMetricsHandler {
+		return statusMetricsProvider
+	}
+
+	networkGroup, err := groups.NewNetworkGroup(&facade)
+	require.NoError(t, err)
+
+	ws := startWebServer(networkGroup, "network", getNetworkRoutesConfig())
+
+	req, _ := http.NewRequest("GET", "/network/config", nil)
+	resp := httptest.NewRecorder()
+	ws.ServeHTTP(resp, req)
+
+	respBytes, _ := io.ReadAll(resp.Body)
+	respStr := string(respBytes)
+	assert.Equal(t, resp.Code, http.StatusOK)
+
+	keyAndValueFoundInResponse := strings.Contains(respStr, key) && strings.Contains(respStr, fmt.Sprintf("%d", val))
+	assert.True(t, keyAndValueFoundInResponse)
+}
+
 func TestNetworkStatusMetrics_ShouldWork(t *testing.T) {
 	t.Parallel()
 
 	statusMetricsProvider := statusHandler.NewStatusMetrics()
 	key := common.MetricEpochNumber
-	value := uint64(37)
-	statusMetricsProvider.SetUInt64Value(key, value)
+	val := uint64(37)
+	statusMetricsProvider.SetUInt64Value(key, val)
 
 	facade := mock.FacadeStub{}
 	facade.StatusMetricsHandler = func() external.StatusMetricsHandler {
@@ -182,19 +258,19 @@ func TestNetworkStatusMetrics_ShouldWork(t *testing.T) {
 	resp := httptest.NewRecorder()
 	ws.ServeHTTP(resp, req)
 
-	respBytes, _ := ioutil.ReadAll(resp.Body)
+	respBytes, _ := io.ReadAll(resp.Body)
 	respStr := string(respBytes)
 	assert.Equal(t, resp.Code, http.StatusOK)
 
-	keyAndValueFoundInResponse := strings.Contains(respStr, key) && strings.Contains(respStr, fmt.Sprintf("%d", value))
+	keyAndValueFoundInResponse := strings.Contains(respStr, key) && strings.Contains(respStr, fmt.Sprintf("%d", val))
 	assert.True(t, keyAndValueFoundInResponse)
 }
 
 func TestEconomicsMetrics_ShouldWork(t *testing.T) {
 	statusMetricsProvider := statusHandler.NewStatusMetrics()
 	key := common.MetricTotalSupply
-	value := "12345"
-	statusMetricsProvider.SetStringValue(key, value)
+	val := "12345"
+	statusMetricsProvider.SetStringValue(key, val)
 
 	facade := mock.FacadeStub{
 		GetTotalStakedValueHandler: func() (*api.StakeValues, error) {
@@ -217,17 +293,15 @@ func TestEconomicsMetrics_ShouldWork(t *testing.T) {
 	resp := httptest.NewRecorder()
 	ws.ServeHTTP(resp, req)
 
-	respBytes, _ := ioutil.ReadAll(resp.Body)
+	respBytes, _ := io.ReadAll(resp.Body)
 	respStr := string(respBytes)
 	assert.Equal(t, resp.Code, http.StatusOK)
 
-	keyAndValueFoundInResponse := strings.Contains(respStr, key) && strings.Contains(respStr, value)
+	keyAndValueFoundInResponse := strings.Contains(respStr, key) && strings.Contains(respStr, val)
 	assert.True(t, keyAndValueFoundInResponse)
 }
 
 func TestGetEconomicValues_ShouldReturnErrorIfFacadeReturnsError(t *testing.T) {
-	expectedErr := errors.New("i am an error")
-
 	facade := mock.FacadeStub{
 		StatusMetricsHandler: func() external.StatusMetricsHandler {
 			return &testscommon.StatusMetricsStub{
@@ -261,8 +335,8 @@ func TestGetEconomicValues_ShouldReturnErrorIfFacadeReturnsError(t *testing.T) {
 func TestEconomicsMetrics_CannotGetStakeValues(t *testing.T) {
 	statusMetricsProvider := statusHandler.NewStatusMetrics()
 	key := common.MetricTotalSupply
-	value := "12345"
-	statusMetricsProvider.SetStringValue(key, value)
+	val := "12345"
+	statusMetricsProvider.SetStringValue(key, val)
 
 	localErr := fmt.Errorf("%s", "local error")
 	facade := mock.FacadeStub{
@@ -359,7 +433,7 @@ func TestDirectStakedInfo_ShouldWork(t *testing.T) {
 	resp := httptest.NewRecorder()
 	ws.ServeHTTP(resp, req)
 
-	respBytes, _ := ioutil.ReadAll(resp.Body)
+	respBytes, _ := io.ReadAll(resp.Body)
 	respStr := string(respBytes)
 	assert.Equal(t, resp.Code, http.StatusOK)
 
@@ -389,7 +463,7 @@ func TestDirectStakedInfo_CannotGetDirectStakedList(t *testing.T) {
 	resp := httptest.NewRecorder()
 	ws.ServeHTTP(resp, req)
 
-	respBytes, _ := ioutil.ReadAll(resp.Body)
+	respBytes, _ := io.ReadAll(resp.Body)
 	respStr := string(respBytes)
 
 	assert.Equal(t, resp.Code, http.StatusInternalServerError)
@@ -444,7 +518,7 @@ func TestDelegatedInfo_ShouldWork(t *testing.T) {
 	resp := httptest.NewRecorder()
 	ws.ServeHTTP(resp, req)
 
-	respBytes, _ := ioutil.ReadAll(resp.Body)
+	respBytes, _ := io.ReadAll(resp.Body)
 	respStr := string(respBytes)
 	assert.Equal(t, resp.Code, http.StatusOK)
 
@@ -483,7 +557,7 @@ func TestDelegatedInfo_CannotGetDelegatedList(t *testing.T) {
 	resp := httptest.NewRecorder()
 	ws.ServeHTTP(resp, req)
 
-	respBytes, _ := ioutil.ReadAll(resp.Body)
+	respBytes, _ := io.ReadAll(resp.Body)
 	respStr := string(respBytes)
 
 	assert.Equal(t, resp.Code, http.StatusInternalServerError)
@@ -491,8 +565,6 @@ func TestDelegatedInfo_CannotGetDelegatedList(t *testing.T) {
 }
 
 func TestGetEnableEpochs_ShouldReturnErrorIfFacadeReturnsError(t *testing.T) {
-	expectedErr := errors.New("i am an error")
-
 	facade := mock.FacadeStub{
 		StatusMetricsHandler: func() external.StatusMetricsHandler {
 			return &testscommon.StatusMetricsStub{
@@ -525,8 +597,8 @@ func TestGetEnableEpochs_ShouldWork(t *testing.T) {
 
 	statusMetrics := statusHandler.NewStatusMetrics()
 	key := common.MetricScDeployEnableEpoch
-	value := uint64(4)
-	statusMetrics.SetUInt64Value(key, value)
+	val := uint64(4)
+	statusMetrics.SetUInt64Value(key, val)
 
 	facade := mock.FacadeStub{}
 	facade.StatusMetricsHandler = func() external.StatusMetricsHandler {
@@ -542,18 +614,17 @@ func TestGetEnableEpochs_ShouldWork(t *testing.T) {
 	resp := httptest.NewRecorder()
 	ws.ServeHTTP(resp, req)
 
-	respBytes, _ := ioutil.ReadAll(resp.Body)
+	respBytes, _ := io.ReadAll(resp.Body)
 	respStr := string(respBytes)
 	assert.Equal(t, resp.Code, http.StatusOK)
 
-	keyAndValueFoundInResponse := strings.Contains(respStr, key) && strings.Contains(respStr, strconv.FormatUint(value, 10))
+	keyAndValueFoundInResponse := strings.Contains(respStr, key) && strings.Contains(respStr, strconv.FormatUint(val, 10))
 	assert.True(t, keyAndValueFoundInResponse)
 }
 
 func TestGetESDTTotalSupply_InternalError(t *testing.T) {
 	t.Parallel()
 
-	expectedErr := errors.New("expected error")
 	facade := mock.FacadeStub{
 		GetTokenSupplyCalled: func(token string) (*api.ESDTSupply, error) {
 			return nil, expectedErr
@@ -569,7 +640,7 @@ func TestGetESDTTotalSupply_InternalError(t *testing.T) {
 	resp := httptest.NewRecorder()
 	ws.ServeHTTP(resp, req)
 
-	respBytes, _ := ioutil.ReadAll(resp.Body)
+	respBytes, _ := io.ReadAll(resp.Body)
 	respStr := string(respBytes)
 	assert.Equal(t, resp.Code, http.StatusInternalServerError)
 
@@ -578,8 +649,6 @@ func TestGetESDTTotalSupply_InternalError(t *testing.T) {
 }
 
 func TestGetNetworkRatings_ShouldReturnErrorIfFacadeReturnsError(t *testing.T) {
-	expectedErr := errors.New("i am an error")
-
 	facade := mock.FacadeStub{
 		StatusMetricsHandler: func() external.StatusMetricsHandler {
 			return &testscommon.StatusMetricsStub{
@@ -665,7 +734,7 @@ func TestGetESDTTotalSupply(t *testing.T) {
 	resp := httptest.NewRecorder()
 	ws.ServeHTTP(resp, req)
 
-	respBytes, _ := ioutil.ReadAll(resp.Body)
+	respBytes, _ := io.ReadAll(resp.Body)
 	assert.Equal(t, resp.Code, http.StatusOK)
 
 	respSupply := &supplyResponse{}
@@ -685,7 +754,6 @@ func TestGetGenesisNodes(t *testing.T) {
 	t.Run("facade error, should fail", func(t *testing.T) {
 		t.Parallel()
 
-		expectedErr := errors.New("expected err")
 		facade := mock.FacadeStub{
 			GetGenesisNodesPubKeysCalled: func() (map[uint32][]string, map[uint32][]string, error) {
 				return nil, nil, expectedErr
@@ -723,9 +791,34 @@ func TestGetGenesisNodes(t *testing.T) {
 			Waiting:  waiting,
 		}
 
-		facade := mock.FacadeStub{
+		facade := &mock.FacadeStub{
 			GetGenesisNodesPubKeysCalled: func() (map[uint32][]string, map[uint32][]string, error) {
 				return eligible, waiting, nil
+			},
+		}
+
+		response := &genesisNodesConfigResponse{}
+		loadNetworkGroupResponse(
+			t,
+			facade,
+			"/network/genesis-nodes",
+			"GET",
+			nil,
+			response,
+		)
+		assert.Equal(t, expectedOutput, response.Data.Nodes)
+	})
+}
+
+func TestGetGenesisBalances(t *testing.T) {
+	t.Parallel()
+
+	t.Run("facade error, should fail", func(t *testing.T) {
+		t.Parallel()
+
+		facade := mock.FacadeStub{
+			GetGenesisBalancesCalled: func() ([]*common.InitialAccountAPI, error) {
+				return nil, expectedErr
 			},
 		}
 
@@ -734,17 +827,209 @@ func TestGetGenesisNodes(t *testing.T) {
 
 		ws := startWebServer(networkGroup, "network", getNetworkRoutesConfig())
 
-		req, _ := http.NewRequest("GET", "/network/genesis-nodes", nil)
+		req, _ := http.NewRequest("GET", "/network/genesis-balances", nil)
 		resp := httptest.NewRecorder()
 		ws.ServeHTTP(resp, req)
 
-		assert.Equal(t, resp.Code, http.StatusOK)
+		response := genesisBalancesResponse{}
+		loadResponse(resp.Body, &response)
+
+		assert.Equal(t, http.StatusInternalServerError, resp.Code)
+		assert.True(t, strings.Contains(response.Error, expectedErr.Error()))
+	})
+
+	t.Run("should work", func(t *testing.T) {
+		t.Parallel()
+
+		initialAccounts := []*common.InitialAccountAPI{
+			{
+				Address:      "addr0",
+				StakingValue: "3700000",
+			},
+			{
+				Address:      "addr1",
+				StakingValue: "5700000",
+			},
+		}
+
+		facade := &mock.FacadeStub{
+			GetGenesisBalancesCalled: func() ([]*common.InitialAccountAPI, error) {
+				return initialAccounts, nil
+			},
+		}
+
+		response := &genesisBalancesResponse{}
+		loadNetworkGroupResponse(
+			t,
+			facade,
+			"/network/genesis-balances",
+			"GET",
+			nil,
+			response,
+		)
+		assert.Equal(t, initialAccounts, response.Data.Balances)
+	})
+}
+
+func TestGetGasConfigs(t *testing.T) {
+	t.Parallel()
+
+	t.Run("facade error, should fail", func(t *testing.T) {
+		t.Parallel()
+
+		facade := mock.FacadeStub{
+			GetGasConfigsCalled: func() (map[string]map[string]uint64, error) {
+				return nil, expectedErr
+			},
+		}
+
+		networkGroup, err := groups.NewNetworkGroup(&facade)
+		require.NoError(t, err)
+
+		ws := startWebServer(networkGroup, "network", getNetworkRoutesConfig())
+
+		req, _ := http.NewRequest("GET", "/network/gas-configs", nil)
+		resp := httptest.NewRecorder()
+		ws.ServeHTTP(resp, req)
 
 		response := genesisNodesConfigResponse{}
 		loadResponse(resp.Body, &response)
 
-		assert.Equal(t, expectedOutput, response.Data.Nodes)
+		assert.Equal(t, http.StatusInternalServerError, resp.Code)
+		assert.True(t, strings.Contains(response.Error, expectedErr.Error()))
 	})
+
+	t.Run("should work", func(t *testing.T) {
+		t.Parallel()
+
+		builtInCost := map[string]uint64{
+			"val1": 1,
+		}
+		metaChainSystemSCsCost := map[string]uint64{
+			"val2": 2,
+		}
+		expectedMap := map[string]map[string]uint64{
+			common.BuiltInCost:            builtInCost,
+			common.MetaChainSystemSCsCost: metaChainSystemSCsCost,
+		}
+
+		facade := &mock.FacadeStub{
+			GetGasConfigsCalled: func() (map[string]map[string]uint64, error) {
+				return expectedMap, nil
+			},
+		}
+
+		response := &gasConfigsResponse{}
+		loadNetworkGroupResponse(
+			t,
+			facade,
+			"/network/gas-configs",
+			"GET",
+			nil,
+			response,
+		)
+		assert.Equal(t, builtInCost, response.Data.Configs.BuiltInCost)
+		assert.Equal(t, metaChainSystemSCsCost, response.Data.Configs.MetaChainSystemSCsCost)
+	})
+}
+
+func TestNetworkGroup_UpdateFacade(t *testing.T) {
+	t.Parallel()
+
+	t.Run("nil facade should error", func(t *testing.T) {
+		t.Parallel()
+
+		networkGroup, err := groups.NewNetworkGroup(&mock.FacadeStub{})
+		require.NoError(t, err)
+
+		err = networkGroup.UpdateFacade(nil)
+		require.Equal(t, apiErrors.ErrNilFacadeHandler, err)
+	})
+	t.Run("cast failure should error", func(t *testing.T) {
+		t.Parallel()
+
+		networkGroup, err := groups.NewNetworkGroup(&mock.FacadeStub{})
+		require.NoError(t, err)
+
+		err = networkGroup.UpdateFacade("this is not a facade handler")
+		require.True(t, errors.Is(err, apiErrors.ErrFacadeWrongTypeAssertion))
+	})
+	t.Run("should work", func(t *testing.T) {
+		t.Parallel()
+
+		builtInCost := map[string]uint64{
+			"val1": 1,
+		}
+		expectedMap := map[string]map[string]uint64{
+			common.BuiltInCost: builtInCost,
+		}
+		facade := mock.FacadeStub{
+			GetGasConfigsCalled: func() (map[string]map[string]uint64, error) {
+				return expectedMap, nil
+			},
+		}
+		networkGroup, err := groups.NewNetworkGroup(&facade)
+		require.NoError(t, err)
+
+		ws := startWebServer(networkGroup, "network", getNetworkRoutesConfig())
+
+		req, _ := http.NewRequest("GET", "/network/gas-configs", nil)
+		resp := httptest.NewRecorder()
+		ws.ServeHTTP(resp, req)
+
+		assert.Equal(t, resp.Code, http.StatusOK)
+		response := gasConfigsResponse{}
+		loadResponse(resp.Body, &response)
+		assert.Equal(t, builtInCost, response.Data.Configs.BuiltInCost)
+
+		newFacade := mock.FacadeStub{
+			GetGasConfigsCalled: func() (map[string]map[string]uint64, error) {
+				return nil, expectedErr
+			},
+		}
+		err = networkGroup.UpdateFacade(&newFacade)
+		require.NoError(t, err)
+
+		req, _ = http.NewRequest("GET", "/network/gas-configs", nil)
+		resp = httptest.NewRecorder()
+		ws.ServeHTTP(resp, req)
+
+		loadResponse(resp.Body, &response)
+		assert.Equal(t, http.StatusInternalServerError, resp.Code)
+		assert.True(t, strings.Contains(response.Error, expectedErr.Error()))
+	})
+}
+
+func TestNetworkGroup_IsInterfaceNil(t *testing.T) {
+	t.Parallel()
+
+	networkGroup, _ := groups.NewNetworkGroup(nil)
+	require.True(t, networkGroup.IsInterfaceNil())
+
+	networkGroup, _ = groups.NewNetworkGroup(&mock.FacadeStub{})
+	require.False(t, networkGroup.IsInterfaceNil())
+}
+
+func loadNetworkGroupResponse(
+	t *testing.T,
+	facade shared.FacadeHandler,
+	url string,
+	method string,
+	body io.Reader,
+	destination interface{},
+) {
+	networkGroup, err := groups.NewNetworkGroup(facade)
+	require.NoError(t, err)
+
+	ws := startWebServer(networkGroup, "network", getNetworkRoutesConfig())
+
+	req, _ := http.NewRequest(method, url, body)
+	resp := httptest.NewRecorder()
+	ws.ServeHTTP(resp, req)
+
+	assert.Equal(t, http.StatusOK, resp.Code)
+
+	loadResponse(resp.Body, destination)
 }
 
 func getNetworkRoutesConfig() config.ApiRoutesConfig {
@@ -762,7 +1047,9 @@ func getNetworkRoutesConfig() config.ApiRoutesConfig {
 					{Name: "/delegated-info", Open: true},
 					{Name: "/esdt/supply/:token", Open: true},
 					{Name: "/genesis-nodes", Open: true},
+					{Name: "/genesis-balances", Open: true},
 					{Name: "/ratings", Open: true},
+					{Name: "/gas-configs", Open: true},
 				},
 			},
 		},

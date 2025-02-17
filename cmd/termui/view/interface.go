@@ -1,5 +1,7 @@
 package view
 
+import "github.com/multiversx/mx-chain-core-go/core"
+
 // Presenter defines the methods that return information about node
 type Presenter interface {
 	GetAppVersion() string
@@ -8,6 +10,7 @@ type Presenter interface {
 	GetRedundancyLevel() int64
 	GetRedundancyIsMainActive() string
 	GetShardId() uint64
+	GetChainID() string
 	GetNodeType() string
 	GetPeerType() string
 	GetPeerSubType() string
@@ -24,6 +27,7 @@ type Presenter interface {
 	GetLiveValidatorNodes() uint64
 	GetConnectedNodes() uint64
 	GetNumConnectedPeers() uint64
+	GetIntraShardValidators() uint64
 	GetCurrentRound() uint64
 	GetNumTxInBlock() uint64
 	GetNumMiniBlocks() uint64
@@ -56,6 +60,10 @@ type Presenter interface {
 
 	GetNetworkSentBytesInEpoch() uint64
 	GetNetworkReceivedBytesInEpoch() uint64
+
+	GetTrieSyncNumProcessedNodes() uint64
+	GetTrieSyncNumBytesReceived() uint64
+	GetTrieSyncProcessedPercentage() core.OptionalUint64
 
 	InvalidateCache()
 	IsInterfaceNil() bool

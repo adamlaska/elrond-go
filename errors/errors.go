@@ -1,6 +1,8 @@
 package errors
 
-import "errors"
+import (
+	"errors"
+)
 
 // ErrAccountsAdapterCreation signals that the accounts adapter cannot be created based on provided data
 var ErrAccountsAdapterCreation = errors.New("error creating accounts adapter")
@@ -68,6 +70,9 @@ var ErrNilBlockProcessor = errors.New("block processor is nil")
 // ErrNilBlockSigner signals the nil block signer was provided
 var ErrNilBlockSigner = errors.New("nil block signer")
 
+// ErrNilP2pSigner signals the nil p2p signer was provided
+var ErrNilP2pSigner = errors.New("nil p2p single signer")
+
 // ErrNilBlockSignKeyGen is raised when a valid block sign key generator is expected but nil used
 var ErrNilBlockSignKeyGen = errors.New("block sign key generator is nil")
 
@@ -76,6 +81,9 @@ var ErrNilBlockTracker = errors.New("trying to set nil block tracker")
 
 // ErrNilBootStorer signals that the provided boot storer is nil
 var ErrNilBootStorer = errors.New("nil boot storer")
+
+// ErrNilBootstrapComponents signals that the provided instance of bootstrap components is nil
+var ErrNilBootstrapComponents = errors.New("nil bootstrap components")
 
 // ErrNilBootstrapComponentsHolder signals that the provided bootstrap components holder is nil
 var ErrNilBootstrapComponentsHolder = errors.New("nil bootstrap components holder")
@@ -95,8 +103,8 @@ var ErrNilCoreComponentsFactory = errors.New("nil core components factory")
 // ErrNilDataComponentsFactory signals that the provided data components factory is nil
 var ErrNilDataComponentsFactory = errors.New("nil data components factory")
 
-// ErrNilHeartbeatComponentsFactory signals that the provided heartbeat components factory is nil
-var ErrNilHeartbeatComponentsFactory = errors.New("nil heartbeat components factory")
+// ErrNilHeartbeatV2ComponentsFactory signals that the provided heartbeatV2 components factory is nil
+var ErrNilHeartbeatV2ComponentsFactory = errors.New("nil heartbeatV2 components factory")
 
 // ErrNilNetworkComponentsFactory signals that the provided network components factory is nil
 var ErrNilNetworkComponentsFactory = errors.New("nil network components factory")
@@ -109,6 +117,9 @@ var ErrNilStateComponentsFactory = errors.New("nil state components factory")
 
 // ErrNilStatusComponentsFactory signals that the provided status components factory is nil
 var ErrNilStatusComponentsFactory = errors.New("nil status components factory")
+
+// ErrNilStatusCoreComponentsFactory signals that an operation has been attempted with nil status core components factory
+var ErrNilStatusCoreComponentsFactory = errors.New("nil status core components factory provided")
 
 // ErrNilBootstrapParamsHandler signals that the provided bootstrap parameters handler is nil
 var ErrNilBootstrapParamsHandler = errors.New("nil bootstrap parameters handler")
@@ -127,6 +138,9 @@ var ErrNilConsensusWorker = errors.New("nil consensus worker")
 
 // ErrNilCoreComponents signals that an operation has been attempted with nil core components
 var ErrNilCoreComponents = errors.New("nil core components provided")
+
+// ErrNilStatusCoreComponents signals that an operation has been attempted with nil status core components
+var ErrNilStatusCoreComponents = errors.New("nil status core components provided")
 
 // ErrNilCoreComponentsHolder signals that a nil core components holder was provided
 var ErrNilCoreComponentsHolder = errors.New("nil core components holder")
@@ -188,20 +202,11 @@ var ErrNilHeaderIntegrityVerifier = errors.New("nil header integrity verifier")
 // ErrNilHeaderSigVerifier signals that a nil header sig verifier has been provided
 var ErrNilHeaderSigVerifier = errors.New("")
 
-// ErrNilHeartbeatComponents signals that a nil heartbeat components instance was provided
-var ErrNilHeartbeatComponents = errors.New("nil heartbeat component")
+// ErrNilHeartbeatV2Components signals that a nil heartbeatV2 components instance was provided
+var ErrNilHeartbeatV2Components = errors.New("nil heartbeatV2 component")
 
-// ErrNilHeartbeatMessageHandler signals that a nil heartbeat message handler was provided
-var ErrNilHeartbeatMessageHandler = errors.New("nil heartbeat message handler")
-
-// ErrNilHeartbeatMonitor signals that a nil heartbeat monitor was provided
-var ErrNilHeartbeatMonitor = errors.New("nil heartbeat monitor")
-
-// ErrNilHeartbeatSender signals that a nil heartbeat sender was provided
-var ErrNilHeartbeatSender = errors.New("nil heartbeat sender")
-
-// ErrNilHeartbeatStorer signals that a nil heartbeat storer was provided
-var ErrNilHeartbeatStorer = errors.New("nil heartbeat storer")
+// ErrNilHeartbeatV2Sender signals that a nil heartbeatV2 sender was provided
+var ErrNilHeartbeatV2Sender = errors.New("nil heartbeatV2 sender")
 
 // ErrNilInputAntiFloodHandler signals that a nil input antiflood handler was provided
 var ErrNilInputAntiFloodHandler = errors.New("nil input antiflood handler")
@@ -272,8 +277,11 @@ var ErrNilPendingMiniBlocksHandler = errors.New("nil pending miniBlocks handler"
 // ErrNilPoolsHolder signals that a nil pools holder was provided
 var ErrNilPoolsHolder = errors.New("nil pools holder")
 
-// ErrNilPrivateKey signals that a nil provate key was provided
+// ErrNilPrivateKey signals that a nil private key was provided
 var ErrNilPrivateKey = errors.New("nil private key")
+
+// ErrNilP2pPrivateKey signals that a nil p2p private key was provided
+var ErrNilP2pPrivateKey = errors.New("nil p2p private key")
 
 // ErrNilProcessComponents signals that a nil process components instance was provided
 var ErrNilProcessComponents = errors.New("nil process components")
@@ -287,32 +295,32 @@ var ErrNilPubKeyConverter = errors.New("nil public key converter")
 // ErrNilPublicKey signals that a nil public key was provided
 var ErrNilPublicKey = errors.New("nil public key")
 
+// ErrNilP2pPublicKey signals that a nil p2p public key was provided
+var ErrNilP2pPublicKey = errors.New("nil p2p public key")
+
 // ErrNilRater signals that a nil rater was provided
 var ErrNilRater = errors.New("nil rater")
-
-// ErrNilRatingData signals that nil rating data were provided
-var ErrNilRatingData = errors.New("nil rating data")
 
 // ErrNilRatingsInfoHandler signals that nil ratings data information was provided
 var ErrNilRatingsInfoHandler = errors.New("nil ratings info handler")
 
-// ErrNilRequestedItemHandler signals that a nil requested items handler was provided
-var ErrNilRequestedItemHandler = errors.New("nil requested item handler")
-
 // ErrNilRequestHandler signals that a nil request handler was provided
 var ErrNilRequestHandler = errors.New("nil request handler")
 
-// ErrNilResolversFinder signals that a nil resolver finder was provided
-var ErrNilResolversFinder = errors.New("nil resolvers finder")
+// ErrNilRequestersFinder signals that a nil requesters finder was provided
+var ErrNilRequestersFinder = errors.New("nil requesters finder")
+
+// ErrNilResolversContainer signals that a nil resolvers container was provided
+var ErrNilResolversContainer = errors.New("nil resolvers container")
+
+// ErrNilRoundNotifier signals that a nil round notifier has been provided
+var ErrNilRoundNotifier = errors.New("nil round notifier")
 
 // ErrNilRoundHandler signals that a nil roundHandler was provided
 var ErrNilRoundHandler = errors.New("nil roundHandler")
 
 // ErrNilShardCoordinator signals that a nil shard coordinator was provided
 var ErrNilShardCoordinator = errors.New("nil shard coordinator provided")
-
-// ErrNilSmartContractParser signals that a nil smart contract parser was provided
-var ErrNilSmartContractParser = errors.New("nil smart contract parser")
 
 // ErrNilSoftwareVersion signals that a nil software version was provided
 var ErrNilSoftwareVersion = errors.New("nil software version")
@@ -365,6 +373,9 @@ var ErrNilTxSigner = errors.New("nil transaction signer")
 // ErrNilTxSignKeyGen signals that a nil transaction signer key generator was provided
 var ErrNilTxSignKeyGen = errors.New("nil transaction signing key generator")
 
+// ErrNilP2pKeyGen signals that a nil p2p key generator was provided
+var ErrNilP2pKeyGen = errors.New("nil p2p key generator")
+
 // ErrNilTxSignMarshalizer signals that a nil transaction sign marshalizer was provided
 var ErrNilTxSignMarshalizer = errors.New("nil transaction marshalizer")
 
@@ -385,12 +396,6 @@ var ErrNilVmMarshalizer = errors.New("nil vm marshalizer")
 
 // ErrNilWatchdog signals that a nil watchdog was provided
 var ErrNilWatchdog = errors.New("nil watchdog")
-
-// ErrNilWhiteListHandler signals that a nil whitelist handler was provided
-var ErrNilWhiteListHandler = errors.New("nil white list handler")
-
-// ErrNilWhiteListVerifiedTxs signals that a nil whitelist for verified transactions was prvovided
-var ErrNilWhiteListVerifiedTxs = errors.New("nil white list verified txs")
 
 // ErrPollingFunctionRegistration signals an error while registering the polling function registration
 var ErrPollingFunctionRegistration = errors.New("cannot register handler func for num of connected peers")
@@ -416,14 +421,14 @@ var ErrConsensusComponentsFactoryCreate = errors.New("consensusComponentsFactory
 // ErrCoreComponentsFactoryCreate signals that an error occured on coreComponentsFactory create
 var ErrCoreComponentsFactoryCreate = errors.New("coreComponentsFactory create failed")
 
+// ErrStatusCoreComponentsFactoryCreate signals that an error occured on statusCoreComponentsFactory create
+var ErrStatusCoreComponentsFactoryCreate = errors.New("statusCoreComponentsFactory create failed")
+
 // ErrCryptoComponentsFactoryCreate signals that an error occured on cryptoComponentsFactory create
 var ErrCryptoComponentsFactoryCreate = errors.New("cryptoComponentsFactory create failed")
 
 // ErrDataComponentsFactoryCreate signals that an error occured on dataComponentsFactory create
 var ErrDataComponentsFactoryCreate = errors.New("dataComponentsFactory create failed")
-
-// ErrHeartbeatComponentsFactoryCreate signals that an error occured on heartbeatComponentsFactory create
-var ErrHeartbeatComponentsFactoryCreate = errors.New("heartbeatComponentsFactory create failed")
 
 // ErrNetworkComponentsFactoryCreate signals that an error occured on networkComponentsFactory create
 var ErrNetworkComponentsFactoryCreate = errors.New("networkComponentsFactory create failed")
@@ -458,11 +463,138 @@ var ErrNilScheduledTxsExecutionHandler = errors.New("nil scheduled transactions 
 // ErrNilScheduledProcessor signals that a nil scheduled processor was provided
 var ErrNilScheduledProcessor = errors.New("nil scheduled processor")
 
-// ErrContextClosing signals that the parent context requested the closing of its children
-var ErrContextClosing = errors.New("context closing")
-
 // ErrNilTxsSender signals that a nil transactions sender has been provided
 var ErrNilTxsSender = errors.New("nil transactions sender has been provided")
 
 // ErrNilProcessStatusHandler signals that a nil process status handler was provided
 var ErrNilProcessStatusHandler = errors.New("nil process status handler")
+
+// ErrNilESDTDataStorage signals that a nil esdt data storage has been provided
+var ErrNilESDTDataStorage = errors.New("nil esdt data storage")
+
+// ErrNilEnableEpochsHandler signals that a nil enable epochs handler was provided
+var ErrNilEnableEpochsHandler = errors.New("nil enable epochs handler")
+
+// ErrSignerNotSupported signals that a not supported signer was provided
+var ErrSignerNotSupported = errors.New("signer not supported")
+
+// ErrMissingMultiSignerConfig signals that the multisigner config is missing
+var ErrMissingMultiSignerConfig = errors.New("multisigner configuration missing")
+
+// ErrMissingMultiSigner signals that there is no multisigner instance available
+var ErrMissingMultiSigner = errors.New("multisigner instance missing")
+
+// ErrMissingEpochZeroMultiSignerConfig signals that the multisigner config for epoch zero is missing
+var ErrMissingEpochZeroMultiSignerConfig = errors.New("multisigner configuration missing for epoch zero")
+
+// ErrNilMultiSignerContainer signals that the multisigner container is nil
+var ErrNilMultiSignerContainer = errors.New("multisigner container is nil")
+
+// ErrNilCacher signals that a nil cacher has been provided
+var ErrNilCacher = errors.New("nil cacher")
+
+// ErrNilSingleSigner is raised when a valid singleSigner is expected but nil used
+var ErrNilSingleSigner = errors.New("singleSigner is nil")
+
+// ErrPIDMismatch signals that the pid from the message is different from the cached pid associated to a certain pk
+var ErrPIDMismatch = errors.New("pid mismatch")
+
+// ErrSignatureMismatch signals that the signature from the message is different from the cached signature associated to a certain pk
+var ErrSignatureMismatch = errors.New("signature mismatch")
+
+// ErrInvalidPID signals that given PID is invalid
+var ErrInvalidPID = errors.New("invalid PID")
+
+// ErrInvalidSignature signals that the given signature is invalid
+var ErrInvalidSignature = errors.New("invalid signature")
+
+// ErrInvalidHeartbeatV2Config signals that an invalid heartbeat v2 configuration has been provided
+var ErrInvalidHeartbeatV2Config = errors.New("invalid heartbeat v2 configuration")
+
+// ErrNilNetworkStatistics signals that a nil network statistics was provided
+var ErrNilNetworkStatistics = errors.New("nil network statistics")
+
+// ErrNilResourceMonitor signals that a nil resource monitor was provided
+var ErrNilResourceMonitor = errors.New("nil resource monitor")
+
+// ErrNilTrieSyncStatistics signals that a nil trie sync statistics was provided
+var ErrNilTrieSyncStatistics = errors.New("nil trie sync statistics")
+
+// ErrNilAppStatusHandler signals that a nil app status handler was provided
+var ErrNilAppStatusHandler = errors.New("nil app status handler")
+
+// ErrNilStatusMetrics signals that a nil status metrics was provided
+var ErrNilStatusMetrics = errors.New("nil status metrics")
+
+// ErrNilPersistentHandler signals that a nil persistent handler was provided
+var ErrNilPersistentHandler = errors.New("nil persistent handler")
+
+// ErrNilGenesisNodesSetupHandler signals that a nil genesis nodes setup handler has been provided
+var ErrNilGenesisNodesSetupHandler = errors.New("nil genesis nodes setup handler")
+
+// ErrNilManagedPeersHolder signals that a nil managed peers holder has been provided
+var ErrNilManagedPeersHolder = errors.New("nil managed peers holder")
+
+// ErrNilManagedPeersMonitor signals that a nil managed peers monitor has been provided
+var ErrNilManagedPeersMonitor = errors.New("nil managed peers monitor")
+
+// ErrNilPeersRatingHandler signals that a nil peers rating handler implementation has been provided
+var ErrNilPeersRatingHandler = errors.New("nil peers rating handler")
+
+// ErrNilPeersRatingMonitor signals that a nil peers rating monitor implementation has been provided
+var ErrNilPeersRatingMonitor = errors.New("nil peers rating monitor")
+
+// ErrNilLogger signals that a nil logger instance has been provided
+var ErrNilLogger = errors.New("nil logger")
+
+// ErrNilShuffleOutCloser signals that a nil shuffle out closer has been provided
+var ErrNilShuffleOutCloser = errors.New("nil shuffle out closer")
+
+// ErrNilHistoryRepository signals that history processor is nil
+var ErrNilHistoryRepository = errors.New("history repository is nil")
+
+// ErrNilMissingTrieNodesNotifier signals that a nil missing trie nodes notifier was provided
+var ErrNilMissingTrieNodesNotifier = errors.New("nil missing trie nodes notifier")
+
+// ErrInvalidTrieNodeVersion signals that an invalid trie node version has been provided
+var ErrInvalidTrieNodeVersion = errors.New("invalid trie node version")
+
+// ErrNilTrieMigrator signals that a nil trie migrator has been provided
+var ErrNilTrieMigrator = errors.New("nil trie migrator")
+
+// ErrNilAddress defines the error when trying to work with a nil address
+var ErrNilAddress = errors.New("nil address")
+
+// ErrInsufficientFunds signals the funds are insufficient for the move balance operation but the
+// transaction fee is covered by the current balance
+var ErrInsufficientFunds = errors.New("insufficient funds")
+
+// ErrOperationNotPermitted signals that operation is not permitted
+var ErrOperationNotPermitted = errors.New("operation in account not permitted")
+
+// ErrInvalidAddressLength signals that address length is invalid
+var ErrInvalidAddressLength = errors.New("invalid address length")
+
+// ErrNilTrackableDataTrie signals that a nil trackable data trie has been provided
+var ErrNilTrackableDataTrie = errors.New("nil trackable data trie")
+
+// ErrNilTrieLeafParser signals that a nil trie leaf parser has been provided
+var ErrNilTrieLeafParser = errors.New("nil trie leaf parser")
+
+// ErrNilTrie signals that a trie is nil and no operation can be made
+var ErrNilTrie = errors.New("trie is nil")
+
+// ErrNilBLSPublicKey signals that the provided BLS public key is nil
+var ErrNilBLSPublicKey = errors.New("bls public key is nil")
+
+// ErrEmptyAddress defines the error when trying to work with an empty address
+var ErrEmptyAddress = errors.New("empty Address")
+
+// ErrInvalidNodeOperationMode signals that an invalid node operation mode has been provided
+var ErrInvalidNodeOperationMode = errors.New("invalid node operation mode")
+
+// ErrNilSentSignatureTracker defines the error for setting a nil SentSignatureTracker
+var ErrNilSentSignatureTracker = errors.New("nil sent signature tracker")
+
+// ErrNilEpochSystemSCProcessor defines the error for setting a nil EpochSystemSCProcessor
+var ErrNilEpochSystemSCProcessor = errors.New("nil epoch system SC processor")

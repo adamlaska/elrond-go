@@ -1,20 +1,14 @@
-//go:build !race
-// +build !race
-
-// TODO remove build condition above to allow -race -short, after Arwen fix
-
 package multiShard
 
 import (
 	"math/big"
 	"testing"
 
-	"github.com/ElrondNetwork/elrond-go-core/data/block"
-	"github.com/ElrondNetwork/elrond-go-core/data/transaction"
-	"github.com/ElrondNetwork/elrond-go/config"
-	"github.com/ElrondNetwork/elrond-go/integrationTests/vm"
-	"github.com/ElrondNetwork/elrond-go/integrationTests/vm/txsFee/utils"
-	vmcommon "github.com/ElrondNetwork/elrond-vm-common"
+	"github.com/multiversx/mx-chain-go/config"
+	"github.com/multiversx/mx-chain-go/integrationTests"
+	"github.com/multiversx/mx-chain-go/integrationTests/vm"
+	"github.com/multiversx/mx-chain-go/integrationTests/vm/txsFee/utils"
+	vmcommon "github.com/multiversx/mx-chain-vm-common-go"
 	"github.com/stretchr/testify/require"
 )
 
@@ -29,20 +23,28 @@ import (
 // 4. Execute SCR with the smart contract call on shard 1
 // 5. Execute SCR with refund on relayer shard (shard 2)
 func TestRelayedTxScCallMultiShardShouldWork(t *testing.T) {
-	testContextRelayer, err := vm.CreatePreparedTxProcessorWithVMsMultiShard(2, config.EnableEpochs{})
+	if testing.Short() {
+		t.Skip("this is not a short test")
+	}
+
+	enableEpochs := config.EnableEpochs{
+		DynamicGasCostForDataTrieStorageLoadEnableEpoch: integrationTests.UnreachableEpoch,
+	}
+
+	testContextRelayer, err := vm.CreatePreparedTxProcessorWithVMsMultiShard(2, enableEpochs, 1)
 	require.Nil(t, err)
 	defer testContextRelayer.Close()
 
-	testContextInnerSource, err := vm.CreatePreparedTxProcessorWithVMsMultiShard(0, config.EnableEpochs{})
+	testContextInnerSource, err := vm.CreatePreparedTxProcessorWithVMsMultiShard(0, enableEpochs, 1)
 	require.Nil(t, err)
 	defer testContextInnerSource.Close()
 
-	testContextInnerDst, err := vm.CreatePreparedTxProcessorWithVMsMultiShard(1, config.EnableEpochs{})
+	testContextInnerDst, err := vm.CreatePreparedTxProcessorWithVMsMultiShard(1, enableEpochs, 1)
 	require.Nil(t, err)
 	defer testContextInnerDst.Close()
 
-	pathToContract := "../../arwen/testdata/counter/output/counter.wasm"
-	scAddr, owner := utils.DoDeploy(t, testContextInnerDst, pathToContract)
+	pathToContract := "../../wasm/testdata/counter/output/counter_old.wasm"
+	scAddr, owner := utils.DoDeployOldCounter(t, testContextInnerDst, pathToContract)
 	testContextInnerDst.TxFeeHandler.CreateBlockStarted(getZeroGasAndFees())
 	utils.CleanAccumulatedIntermediateTransactions(t, testContextInnerDst)
 
@@ -56,14 +58,14 @@ func TestRelayedTxScCallMultiShardShouldWork(t *testing.T) {
 	require.Equal(t, uint32(2), testContextInnerDst.ShardCoordinator.ComputeId(relayerAddr))
 
 	gasPrice := uint64(10)
-	gasLimit := uint64(500)
+	gasLimit := uint64(50000)
 
 	innerTx := vm.CreateTransaction(0, big.NewInt(0), sndAddr, scAddr, gasPrice, gasLimit, []byte("increment"))
-	rtxData := utils.PrepareRelayerTxData(innerTx)
+	rtxData := integrationTests.PrepareRelayedTxDataV1(innerTx)
 	rTxGasLimit := 1 + gasLimit + uint64(len(rtxData))
 	rtx := vm.CreateTransaction(0, innerTx.Value, relayerAddr, sndAddr, gasPrice, rTxGasLimit, rtxData)
 
-	_, _ = vm.CreateAccount(testContextRelayer.Accounts, relayerAddr, 0, big.NewInt(10000))
+	_, _ = vm.CreateAccount(testContextRelayer.Accounts, relayerAddr, 0, big.NewInt(10000000))
 
 	// execute on relayer shard
 	retCode, err := testContextRelayer.TxProcessor.ProcessTransaction(rtx)
@@ -73,24 +75,15 @@ func TestRelayedTxScCallMultiShardShouldWork(t *testing.T) {
 	_, err = testContextRelayer.Accounts.Commit()
 	require.Nil(t, err)
 
-	expectedBalance := big.NewInt(3130)
+	expectedBalance := big.NewInt(9498110)
 	utils.TestAccount(t, testContextRelayer.Accounts, relayerAddr, 1, expectedBalance)
 
 	// check accumulated fees
 	accumulatedFees := testContextRelayer.TxFeeHandler.GetAccumulatedFees()
-	require.Equal(t, big.NewInt(1870), accumulatedFees)
+	require.Equal(t, big.NewInt(1890), accumulatedFees)
 
 	developerFees := testContextRelayer.TxFeeHandler.GetDeveloperFees()
 	require.Equal(t, big.NewInt(0), developerFees)
-
-	intermediateTxs := testContextRelayer.GetIntermediateTransactions(t)
-	testIndexer := vm.CreateTestIndexer(t, testContextRelayer.ShardCoordinator, testContextRelayer.EconomicsData, false, testContextRelayer.TxsLogsProcessor)
-	testIndexer.SaveTransaction(rtx, block.TxBlock, intermediateTxs)
-
-	indexerTx := testIndexer.GetIndexerPreparedTransaction(t)
-	require.Equal(t, uint64(187), indexerTx.GasUsed)
-	require.Equal(t, "1870", indexerTx.Fee)
-	require.Equal(t, transaction.TxStatusPending.String(), indexerTx.Status)
 
 	// execute on inner tx sender
 	retCode, err = testContextInnerSource.TxProcessor.ProcessTransaction(rtx)
@@ -112,15 +105,6 @@ func TestRelayedTxScCallMultiShardShouldWork(t *testing.T) {
 	require.Equal(t, big.NewInt(0), developerFees)
 
 	txs := testContextInnerSource.GetIntermediateTransactions(t)
-
-	testIndexer = vm.CreateTestIndexer(t, testContextInnerSource.ShardCoordinator, testContextInnerSource.EconomicsData, true, testContextInnerSource.TxsLogsProcessor)
-	testIndexer.SaveTransaction(rtx, block.TxBlock, txs)
-
-	indexerTx = testIndexer.GetIndexerPreparedTransaction(t)
-	require.Equal(t, rtx.GasLimit, indexerTx.GasUsed)
-	require.Equal(t, "6870", indexerTx.Fee)
-	require.Equal(t, transaction.TxStatusSuccess.String(), indexerTx.Status)
-
 	scr := txs[0]
 
 	// execute on inner tx receiver ( shard with contract )
@@ -131,41 +115,45 @@ func TestRelayedTxScCallMultiShardShouldWork(t *testing.T) {
 
 	// check accumulated fees dest
 	accumulatedFees = testContextInnerDst.TxFeeHandler.GetAccumulatedFees()
-	require.Equal(t, big.NewInt(3770), accumulatedFees)
+	require.Equal(t, big.NewInt(156630), accumulatedFees)
 
 	developerFees = testContextInnerDst.TxFeeHandler.GetDeveloperFees()
-	require.Equal(t, big.NewInt(377), developerFees)
+	require.Equal(t, big.NewInt(15663), developerFees)
 
 	txs = testContextInnerDst.GetIntermediateTransactions(t)
 	scr = txs[0]
 
 	utils.ProcessSCRResult(t, testContextRelayer, scr, vmcommon.Ok, nil)
-	expectedBalance = big.NewInt(4260)
+	expectedBalance = big.NewInt(9841380)
 	utils.TestAccount(t, testContextRelayer.Accounts, relayerAddr, 1, expectedBalance)
 
 	// check accumulated fees
 	accumulatedFees = testContextRelayer.TxFeeHandler.GetAccumulatedFees()
-	require.Equal(t, big.NewInt(1870), accumulatedFees)
+	require.Equal(t, big.NewInt(1890), accumulatedFees)
 
 	developerFees = testContextRelayer.TxFeeHandler.GetDeveloperFees()
 	require.Equal(t, big.NewInt(0), developerFees)
 }
 
 func TestRelayedTxScCallMultiShardFailOnInnerTxDst(t *testing.T) {
-	testContextRelayer, err := vm.CreatePreparedTxProcessorWithVMsMultiShard(2, config.EnableEpochs{})
+	if testing.Short() {
+		t.Skip("this is not a short test")
+	}
+
+	testContextRelayer, err := vm.CreatePreparedTxProcessorWithVMsMultiShard(2, config.EnableEpochs{}, 1)
 	require.Nil(t, err)
 	defer testContextRelayer.Close()
 
-	testContextInnerSource, err := vm.CreatePreparedTxProcessorWithVMsMultiShard(0, config.EnableEpochs{})
+	testContextInnerSource, err := vm.CreatePreparedTxProcessorWithVMsMultiShard(0, config.EnableEpochs{}, 1)
 	require.Nil(t, err)
 	defer testContextInnerSource.Close()
 
-	testContextInnerDst, err := vm.CreatePreparedTxProcessorWithVMsMultiShard(1, config.EnableEpochs{})
+	testContextInnerDst, err := vm.CreatePreparedTxProcessorWithVMsMultiShard(1, config.EnableEpochs{}, 1)
 	require.Nil(t, err)
 	defer testContextInnerDst.Close()
 
-	pathToContract := "../../arwen/testdata/counter/output/counter.wasm"
-	scAddr, owner := utils.DoDeploy(t, testContextInnerDst, pathToContract)
+	pathToContract := "../../wasm/testdata/counter/output/counter_old.wasm"
+	scAddr, owner := utils.DoDeployOldCounter(t, testContextInnerDst, pathToContract)
 	testContextInnerDst.TxFeeHandler.CreateBlockStarted(getZeroGasAndFees())
 	utils.CleanAccumulatedIntermediateTransactions(t, testContextInnerDst)
 
@@ -182,7 +170,7 @@ func TestRelayedTxScCallMultiShardFailOnInnerTxDst(t *testing.T) {
 	gasLimit := uint64(500)
 
 	innerTx := vm.CreateTransaction(0, big.NewInt(0), sndAddr, scAddr, gasPrice, gasLimit, []byte("incremeno"))
-	rtxData := utils.PrepareRelayerTxData(innerTx)
+	rtxData := integrationTests.PrepareRelayedTxDataV1(innerTx)
 	rTxGasLimit := 1 + gasLimit + uint64(len(rtxData))
 	rtx := vm.CreateTransaction(0, innerTx.Value, relayerAddr, sndAddr, gasPrice, rTxGasLimit, rtxData)
 
@@ -206,15 +194,6 @@ func TestRelayedTxScCallMultiShardFailOnInnerTxDst(t *testing.T) {
 	developerFees := testContextRelayer.TxFeeHandler.GetDeveloperFees()
 	require.Equal(t, big.NewInt(0), developerFees)
 
-	intermediateTxs := testContextRelayer.GetIntermediateTransactions(t)
-	testIndexer := vm.CreateTestIndexer(t, testContextRelayer.ShardCoordinator, testContextRelayer.EconomicsData, false, testContextRelayer.TxsLogsProcessor)
-	testIndexer.SaveTransaction(rtx, block.TxBlock, intermediateTxs)
-
-	indexerTx := testIndexer.GetIndexerPreparedTransaction(t)
-	require.Equal(t, uint64(187), indexerTx.GasUsed)
-	require.Equal(t, "1870", indexerTx.Fee)
-	require.Equal(t, transaction.TxStatusPending.String(), indexerTx.Status)
-
 	// execute on inner tx sender
 	retCode, err = testContextInnerSource.TxProcessor.ProcessTransaction(rtx)
 	require.Equal(t, vmcommon.Ok, retCode)
@@ -235,15 +214,6 @@ func TestRelayedTxScCallMultiShardFailOnInnerTxDst(t *testing.T) {
 	require.Equal(t, big.NewInt(0), developerFees)
 
 	txs := testContextInnerSource.GetIntermediateTransactions(t)
-
-	testIndexer = vm.CreateTestIndexer(t, testContextInnerSource.ShardCoordinator, testContextInnerSource.EconomicsData, true, testContextInnerSource.TxsLogsProcessor)
-	testIndexer.SaveTransaction(rtx, block.TxBlock, txs)
-
-	indexerTx = testIndexer.GetIndexerPreparedTransaction(t)
-	require.Equal(t, rtx.GasLimit, indexerTx.GasUsed)
-	require.Equal(t, "6870", indexerTx.Fee)
-	require.Equal(t, transaction.TxStatusSuccess.String(), indexerTx.Status)
-
 	scr := txs[0]
 
 	// execute on inner tx receiver ( shard with contract )

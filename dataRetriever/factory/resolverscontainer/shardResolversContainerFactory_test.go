@@ -5,31 +5,29 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ElrondNetwork/elrond-go/common"
-	"github.com/ElrondNetwork/elrond-go/config"
-	"github.com/ElrondNetwork/elrond-go/dataRetriever"
-	"github.com/ElrondNetwork/elrond-go/dataRetriever/factory/resolverscontainer"
-	"github.com/ElrondNetwork/elrond-go/dataRetriever/mock"
-	"github.com/ElrondNetwork/elrond-go/p2p"
-	"github.com/ElrondNetwork/elrond-go/process/factory"
-	"github.com/ElrondNetwork/elrond-go/state"
-	"github.com/ElrondNetwork/elrond-go/storage"
-	"github.com/ElrondNetwork/elrond-go/testscommon"
-	dataRetrieverMock "github.com/ElrondNetwork/elrond-go/testscommon/dataRetriever"
-	"github.com/ElrondNetwork/elrond-go/testscommon/p2pmocks"
-	storageStubs "github.com/ElrondNetwork/elrond-go/testscommon/storage"
-	trieMock "github.com/ElrondNetwork/elrond-go/testscommon/trie"
-	triesFactory "github.com/ElrondNetwork/elrond-go/trie/factory"
+	"github.com/multiversx/mx-chain-core-go/core"
+	"github.com/multiversx/mx-chain-go/common"
+	"github.com/multiversx/mx-chain-go/dataRetriever"
+	"github.com/multiversx/mx-chain-go/dataRetriever/factory/resolverscontainer"
+	"github.com/multiversx/mx-chain-go/dataRetriever/mock"
+	"github.com/multiversx/mx-chain-go/p2p"
+	"github.com/multiversx/mx-chain-go/process/factory"
+	"github.com/multiversx/mx-chain-go/state"
+	"github.com/multiversx/mx-chain-go/storage"
+	"github.com/multiversx/mx-chain-go/testscommon"
+	dataRetrieverMock "github.com/multiversx/mx-chain-go/testscommon/dataRetriever"
+	"github.com/multiversx/mx-chain-go/testscommon/p2pmocks"
+	storageStubs "github.com/multiversx/mx-chain-go/testscommon/storage"
+	trieMock "github.com/multiversx/mx-chain-go/testscommon/trie"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 var errExpected = errors.New("expected error")
 
-func createStubTopicMessageHandlerForShard(matchStrToErrOnCreate string, matchStrToErrOnRegister string) dataRetriever.TopicMessageHandler {
-	tmhs := mock.NewTopicMessageHandlerStub()
+func createMessengerStubForShard(matchStrToErrOnCreate string, matchStrToErrOnRegister string) p2p.Messenger {
+	stub := &p2pmocks.MessengerStub{}
 
-	tmhs.CreateTopicCalled = func(name string, createChannelForTopic bool) error {
+	stub.CreateTopicCalled = func(name string, createChannelForTopic bool) error {
 		if matchStrToErrOnCreate == "" {
 			return nil
 		}
@@ -41,7 +39,7 @@ func createStubTopicMessageHandlerForShard(matchStrToErrOnCreate string, matchSt
 		return nil
 	}
 
-	tmhs.RegisterMessageProcessorCalled = func(topic string, identifier string, handler p2p.MessageProcessor) error {
+	stub.RegisterMessageProcessorCalled = func(topic string, identifier string, handler p2p.MessageProcessor) error {
 		if matchStrToErrOnRegister == "" {
 			return nil
 		}
@@ -53,7 +51,7 @@ func createStubTopicMessageHandlerForShard(matchStrToErrOnCreate string, matchSt
 		return nil
 	}
 
-	return tmhs
+	return stub
 }
 
 func createDataPoolsForShard() dataRetriever.PoolsHolder {
@@ -81,21 +79,39 @@ func createDataPoolsForShard() dataRetriever.PoolsHolder {
 }
 
 func createStoreForShard() dataRetriever.StorageService {
-	return &mock.ChainStorerMock{
-		GetStorerCalled: func(unitType dataRetriever.UnitType) storage.Storer {
-			return &storageStubs.StorerStub{}
+	return &storageStubs.ChainStorerStub{
+		GetStorerCalled: func(unitType dataRetriever.UnitType) (storage.Storer, error) {
+			return &storageStubs.StorerStub{}, nil
 		},
 	}
 }
 
 func createTriesHolderForShard() common.TriesHolder {
 	triesHolder := state.NewDataTriesHolder()
-	triesHolder.Put([]byte(triesFactory.UserAccountTrie), &trieMock.TrieStub{})
-	triesHolder.Put([]byte(triesFactory.PeerAccountTrie), &trieMock.TrieStub{})
+	triesHolder.Put([]byte(dataRetriever.UserAccountsUnit.String()), &trieMock.TrieStub{})
+	triesHolder.Put([]byte(dataRetriever.PeerAccountsUnit.String()), &trieMock.TrieStub{})
 	return triesHolder
 }
 
-//------- NewResolversContainerFactory
+// ------- NewResolversContainerFactory
+
+func TestNewShardResolversContainerFactory_NewNumGoRoutinesThrottlerFailsShouldErr(t *testing.T) {
+	t.Parallel()
+
+	args := getArgumentsShard()
+	args.NumConcurrentResolvingJobs = 0
+
+	rcf, err := resolverscontainer.NewShardResolversContainerFactory(args)
+	assert.Nil(t, rcf)
+	assert.Equal(t, core.ErrNotPositiveValue, err)
+
+	args.NumConcurrentResolvingJobs = 10
+	args.NumConcurrentResolvingTrieNodesJobs = 0
+
+	rcf, err = resolverscontainer.NewShardResolversContainerFactory(args)
+	assert.Nil(t, rcf)
+	assert.Equal(t, core.ErrNotPositiveValue, err)
+}
 
 func TestNewShardResolversContainerFactory_NilShardCoordinatorShouldErr(t *testing.T) {
 	t.Parallel()
@@ -108,15 +124,26 @@ func TestNewShardResolversContainerFactory_NilShardCoordinatorShouldErr(t *testi
 	assert.Equal(t, dataRetriever.ErrNilShardCoordinator, err)
 }
 
-func TestNewShardResolversContainerFactory_NilMessengerShouldErr(t *testing.T) {
+func TestNewShardResolversContainerFactory_NilMainMessengerShouldErr(t *testing.T) {
 	t.Parallel()
 
 	args := getArgumentsShard()
-	args.Messenger = nil
+	args.MainMessenger = nil
 	rcf, err := resolverscontainer.NewShardResolversContainerFactory(args)
 
 	assert.Nil(t, rcf)
-	assert.Equal(t, dataRetriever.ErrNilMessenger, err)
+	assert.True(t, errors.Is(err, dataRetriever.ErrNilMessenger))
+}
+
+func TestNewShardResolversContainerFactory_NilFullArchiveMessengerShouldErr(t *testing.T) {
+	t.Parallel()
+
+	args := getArgumentsShard()
+	args.FullArchiveMessenger = nil
+	rcf, err := resolverscontainer.NewShardResolversContainerFactory(args)
+
+	assert.Nil(t, rcf)
+	assert.True(t, errors.Is(err, dataRetriever.ErrNilMessenger))
 }
 
 func TestNewShardResolversContainerFactory_NilStoreShouldErr(t *testing.T) {
@@ -186,26 +213,26 @@ func TestNewShardResolversContainerFactory_NilDataPackerShouldErr(t *testing.T) 
 	assert.Equal(t, dataRetriever.ErrNilDataPacker, err)
 }
 
-func TestNewShardResolversContainerFactory_NilPreferredPeersHolderShouldErr(t *testing.T) {
+func TestNewShardResolversContainerFactory_NilMainPreferredPeersHolderShouldErr(t *testing.T) {
 	t.Parallel()
 
 	args := getArgumentsShard()
-	args.PreferredPeersHolder = nil
+	args.MainPreferredPeersHolder = nil
 	rcf, err := resolverscontainer.NewShardResolversContainerFactory(args)
 
 	assert.Nil(t, rcf)
-	assert.Equal(t, dataRetriever.ErrNilPreferredPeersHolder, err)
+	assert.True(t, errors.Is(err, dataRetriever.ErrNilPreferredPeersHolder))
 }
 
-func TestNewShardResolversContainerFactory_NilPeersRatingHandlerShouldErr(t *testing.T) {
+func TestNewShardResolversContainerFactory_NilFullArchivePreferredPeersHolderShouldErr(t *testing.T) {
 	t.Parallel()
 
 	args := getArgumentsShard()
-	args.PeersRatingHandler = nil
+	args.FullArchivePreferredPeersHolder = nil
 	rcf, err := resolverscontainer.NewShardResolversContainerFactory(args)
 
 	assert.Nil(t, rcf)
-	assert.Equal(t, dataRetriever.ErrNilPeersRatingHandler, err)
+	assert.True(t, errors.Is(err, dataRetriever.ErrNilPreferredPeersHolder))
 }
 
 func TestNewShardResolversContainerFactory_NilTriesContainerShouldErr(t *testing.T) {
@@ -219,60 +246,35 @@ func TestNewShardResolversContainerFactory_NilTriesContainerShouldErr(t *testing
 	assert.Equal(t, dataRetriever.ErrNilTrieDataGetter, err)
 }
 
-func TestNewShardResolversContainerFactory_InvalidNumIntraShardPeersShouldErr(t *testing.T) {
+func TestNewShardResolversContainerFactory_NilInputAntifloodHandlerShouldErr(t *testing.T) {
 	t.Parallel()
 
 	args := getArgumentsShard()
-	args.ResolverConfig.NumIntraShardPeers = 0
+	args.InputAntifloodHandler = nil
 	rcf, err := resolverscontainer.NewShardResolversContainerFactory(args)
 
 	assert.Nil(t, rcf)
-	assert.True(t, errors.Is(err, dataRetriever.ErrInvalidValue))
+	assert.True(t, errors.Is(err, dataRetriever.ErrNilAntifloodHandler))
 }
 
-func TestNewShardResolversContainerFactory_InvalidNumCrossShardPeersShouldErr(t *testing.T) {
+func TestNewShardResolversContainerFactory_NilOutputAntifloodHandlerShouldErr(t *testing.T) {
 	t.Parallel()
 
 	args := getArgumentsShard()
-	args.ResolverConfig.NumCrossShardPeers = 0
+	args.OutputAntifloodHandler = nil
 	rcf, err := resolverscontainer.NewShardResolversContainerFactory(args)
 
 	assert.Nil(t, rcf)
-	assert.True(t, errors.Is(err, dataRetriever.ErrInvalidValue))
+	assert.True(t, errors.Is(err, dataRetriever.ErrNilAntifloodHandler))
 }
 
-func TestNewShardResolversContainerFactory_InvalidNumFullHistoryPeersShouldErr(t *testing.T) {
+// ------- Create
+
+func TestShardResolversContainerFactory_CreateRegisterTxFailsOnMainNetworkShouldErr(t *testing.T) {
 	t.Parallel()
 
 	args := getArgumentsShard()
-	args.ResolverConfig.NumFullHistoryPeers = 0
-	rcf, err := resolverscontainer.NewShardResolversContainerFactory(args)
-
-	assert.Nil(t, rcf)
-	assert.True(t, errors.Is(err, dataRetriever.ErrInvalidValue))
-}
-
-func TestNewShardResolversContainerFactory_ShouldWork(t *testing.T) {
-	t.Parallel()
-
-	args := getArgumentsShard()
-	rcf, err := resolverscontainer.NewShardResolversContainerFactory(args)
-
-	assert.NotNil(t, rcf)
-	assert.Nil(t, err)
-	require.False(t, rcf.IsInterfaceNil())
-	assert.Equal(t, int(args.ResolverConfig.NumIntraShardPeers), rcf.NumIntraShardPeers())
-	assert.Equal(t, int(args.ResolverConfig.NumCrossShardPeers), rcf.NumCrossShardPeers())
-	assert.Equal(t, int(args.ResolverConfig.NumFullHistoryPeers), rcf.NumFullHistoryPeers())
-}
-
-//------- Create
-
-func TestShardResolversContainerFactory_CreateRegisterTxFailsShouldErr(t *testing.T) {
-	t.Parallel()
-
-	args := getArgumentsShard()
-	args.Messenger = createStubTopicMessageHandlerForShard("", factory.TransactionTopic)
+	args.MainMessenger = createMessengerStubForShard("", factory.TransactionTopic)
 	rcf, _ := resolverscontainer.NewShardResolversContainerFactory(args)
 
 	container, err := rcf.Create()
@@ -281,11 +283,11 @@ func TestShardResolversContainerFactory_CreateRegisterTxFailsShouldErr(t *testin
 	assert.Equal(t, errExpected, err)
 }
 
-func TestShardResolversContainerFactory_CreateRegisterHdrFailsShouldErr(t *testing.T) {
+func TestShardResolversContainerFactory_CreateRegisterTxFailsOnFullArchiveNetworkShouldErr(t *testing.T) {
 	t.Parallel()
 
 	args := getArgumentsShard()
-	args.Messenger = createStubTopicMessageHandlerForShard("", factory.ShardBlocksTopic)
+	args.FullArchiveMessenger = createMessengerStubForShard("", factory.TransactionTopic)
 	rcf, _ := resolverscontainer.NewShardResolversContainerFactory(args)
 
 	container, err := rcf.Create()
@@ -294,11 +296,11 @@ func TestShardResolversContainerFactory_CreateRegisterHdrFailsShouldErr(t *testi
 	assert.Equal(t, errExpected, err)
 }
 
-func TestShardResolversContainerFactory_CreateRegisterMiniBlocksFailsShouldErr(t *testing.T) {
+func TestShardResolversContainerFactory_CreateRegisterHdrFailsOnMainNetworkShouldErr(t *testing.T) {
 	t.Parallel()
 
 	args := getArgumentsShard()
-	args.Messenger = createStubTopicMessageHandlerForShard("", factory.MiniBlocksTopic)
+	args.MainMessenger = createMessengerStubForShard("", factory.ShardBlocksTopic)
 	rcf, _ := resolverscontainer.NewShardResolversContainerFactory(args)
 
 	container, err := rcf.Create()
@@ -307,11 +309,89 @@ func TestShardResolversContainerFactory_CreateRegisterMiniBlocksFailsShouldErr(t
 	assert.Equal(t, errExpected, err)
 }
 
-func TestShardResolversContainerFactory_CreateRegisterTrieNodesFailsShouldErr(t *testing.T) {
+func TestShardResolversContainerFactory_CreateRegisterHdrFailsOnFullArchiveNetworkShouldErr(t *testing.T) {
 	t.Parallel()
 
 	args := getArgumentsShard()
-	args.Messenger = createStubTopicMessageHandlerForShard("", factory.AccountTrieNodesTopic)
+	args.FullArchiveMessenger = createMessengerStubForShard("", factory.ShardBlocksTopic)
+	rcf, _ := resolverscontainer.NewShardResolversContainerFactory(args)
+
+	container, err := rcf.Create()
+
+	assert.Nil(t, container)
+	assert.Equal(t, errExpected, err)
+}
+
+func TestShardResolversContainerFactory_CreateRegisterMiniBlocksFailsOnMainNetworkShouldErr(t *testing.T) {
+	t.Parallel()
+
+	args := getArgumentsShard()
+	args.MainMessenger = createMessengerStubForShard("", factory.MiniBlocksTopic)
+	rcf, _ := resolverscontainer.NewShardResolversContainerFactory(args)
+
+	container, err := rcf.Create()
+
+	assert.Nil(t, container)
+	assert.Equal(t, errExpected, err)
+}
+
+func TestShardResolversContainerFactory_CreateRegisterMiniBlocksFailsOnFullArchiveNetworkShouldErr(t *testing.T) {
+	t.Parallel()
+
+	args := getArgumentsShard()
+	args.FullArchiveMessenger = createMessengerStubForShard("", factory.MiniBlocksTopic)
+	rcf, _ := resolverscontainer.NewShardResolversContainerFactory(args)
+
+	container, err := rcf.Create()
+
+	assert.Nil(t, container)
+	assert.Equal(t, errExpected, err)
+}
+
+func TestShardResolversContainerFactory_CreateRegisterTrieNodesFailsOnMainNetworkShouldErr(t *testing.T) {
+	t.Parallel()
+
+	args := getArgumentsShard()
+	args.MainMessenger = createMessengerStubForShard("", factory.AccountTrieNodesTopic)
+	rcf, _ := resolverscontainer.NewShardResolversContainerFactory(args)
+
+	container, err := rcf.Create()
+
+	assert.Nil(t, container)
+	assert.Equal(t, errExpected, err)
+}
+
+func TestShardResolversContainerFactory_CreateRegisterTrieNodesFailsOnFullArchiveNetworkShouldErr(t *testing.T) {
+	t.Parallel()
+
+	args := getArgumentsShard()
+	args.FullArchiveMessenger = createMessengerStubForShard("", factory.AccountTrieNodesTopic)
+	rcf, _ := resolverscontainer.NewShardResolversContainerFactory(args)
+
+	container, err := rcf.Create()
+
+	assert.Nil(t, container)
+	assert.Equal(t, errExpected, err)
+}
+
+func TestShardResolversContainerFactory_CreateRegisterPeerAuthenticationOnMainNetworkShouldErr(t *testing.T) {
+	t.Parallel()
+
+	args := getArgumentsShard()
+	args.MainMessenger = createMessengerStubForShard("", common.PeerAuthenticationTopic)
+	rcf, _ := resolverscontainer.NewShardResolversContainerFactory(args)
+
+	container, err := rcf.Create()
+
+	assert.Nil(t, container)
+	assert.Equal(t, errExpected, err)
+}
+
+func TestShardResolversContainerFactory_CreateRegisterPeerAuthenticationOnFullArchiveNetworkShouldErr(t *testing.T) {
+	t.Parallel()
+
+	args := getArgumentsShard()
+	args.FullArchiveMessenger = createMessengerStubForShard("", common.PeerAuthenticationTopic)
 	rcf, _ := resolverscontainer.NewShardResolversContainerFactory(args)
 
 	container, err := rcf.Create()
@@ -342,6 +422,20 @@ func TestShardResolversContainerFactory_With4ShardsShouldWork(t *testing.T) {
 	shardCoordinator.CurrentShard = 1
 
 	args := getArgumentsShard()
+	registerMainCnt := 0
+	args.MainMessenger = &p2pmocks.MessengerStub{
+		RegisterMessageProcessorCalled: func(topic string, identifier string, handler p2p.MessageProcessor) error {
+			registerMainCnt++
+			return nil
+		},
+	}
+	registerFullArchiveCnt := 0
+	args.FullArchiveMessenger = &p2pmocks.MessengerStub{
+		RegisterMessageProcessorCalled: func(topic string, identifier string, handler p2p.MessageProcessor) error {
+			registerFullArchiveCnt++
+			return nil
+		},
+	}
 	args.ShardCoordinator = shardCoordinator
 	rcf, _ := resolverscontainer.NewShardResolversContainerFactory(args)
 
@@ -354,33 +448,46 @@ func TestShardResolversContainerFactory_With4ShardsShouldWork(t *testing.T) {
 	numResolverMiniBlocks := noOfShards + 2
 	numResolverMetaBlockHeaders := 1
 	numResolverTrieNodes := 1
-	totalResolvers := numResolverTxs + numResolverHeaders + numResolverMiniBlocks +
-		numResolverMetaBlockHeaders + numResolverSCRs + numResolverRewardTxs + numResolverTrieNodes
+	numResolverPeerAuth := 1
+	numResolverValidatorInfo := 1
+	totalResolvers := numResolverTxs + numResolverHeaders + numResolverMiniBlocks + numResolverMetaBlockHeaders +
+		numResolverSCRs + numResolverRewardTxs + numResolverTrieNodes + numResolverPeerAuth + numResolverValidatorInfo
 
 	assert.Equal(t, totalResolvers, container.Len())
+	assert.Equal(t, totalResolvers, registerMainCnt)
+	assert.Equal(t, totalResolvers, registerFullArchiveCnt)
+}
+
+func TestShardResolversContainerFactory_IsInterfaceNil(t *testing.T) {
+	t.Parallel()
+
+	args := getArgumentsShard()
+	args.ShardCoordinator = nil
+	rcf, _ := resolverscontainer.NewShardResolversContainerFactory(args)
+	assert.True(t, rcf.IsInterfaceNil())
+
+	rcf, _ = resolverscontainer.NewShardResolversContainerFactory(getArgumentsMeta())
+	assert.False(t, rcf.IsInterfaceNil())
 }
 
 func getArgumentsShard() resolverscontainer.FactoryArgs {
 	return resolverscontainer.FactoryArgs{
-		ShardCoordinator:            mock.NewOneShardCoordinatorMock(),
-		Messenger:                   createStubTopicMessageHandlerForShard("", ""),
-		Store:                       createStoreForShard(),
-		Marshalizer:                 &mock.MarshalizerMock{},
-		DataPools:                   createDataPoolsForShard(),
-		Uint64ByteSliceConverter:    &mock.Uint64ByteSliceConverterMock{},
-		DataPacker:                  &mock.DataPackerStub{},
-		TriesContainer:              createTriesHolderForShard(),
-		SizeCheckDelta:              0,
-		InputAntifloodHandler:       &mock.P2PAntifloodHandlerStub{},
-		OutputAntifloodHandler:      &mock.P2PAntifloodHandlerStub{},
-		NumConcurrentResolvingJobs:  10,
-		CurrentNetworkEpochProvider: &mock.CurrentNetworkEpochProviderStub{},
-		PreferredPeersHolder:        &p2pmocks.PeersHolderStub{},
-		ResolverConfig: config.ResolverConfig{
-			NumCrossShardPeers:  1,
-			NumIntraShardPeers:  2,
-			NumFullHistoryPeers: 3,
-		},
-		PeersRatingHandler: &p2pmocks.PeersRatingHandlerStub{},
+		ShardCoordinator:                    mock.NewOneShardCoordinatorMock(),
+		MainMessenger:                       createMessengerStubForShard("", ""),
+		FullArchiveMessenger:                createMessengerStubForShard("", ""),
+		Store:                               createStoreForShard(),
+		Marshalizer:                         &mock.MarshalizerMock{},
+		DataPools:                           createDataPoolsForShard(),
+		Uint64ByteSliceConverter:            &mock.Uint64ByteSliceConverterMock{},
+		DataPacker:                          &mock.DataPackerStub{},
+		TriesContainer:                      createTriesHolderForShard(),
+		SizeCheckDelta:                      0,
+		InputAntifloodHandler:               &mock.P2PAntifloodHandlerStub{},
+		OutputAntifloodHandler:              &mock.P2PAntifloodHandlerStub{},
+		NumConcurrentResolvingJobs:          10,
+		NumConcurrentResolvingTrieNodesJobs: 3,
+		MainPreferredPeersHolder:            &p2pmocks.PeersHolderStub{},
+		FullArchivePreferredPeersHolder:     &p2pmocks.PeersHolderStub{},
+		PayloadValidator:                    &testscommon.PeerAuthenticationPayloadValidatorStub{},
 	}
 }

@@ -9,11 +9,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ElrondNetwork/elrond-go-core/data"
-	"github.com/ElrondNetwork/elrond-go-core/data/transaction"
-	"github.com/ElrondNetwork/elrond-go-crypto"
-	"github.com/ElrondNetwork/elrond-go/integrationTests"
-	"github.com/ElrondNetwork/elrond-go/process"
+	"github.com/multiversx/mx-chain-core-go/data"
+	"github.com/multiversx/mx-chain-core-go/data/transaction"
+	"github.com/multiversx/mx-chain-crypto-go"
+	"github.com/multiversx/mx-chain-go/common"
+	"github.com/multiversx/mx-chain-go/integrationTests"
+	"github.com/multiversx/mx-chain-go/process"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -25,11 +26,15 @@ func TestNode_GenerateSendInterceptBulkTransactionsWithMessenger(t *testing.T) {
 	}
 
 	startingNonce := uint64(6)
-	var nrOfShards uint32 = 1
+	var numOfShards uint32 = 1
 	var shardID uint32 = 0
 	var txSignPrivKeyShardId uint32 = 0
 
-	n := integrationTests.NewTestProcessorNode(nrOfShards, shardID, txSignPrivKeyShardId)
+	n := integrationTests.NewTestProcessorNode(integrationTests.ArgTestProcessorNode{
+		MaxShards:            numOfShards,
+		NodeShardId:          shardID,
+		TxSignPrivKeyShardId: txSignPrivKeyShardId,
+	})
 
 	defer func() {
 		n.Close()
@@ -39,7 +44,7 @@ func TestNode_GenerateSendInterceptBulkTransactionsWithMessenger(t *testing.T) {
 
 	//set the account's nonce to startingNonce
 	_ = n.SetAccountNonce(startingNonce)
-	noOfTx := 8000
+	noOfTx := common.MaxTxNonceDeltaAllowed
 
 	time.Sleep(stepDelay)
 
@@ -83,9 +88,11 @@ func TestNode_GenerateSendInterceptBulkTransactionsWithMessenger(t *testing.T) {
 	mintingValue := big.NewInt(10000000000)
 	integrationTests.CreateMintingForSenders([]*integrationTests.TestProcessorNode{n}, shardId, senderPrivateKeys, mintingValue)
 
-	receiver := integrationTests.TestAddressPubkeyConverter.Encode(integrationTests.CreateRandomBytes(32))
-	err := n.Node.GenerateAndSendBulkTransactions(
-		receiver,
+	encodedReceiverAddr, err := integrationTests.TestAddressPubkeyConverter.Encode(integrationTests.CreateRandomBytes(32))
+	assert.Nil(t, err)
+
+	err = n.Node.GenerateAndSendBulkTransactions(
+		encodedReceiverAddr,
 		big.NewInt(1),
 		uint64(noOfTx),
 		n.OwnAccount.SkTxSign,
@@ -119,14 +126,18 @@ func TestNode_SendTransactionFromAnUnmintedAccountShouldReturnErrorAtApiLevel(t 
 		t.Skip("this is not a short test")
 	}
 
-	var nrOfShards uint32 = 1
+	var numOfShards uint32 = 1
 	var shardID uint32 = 0
 	var txSignPrivKeyShardId uint32 = 0
 
-	node := integrationTests.NewTestProcessorNode(nrOfShards, shardID, txSignPrivKeyShardId)
+	node := integrationTests.NewTestProcessorNode(integrationTests.ArgTestProcessorNode{
+		MaxShards:            numOfShards,
+		NodeShardId:          shardID,
+		TxSignPrivKeyShardId: txSignPrivKeyShardId,
+	})
 
 	defer func() {
-		_ = node.Messenger.Close()
+		node.Close()
 	}()
 
 	tx := &transaction.Transaction{
@@ -140,9 +151,9 @@ func TestNode_SendTransactionFromAnUnmintedAccountShouldReturnErrorAtApiLevel(t 
 		Version:  integrationTests.MinTransactionVersion,
 	}
 
-	txBuff, _ := tx.GetDataForSigning(integrationTests.TestAddressPubkeyConverter, integrationTests.TestTxSignMarshalizer)
+	txBuff, _ := tx.GetDataForSigning(integrationTests.TestAddressPubkeyConverter, integrationTests.TestTxSignMarshalizer, integrationTests.TestTxSignHasher)
 	tx.Signature, _ = node.OwnAccount.SingleSigner.Sign(node.OwnAccount.SkTxSign, txBuff)
 
 	err := node.Node.ValidateTransaction(tx)
-	assert.True(t, errors.Is(err, process.ErrAccountNotFound))
+	assert.True(t, errors.Is(err, process.ErrInsufficientFunds))
 }

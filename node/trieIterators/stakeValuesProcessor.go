@@ -6,13 +6,14 @@ import (
 	"math/big"
 	"sync"
 
-	"github.com/ElrondNetwork/elrond-go-core/core"
-	"github.com/ElrondNetwork/elrond-go-core/core/check"
-	"github.com/ElrondNetwork/elrond-go-core/data/api"
-	"github.com/ElrondNetwork/elrond-go/common"
-	"github.com/ElrondNetwork/elrond-go/process"
-	"github.com/ElrondNetwork/elrond-go/state"
-	"github.com/ElrondNetwork/elrond-go/vm"
+	"github.com/multiversx/mx-chain-core-go/core"
+	"github.com/multiversx/mx-chain-core-go/core/check"
+	"github.com/multiversx/mx-chain-core-go/data/api"
+	"github.com/multiversx/mx-chain-go/common"
+	"github.com/multiversx/mx-chain-go/common/errChan"
+	"github.com/multiversx/mx-chain-go/process"
+	"github.com/multiversx/mx-chain-go/state"
+	"github.com/multiversx/mx-chain-go/vm"
 )
 
 // AccountsWrapper extends the AccountsAdapter interface
@@ -89,20 +90,18 @@ func (svp *stakedValuesProcessor) computeBaseStakedAndTopUp(ctx context.Context)
 		return nil, nil, err
 	}
 
-	rootHash, err := validatorAccount.DataTrie().RootHash()
-	if err != nil {
-		return nil, nil, err
-	}
-
 	// TODO investigate if a call to GetAllLeavesKeysOnChannel (without values) might increase performance
-	chLeaves := make(chan core.KeyValueHolder, common.TrieLeavesChannelDefaultCapacity)
-	err = validatorAccount.DataTrie().GetAllLeavesOnChannel(chLeaves, ctx, rootHash)
+	chLeaves := &common.TrieIteratorChannels{
+		LeavesChan: make(chan core.KeyValueHolder, common.TrieLeavesChannelDefaultCapacity),
+		ErrChan:    errChan.NewErrChanWrapper(),
+	}
+	err = validatorAccount.GetAllLeaves(chLeaves, ctx)
 	if err != nil {
 		return nil, nil, err
 	}
 
 	totalBaseStaked, totalTopUp := big.NewInt(0), big.NewInt(0)
-	for leaf := range chLeaves {
+	for leaf := range chLeaves.LeavesChan {
 		leafKey := leaf.Key()
 		if len(leafKey) != svp.publicKeyConverter.Len() {
 			continue
@@ -117,6 +116,11 @@ func (svp *stakedValuesProcessor) computeBaseStakedAndTopUp(ctx context.Context)
 
 		totalBaseStaked = totalBaseStaked.Add(totalBaseStaked, baseStaked)
 		totalTopUp = totalTopUp.Add(totalTopUp, info.topUpValue)
+	}
+
+	err = chLeaves.ErrChan.ReadFromChanNonBlocking()
+	if err != nil {
+		return nil, nil, err
 	}
 
 	if common.IsContextDone(ctx) {

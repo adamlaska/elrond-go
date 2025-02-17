@@ -6,23 +6,22 @@ import (
 	"math/big"
 	"time"
 
-	"github.com/ElrondNetwork/elrond-go-core/core"
-	"github.com/ElrondNetwork/elrond-go-core/core/check"
-	"github.com/ElrondNetwork/elrond-go-core/data"
-	"github.com/ElrondNetwork/elrond-go-core/data/block"
-	"github.com/ElrondNetwork/elrond-go-core/data/transaction"
-	"github.com/ElrondNetwork/elrond-go/common"
-	"github.com/ElrondNetwork/elrond-go/dataRetriever"
-	"github.com/ElrondNetwork/elrond-go/process"
-	"github.com/ElrondNetwork/elrond-go/sharding"
-	"github.com/ElrondNetwork/elrond-go/state"
-	"github.com/ElrondNetwork/elrond-go/storage/txcache"
+	"github.com/multiversx/mx-chain-core-go/core"
+	"github.com/multiversx/mx-chain-core-go/core/check"
+	"github.com/multiversx/mx-chain-core-go/data"
+	"github.com/multiversx/mx-chain-core-go/data/block"
+	"github.com/multiversx/mx-chain-core-go/data/transaction"
+	"github.com/multiversx/mx-chain-go/common"
+	"github.com/multiversx/mx-chain-go/dataRetriever"
+	"github.com/multiversx/mx-chain-go/process"
+	"github.com/multiversx/mx-chain-go/sharding"
+	"github.com/multiversx/mx-chain-go/state"
+	"github.com/multiversx/mx-chain-go/storage/txcache"
 )
 
 type miniBlocksBuilderArgs struct {
 	gasTracker                gasTracker
 	accounts                  state.AccountsAdapter
-	accountTxsShards          *accountTxsShards
 	blockSizeComputation      BlockSizeComputationHandler
 	balanceComputationHandler BalanceComputationHandler
 	haveTime                  func() bool
@@ -50,7 +49,6 @@ type miniBlockBuilderStats struct {
 type miniBlocksBuilder struct {
 	gasTracker
 	accounts                   state.AccountsAdapter
-	accountTxsShards           *accountTxsShards
 	balanceComputationHandler  BalanceComputationHandler
 	blockSizeComputation       BlockSizeComputationHandler
 	gasConsumedInReceiverShard map[uint32]uint64
@@ -75,7 +73,6 @@ func newMiniBlockBuilder(args miniBlocksBuilderArgs) (*miniBlocksBuilder, error)
 	return &miniBlocksBuilder{
 		gasTracker:                 args.gasTracker,
 		accounts:                   args.accounts,
-		accountTxsShards:           args.accountTxsShards,
 		balanceComputationHandler:  args.balanceComputationHandler,
 		blockSizeComputation:       args.blockSizeComputation,
 		miniBlocks:                 initializeMiniBlocksMap(args.gasTracker.shardCoordinator),
@@ -117,9 +114,6 @@ func checkMiniBlocksBuilderArgs(args miniBlocksBuilderArgs) error {
 	if check.IfNil(args.txPool) {
 		return process.ErrNilTransactionPool
 	}
-	if args.accountTxsShards == nil {
-		return process.ErrNilAccountTxsPerShard
-	}
 	if args.haveTime == nil {
 		return process.ErrNilHaveTimeHandler
 	}
@@ -134,15 +128,6 @@ func checkMiniBlocksBuilderArgs(args miniBlocksBuilderArgs) error {
 	}
 
 	return nil
-}
-
-func (mbb *miniBlocksBuilder) updateAccountShardsInfo(tx *transaction.Transaction, wtx *txcache.WrappedTransaction) {
-	mbb.accountTxsShards.Lock()
-	mbb.accountTxsShards.accountsInfo[string(tx.GetSndAddr())] = &txShardInfo{
-		senderShardID:   wtx.SenderShardID,
-		receiverShardID: wtx.ReceiverShardID,
-	}
-	mbb.accountTxsShards.Unlock()
 }
 
 // checkAddTransaction method returns a set of actions which could be done afterwards, by checking the given transaction

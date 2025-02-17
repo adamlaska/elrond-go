@@ -4,15 +4,15 @@ import (
 	"context"
 	"time"
 
-	"github.com/ElrondNetwork/elrond-go-core/core"
-	"github.com/ElrondNetwork/elrond-go-core/core/check"
-	"github.com/ElrondNetwork/elrond-go/consensus"
+	"github.com/multiversx/mx-chain-core-go/core"
+	"github.com/multiversx/mx-chain-core-go/core/check"
+	"github.com/multiversx/mx-chain-go/consensus"
 )
 
 var _ consensus.SubroundHandler = (*Subround)(nil)
 
 // Subround struct contains the needed data for one Subround and the Subround properties. It defines a Subround
-// with it's properties (it's ID, next Subround ID, it's duration, it's name) and also it has some handler functions
+// with its properties (its ID, next Subround ID, its duration, its name) and also it has some handler functions
 // which should be set. Job function will be the main function of this Subround, Extend function will handle the overtime
 // situation of the Subround and Check function will decide if in this Subround the consensus is achieved
 type Subround struct {
@@ -202,6 +202,23 @@ func (sr *Subround) AppStatusHandler() core.AppStatusHandler {
 // ConsensusChannel method returns the consensus channel
 func (sr *Subround) ConsensusChannel() chan bool {
 	return sr.consensusStateChangedChannel
+}
+
+// GetAssociatedPid returns the associated PeerID to the provided public key bytes
+func (sr *Subround) GetAssociatedPid(pkBytes []byte) core.PeerID {
+	return sr.keysHandler.GetAssociatedPid(pkBytes)
+}
+
+// ShouldConsiderSelfKeyInConsensus returns true if current machine is the main one, or it is a backup machine but the main
+// machine failed
+func (sr *Subround) ShouldConsiderSelfKeyInConsensus() bool {
+	isMainMachine := !sr.NodeRedundancyHandler().IsRedundancyNode()
+	if isMainMachine {
+		return true
+	}
+	isMainMachineInactive := !sr.NodeRedundancyHandler().IsMainMachineActive()
+
+	return isMainMachineInactive
 }
 
 // IsInterfaceNil returns true if there is no value under the interface

@@ -4,12 +4,17 @@ import (
 	"math"
 	"math/big"
 
-	"github.com/ElrondNetwork/elrond-go-core/data"
-	"github.com/ElrondNetwork/elrond-go-core/data/scheduled"
+	"github.com/multiversx/mx-chain-core-go/data"
+	"github.com/multiversx/mx-chain-core-go/data/scheduled"
 )
 
 // FeeHandler represents a disabled fee handler implementation
 type FeeHandler struct {
+}
+
+// ComputeGasUnitsFromRefundValue return 0
+func (fh *FeeHandler) ComputeGasUnitsFromRefundValue(_ data.TransactionWithFeeHandler, _ *big.Int, _ uint32) uint64 {
+	return 0
 }
 
 // GasPriceModifier returns 1.0
@@ -40,6 +45,16 @@ func (fh *FeeHandler) MinGasPrice() uint64 {
 // MinGasLimit returns 0
 func (fh *FeeHandler) MinGasLimit() uint64 {
 	return 0
+}
+
+// ExtraGasLimitGuardedTx returns 0
+func (fh *FeeHandler) ExtraGasLimitGuardedTx() uint64 {
+	return 0
+}
+
+// MaxGasPriceSetGuardian returns max uint64
+func (fh *FeeHandler) MaxGasPriceSetGuardian() uint64 {
+	return math.MaxUint64
 }
 
 // MaxGasLimitPerBlock returns max uint64
@@ -150,6 +165,26 @@ func (fh *FeeHandler) ComputeGasUsedAndFeeBasedOnRefundValue(_ data.TransactionW
 
 // ComputeTxFeeBasedOnGasUsed returns 0
 func (fh *FeeHandler) ComputeTxFeeBasedOnGasUsed(_ data.TransactionWithFeeHandler, _ uint64) *big.Int {
+	return big.NewInt(0)
+}
+
+// ComputeTxFeeInEpoch returns 0
+func (fh *FeeHandler) ComputeTxFeeInEpoch(tx data.TransactionWithFeeHandler, epoch uint32) *big.Int {
+	return big.NewInt(0)
+}
+
+// ComputeGasLimitInEpoch returns 0
+func (fh *FeeHandler) ComputeGasLimitInEpoch(tx data.TransactionWithFeeHandler, epoch uint32) uint64 {
+	return 0
+}
+
+// ComputeGasUsedAndFeeBasedOnRefundValueInEpoch returns 0
+func (fh *FeeHandler) ComputeGasUsedAndFeeBasedOnRefundValueInEpoch(tx data.TransactionWithFeeHandler, refundValue *big.Int, epoch uint32) (uint64, *big.Int) {
+	return 0, big.NewInt(0)
+}
+
+// ComputeTxFeeBasedOnGasUsedInEpoch returns 0
+func (fh *FeeHandler) ComputeTxFeeBasedOnGasUsedInEpoch(tx data.TransactionWithFeeHandler, gasUsed uint64, epoch uint32) *big.Int {
 	return big.NewInt(0)
 }
 

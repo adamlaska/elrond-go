@@ -3,36 +3,39 @@ package coordinator
 import (
 	"bytes"
 	"encoding/hex"
+	"errors"
 	"math/big"
 	"testing"
 
-	"github.com/ElrondNetwork/elrond-go-core/core"
-	"github.com/ElrondNetwork/elrond-go-core/data/smartContractResult"
-	"github.com/ElrondNetwork/elrond-go-core/data/transaction"
-	vmData "github.com/ElrondNetwork/elrond-go-core/data/vm"
-	"github.com/ElrondNetwork/elrond-go/process"
-	"github.com/ElrondNetwork/elrond-go/process/mock"
-	"github.com/ElrondNetwork/elrond-go/testscommon/epochNotifier"
-	"github.com/ElrondNetwork/elrond-go/vm"
-	"github.com/ElrondNetwork/elrond-vm-common/builtInFunctions"
-	"github.com/ElrondNetwork/elrond-vm-common/parsers"
+	"github.com/multiversx/mx-chain-core-go/core"
+	"github.com/multiversx/mx-chain-core-go/data/smartContractResult"
+	"github.com/multiversx/mx-chain-core-go/data/transaction"
+	vmData "github.com/multiversx/mx-chain-core-go/data/vm"
+	"github.com/multiversx/mx-chain-go/common"
+	"github.com/multiversx/mx-chain-go/process"
+	"github.com/multiversx/mx-chain-go/process/mock"
+	"github.com/multiversx/mx-chain-go/testscommon"
+	"github.com/multiversx/mx-chain-go/testscommon/enableEpochsHandlerMock"
+	"github.com/multiversx/mx-chain-go/vm"
+	"github.com/multiversx/mx-chain-vm-common-go/builtInFunctions"
+	"github.com/multiversx/mx-chain-vm-common-go/parsers"
 	"github.com/stretchr/testify/assert"
 )
 
 func createMockArguments() ArgNewTxTypeHandler {
 	esdtTransferParser, _ := parsers.NewESDTTransferParser(&mock.MarshalizerMock{})
 	return ArgNewTxTypeHandler{
-		PubkeyConverter:    createMockPubkeyConverter(),
-		ShardCoordinator:   mock.NewMultiShardsCoordinatorMock(3),
-		BuiltInFunctions:   builtInFunctions.NewBuiltInFunctionContainer(),
-		ArgumentParser:     parsers.NewCallArgsParser(),
-		EpochNotifier:      &epochNotifier.EpochNotifierStub{},
-		ESDTTransferParser: esdtTransferParser,
+		PubkeyConverter:     createMockPubkeyConverter(),
+		ShardCoordinator:    mock.NewMultiShardsCoordinatorMock(3),
+		BuiltInFunctions:    builtInFunctions.NewBuiltInFunctionContainer(),
+		ArgumentParser:      parsers.NewCallArgsParser(),
+		ESDTTransferParser:  esdtTransferParser,
+		EnableEpochsHandler: enableEpochsHandlerMock.NewEnableEpochsHandlerStub(common.ESDTMetadataContinuousCleanupFlag),
 	}
 }
 
-func createMockPubkeyConverter() *mock.PubkeyConverterMock {
-	return mock.NewPubkeyConverterMock(32)
+func createMockPubkeyConverter() *testscommon.PubkeyConverterMock {
+	return testscommon.NewPubkeyConverterMock(32)
 }
 
 func TestNewTxTypeHandler_NilAddrConv(t *testing.T) {
@@ -68,6 +71,28 @@ func TestNewTxTypeHandler_NilArgParser(t *testing.T) {
 	assert.Equal(t, process.ErrNilArgumentParser, err)
 }
 
+func TestNewTxTypeHandler_NilEnableEpochsHandler(t *testing.T) {
+	t.Parallel()
+
+	arg := createMockArguments()
+	arg.EnableEpochsHandler = nil
+	tth, err := NewTxTypeHandler(arg)
+
+	assert.Nil(t, tth)
+	assert.Equal(t, process.ErrNilEnableEpochsHandler, err)
+}
+
+func TestNewTxTypeHandler_InvalidEnableEpochsHandler(t *testing.T) {
+	t.Parallel()
+
+	arg := createMockArguments()
+	arg.EnableEpochsHandler = enableEpochsHandlerMock.NewEnableEpochsHandlerStubWithNoFlagsDefined()
+	tth, err := NewTxTypeHandler(arg)
+
+	assert.Nil(t, tth)
+	assert.True(t, errors.Is(err, core.ErrInvalidEnableEpochsHandler))
+}
+
 func TestNewTxTypeHandler_NilBuiltInFuncs(t *testing.T) {
 	t.Parallel()
 
@@ -77,17 +102,6 @@ func TestNewTxTypeHandler_NilBuiltInFuncs(t *testing.T) {
 
 	assert.Nil(t, tth)
 	assert.Equal(t, process.ErrNilBuiltInFunction, err)
-}
-
-func TestNewTxTypeHandler_NilEpochNotifier(t *testing.T) {
-	t.Parallel()
-
-	arg := createMockArguments()
-	arg.EpochNotifier = nil
-	tth, err := NewTxTypeHandler(arg)
-
-	assert.Nil(t, tth)
-	assert.Equal(t, process.ErrNilEpochNotifier, err)
 }
 
 func TestNewTxTypeHandler_ValsOk(t *testing.T) {
@@ -110,9 +124,10 @@ func TestTxTypeHandler_ComputeTransactionTypeNil(t *testing.T) {
 	assert.NotNil(t, tth)
 	assert.Nil(t, err)
 
-	txTypeIn, txTypeCross := tth.ComputeTransactionType(nil)
+	txTypeIn, txTypeCross, isRelayedV3 := tth.ComputeTransactionType(nil)
 	assert.Equal(t, process.InvalidTransaction, txTypeIn)
 	assert.Equal(t, process.InvalidTransaction, txTypeCross)
+	assert.False(t, isRelayedV3)
 }
 
 func TestTxTypeHandler_ComputeTransactionTypeNilTx(t *testing.T) {
@@ -131,9 +146,10 @@ func TestTxTypeHandler_ComputeTransactionTypeNilTx(t *testing.T) {
 	tx.Value = big.NewInt(45)
 
 	tx = nil
-	txTypeIn, txTypeCross := tth.ComputeTransactionType(tx)
+	txTypeIn, txTypeCross, isRelayedV3 := tth.ComputeTransactionType(tx)
 	assert.Equal(t, process.InvalidTransaction, txTypeIn)
 	assert.Equal(t, process.InvalidTransaction, txTypeCross)
+	assert.False(t, isRelayedV3)
 }
 
 func TestTxTypeHandler_ComputeTransactionTypeErrWrongTransaction(t *testing.T) {
@@ -151,9 +167,10 @@ func TestTxTypeHandler_ComputeTransactionTypeErrWrongTransaction(t *testing.T) {
 	tx.RcvAddr = nil
 	tx.Value = big.NewInt(45)
 
-	txTypeIn, txTypeCross := tth.ComputeTransactionType(tx)
+	txTypeIn, txTypeCross, isRelayedV3 := tth.ComputeTransactionType(tx)
 	assert.Equal(t, process.InvalidTransaction, txTypeIn)
 	assert.Equal(t, process.InvalidTransaction, txTypeCross)
+	assert.False(t, isRelayedV3)
 }
 
 func TestTxTypeHandler_ComputeTransactionTypeScDeployment(t *testing.T) {
@@ -172,9 +189,10 @@ func TestTxTypeHandler_ComputeTransactionTypeScDeployment(t *testing.T) {
 	tx.Data = []byte("data")
 	tx.Value = big.NewInt(45)
 
-	txTypeIn, txTypeCross := tth.ComputeTransactionType(tx)
+	txTypeIn, txTypeCross, isRelayedV3 := tth.ComputeTransactionType(tx)
 	assert.Equal(t, process.SCDeployment, txTypeIn)
 	assert.Equal(t, process.SCDeployment, txTypeCross)
+	assert.False(t, isRelayedV3)
 }
 
 func TestTxTypeHandler_ComputeTransactionTypeBuiltInFunctionCallNftTransfer(t *testing.T) {
@@ -207,9 +225,10 @@ func TestTxTypeHandler_ComputeTransactionTypeBuiltInFunctionCallNftTransfer(t *t
 
 	tx.Value = big.NewInt(45)
 
-	txTypeIn, txTypeCross := tth.ComputeTransactionType(tx)
+	txTypeIn, txTypeCross, isRelayedV3 := tth.ComputeTransactionType(tx)
 	assert.Equal(t, process.BuiltInFunctionCall, txTypeIn)
 	assert.Equal(t, process.SCInvoking, txTypeCross)
+	assert.False(t, isRelayedV3)
 }
 
 func TestTxTypeHandler_ComputeTransactionTypeBuiltInFunctionCallEsdtTransfer(t *testing.T) {
@@ -236,9 +255,10 @@ func TestTxTypeHandler_ComputeTransactionTypeBuiltInFunctionCallEsdtTransfer(t *
 		"@" + hex.EncodeToString(big.NewInt(10).Bytes()))
 	tx.Value = big.NewInt(45)
 
-	txTypeIn, txTypeCross := tth.ComputeTransactionType(tx)
+	txTypeIn, txTypeCross, isRelayedV3 := tth.ComputeTransactionType(tx)
 	assert.Equal(t, process.BuiltInFunctionCall, txTypeIn)
 	assert.Equal(t, process.BuiltInFunctionCall, txTypeCross)
+	assert.False(t, isRelayedV3)
 }
 
 func TestTxTypeHandler_ComputeTransactionTypeRecv0AddressWrongTransaction(t *testing.T) {
@@ -257,9 +277,10 @@ func TestTxTypeHandler_ComputeTransactionTypeRecv0AddressWrongTransaction(t *tes
 	tx.Data = nil
 	tx.Value = big.NewInt(45)
 
-	txTypeIn, txTypeCross := tth.ComputeTransactionType(tx)
+	txTypeIn, txTypeCross, isRelayedV3 := tth.ComputeTransactionType(tx)
 	assert.Equal(t, process.InvalidTransaction, txTypeIn)
 	assert.Equal(t, process.InvalidTransaction, txTypeCross)
+	assert.False(t, isRelayedV3)
 }
 
 func TestTxTypeHandler_ComputeTransactionTypeScInvoking(t *testing.T) {
@@ -278,9 +299,10 @@ func TestTxTypeHandler_ComputeTransactionTypeScInvoking(t *testing.T) {
 	assert.NotNil(t, tth)
 	assert.Nil(t, err)
 
-	txTypeIn, txTypeCross := tth.ComputeTransactionType(tx)
+	txTypeIn, txTypeCross, isRelayedV3 := tth.ComputeTransactionType(tx)
 	assert.Equal(t, process.SCInvoking, txTypeIn)
 	assert.Equal(t, process.SCInvoking, txTypeCross)
+	assert.False(t, isRelayedV3)
 }
 
 func TestTxTypeHandler_ComputeTransactionTypeMoveBalance(t *testing.T) {
@@ -294,7 +316,7 @@ func TestTxTypeHandler_ComputeTransactionTypeMoveBalance(t *testing.T) {
 	tx.Value = big.NewInt(45)
 
 	arg := createMockArguments()
-	arg.PubkeyConverter = &mock.PubkeyConverterStub{
+	arg.PubkeyConverter = &testscommon.PubkeyConverterStub{
 		LenCalled: func() int {
 			return len(tx.RcvAddr)
 		},
@@ -304,9 +326,10 @@ func TestTxTypeHandler_ComputeTransactionTypeMoveBalance(t *testing.T) {
 	assert.NotNil(t, tth)
 	assert.Nil(t, err)
 
-	txTypeIn, txTypeCross := tth.ComputeTransactionType(tx)
+	txTypeIn, txTypeCross, isRelayedV3 := tth.ComputeTransactionType(tx)
 	assert.Equal(t, process.MoveBalance, txTypeIn)
 	assert.Equal(t, process.MoveBalance, txTypeCross)
+	assert.False(t, isRelayedV3)
 }
 
 func TestTxTypeHandler_ComputeTransactionTypeBuiltInFunc(t *testing.T) {
@@ -320,7 +343,7 @@ func TestTxTypeHandler_ComputeTransactionTypeBuiltInFunc(t *testing.T) {
 	tx.Value = big.NewInt(45)
 
 	arg := createMockArguments()
-	arg.PubkeyConverter = &mock.PubkeyConverterStub{
+	arg.PubkeyConverter = &testscommon.PubkeyConverterStub{
 		LenCalled: func() int {
 			return len(tx.RcvAddr)
 		},
@@ -333,9 +356,10 @@ func TestTxTypeHandler_ComputeTransactionTypeBuiltInFunc(t *testing.T) {
 	assert.NotNil(t, tth)
 	assert.Nil(t, err)
 
-	txTypeIn, txTypeCross := tth.ComputeTransactionType(tx)
+	txTypeIn, txTypeCross, isRelayedV3 := tth.ComputeTransactionType(tx)
 	assert.Equal(t, process.BuiltInFunctionCall, txTypeIn)
 	assert.Equal(t, process.BuiltInFunctionCall, txTypeCross)
+	assert.False(t, isRelayedV3)
 }
 
 func TestTxTypeHandler_ComputeTransactionTypeBuiltInFuncNotActiveMoveBalance(t *testing.T) {
@@ -349,7 +373,7 @@ func TestTxTypeHandler_ComputeTransactionTypeBuiltInFuncNotActiveMoveBalance(t *
 	tx.Value = big.NewInt(45)
 
 	arg := createMockArguments()
-	arg.PubkeyConverter = &mock.PubkeyConverterStub{
+	arg.PubkeyConverter = &testscommon.PubkeyConverterStub{
 		LenCalled: func() int {
 			return len(tx.RcvAddr)
 		},
@@ -364,9 +388,10 @@ func TestTxTypeHandler_ComputeTransactionTypeBuiltInFuncNotActiveMoveBalance(t *
 	assert.NotNil(t, tth)
 	assert.Nil(t, err)
 
-	txTypeIn, txTypeCross := tth.ComputeTransactionType(tx)
+	txTypeIn, txTypeCross, isRelayedV3 := tth.ComputeTransactionType(tx)
 	assert.Equal(t, process.MoveBalance, txTypeIn)
 	assert.Equal(t, process.MoveBalance, txTypeCross)
+	assert.False(t, isRelayedV3)
 }
 
 func TestTxTypeHandler_ComputeTransactionTypeBuiltInFuncNotActiveSCCall(t *testing.T) {
@@ -380,7 +405,7 @@ func TestTxTypeHandler_ComputeTransactionTypeBuiltInFuncNotActiveSCCall(t *testi
 	tx.Value = big.NewInt(45)
 
 	arg := createMockArguments()
-	arg.PubkeyConverter = &mock.PubkeyConverterStub{
+	arg.PubkeyConverter = &testscommon.PubkeyConverterStub{
 		LenCalled: func() int {
 			return len(tx.RcvAddr)
 		},
@@ -395,9 +420,10 @@ func TestTxTypeHandler_ComputeTransactionTypeBuiltInFuncNotActiveSCCall(t *testi
 	assert.NotNil(t, tth)
 	assert.Nil(t, err)
 
-	txTypeIn, txTypeCross := tth.ComputeTransactionType(tx)
+	txTypeIn, txTypeCross, isRelayedV3 := tth.ComputeTransactionType(tx)
 	assert.Equal(t, process.SCInvoking, txTypeIn)
 	assert.Equal(t, process.SCInvoking, txTypeCross)
+	assert.False(t, isRelayedV3)
 }
 
 func TestTxTypeHandler_ComputeTransactionTypeRelayedFunc(t *testing.T) {
@@ -411,7 +437,7 @@ func TestTxTypeHandler_ComputeTransactionTypeRelayedFunc(t *testing.T) {
 	tx.Value = big.NewInt(45)
 
 	arg := createMockArguments()
-	arg.PubkeyConverter = &mock.PubkeyConverterStub{
+	arg.PubkeyConverter = &testscommon.PubkeyConverterStub{
 		LenCalled: func() int {
 			return len(tx.RcvAddr)
 		},
@@ -421,9 +447,10 @@ func TestTxTypeHandler_ComputeTransactionTypeRelayedFunc(t *testing.T) {
 	assert.NotNil(t, tth)
 	assert.Nil(t, err)
 
-	txTypeIn, txTypeCross := tth.ComputeTransactionType(tx)
+	txTypeIn, txTypeCross, isRelayedV3 := tth.ComputeTransactionType(tx)
 	assert.Equal(t, process.RelayedTx, txTypeIn)
 	assert.Equal(t, process.RelayedTx, txTypeCross)
+	assert.False(t, isRelayedV3)
 }
 
 func TestTxTypeHandler_ComputeTransactionTypeRelayedV2Func(t *testing.T) {
@@ -437,7 +464,7 @@ func TestTxTypeHandler_ComputeTransactionTypeRelayedV2Func(t *testing.T) {
 	tx.Value = big.NewInt(45)
 
 	arg := createMockArguments()
-	arg.PubkeyConverter = &mock.PubkeyConverterStub{
+	arg.PubkeyConverter = &testscommon.PubkeyConverterStub{
 		LenCalled: func() int {
 			return len(tx.RcvAddr)
 		},
@@ -447,14 +474,39 @@ func TestTxTypeHandler_ComputeTransactionTypeRelayedV2Func(t *testing.T) {
 	assert.NotNil(t, tth)
 	assert.Nil(t, err)
 
-	txTypeIn, txTypeCross := tth.ComputeTransactionType(tx)
+	txTypeIn, txTypeCross, isRelayedV3 := tth.ComputeTransactionType(tx)
 	assert.Equal(t, process.RelayedTxV2, txTypeIn)
 	assert.Equal(t, process.RelayedTxV2, txTypeCross)
+	assert.False(t, isRelayedV3)
+}
 
-	tth.flagRelayedTxV2.Reset()
-	txTypeIn, txTypeCross = tth.ComputeTransactionType(tx)
+func TestTxTypeHandler_ComputeTransactionTypeRelayedV3(t *testing.T) {
+	t.Parallel()
+
+	tx := &transaction.Transaction{}
+	tx.Nonce = 0
+	tx.SndAddr = []byte("000")
+	tx.RcvAddr = []byte("001")
+	tx.Value = big.NewInt(45)
+	tx.RelayerAddr = []byte("002")
+	tx.Signature = []byte("ssig")
+	tx.RelayerSignature = []byte("rsig")
+
+	arg := createMockArguments()
+	arg.PubkeyConverter = &testscommon.PubkeyConverterStub{
+		LenCalled: func() int {
+			return len(tx.RcvAddr)
+		},
+	}
+	tth, err := NewTxTypeHandler(arg)
+
+	assert.NotNil(t, tth)
+	assert.Nil(t, err)
+
+	txTypeIn, txTypeCross, isRelayedV3 := tth.ComputeTransactionType(tx)
 	assert.Equal(t, process.MoveBalance, txTypeIn)
 	assert.Equal(t, process.MoveBalance, txTypeCross)
+	assert.True(t, isRelayedV3)
 }
 
 func TestTxTypeHandler_ComputeTransactionTypeForSCRCallBack(t *testing.T) {
@@ -469,7 +521,7 @@ func TestTxTypeHandler_ComputeTransactionTypeForSCRCallBack(t *testing.T) {
 	tx.Value = big.NewInt(45)
 
 	arg := createMockArguments()
-	arg.PubkeyConverter = &mock.PubkeyConverterStub{
+	arg.PubkeyConverter = &testscommon.PubkeyConverterStub{
 		LenCalled: func() int {
 			return len(tx.RcvAddr)
 		},
@@ -479,7 +531,8 @@ func TestTxTypeHandler_ComputeTransactionTypeForSCRCallBack(t *testing.T) {
 	assert.NotNil(t, tth)
 	assert.Nil(t, err)
 
-	txTypeIn, txTypeCross := tth.ComputeTransactionType(tx)
+	txTypeIn, txTypeCross, isRelayedV3 := tth.ComputeTransactionType(tx)
 	assert.Equal(t, process.SCInvoking, txTypeIn)
 	assert.Equal(t, process.SCInvoking, txTypeCross)
+	assert.False(t, isRelayedV3)
 }

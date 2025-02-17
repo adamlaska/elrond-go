@@ -6,22 +6,27 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"strings"
 	"testing"
 
-	"github.com/ElrondNetwork/elrond-go-core/core"
-	"github.com/ElrondNetwork/elrond-go-core/core/check"
-	"github.com/ElrondNetwork/elrond-go-core/core/versioning"
-	"github.com/ElrondNetwork/elrond-go-core/data"
-	dataTransaction "github.com/ElrondNetwork/elrond-go-core/data/transaction"
-	"github.com/ElrondNetwork/elrond-go-crypto"
-	logger "github.com/ElrondNetwork/elrond-go-logger"
-	"github.com/ElrondNetwork/elrond-go/process"
-	"github.com/ElrondNetwork/elrond-go/process/interceptors"
-	"github.com/ElrondNetwork/elrond-go/process/mock"
-	"github.com/ElrondNetwork/elrond-go/process/smartContract"
-	"github.com/ElrondNetwork/elrond-go/process/transaction"
-	"github.com/ElrondNetwork/elrond-go/testscommon"
-	"github.com/ElrondNetwork/elrond-go/testscommon/hashingMocks"
+	"github.com/multiversx/mx-chain-core-go/core"
+	"github.com/multiversx/mx-chain-core-go/core/check"
+	"github.com/multiversx/mx-chain-core-go/core/versioning"
+	"github.com/multiversx/mx-chain-core-go/data"
+	dataTransaction "github.com/multiversx/mx-chain-core-go/data/transaction"
+	"github.com/multiversx/mx-chain-crypto-go"
+	"github.com/multiversx/mx-chain-go/common"
+	"github.com/multiversx/mx-chain-go/process"
+	"github.com/multiversx/mx-chain-go/process/interceptors"
+	"github.com/multiversx/mx-chain-go/process/mock"
+	"github.com/multiversx/mx-chain-go/process/smartContract"
+	"github.com/multiversx/mx-chain-go/process/transaction"
+	"github.com/multiversx/mx-chain-go/testscommon"
+	"github.com/multiversx/mx-chain-go/testscommon/economicsmocks"
+	"github.com/multiversx/mx-chain-go/testscommon/enableEpochsHandlerMock"
+	"github.com/multiversx/mx-chain-go/testscommon/hashingMocks"
+	"github.com/multiversx/mx-chain-go/testscommon/marshallerMock"
+	logger "github.com/multiversx/mx-chain-logger-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -33,11 +38,12 @@ var senderShard = uint32(2)
 var recvShard = uint32(3)
 var senderAddress = []byte("12345678901234567890123456789012")
 var recvAddress = []byte("23456789012345678901234567890123")
+var relayerAddress = []byte("34567890123456789012345678901234")
 var sigBad = []byte("bad-signature")
 var sigOk = []byte("signature")
 
-func createMockPubkeyConverter() *mock.PubkeyConverterMock {
-	return mock.NewPubkeyConverterMock(32)
+func createMockPubKeyConverter() *testscommon.PubkeyConverterMock {
+	return testscommon.NewPubkeyConverterMock(32)
 }
 
 func createDummySigner() crypto.SingleSigner {
@@ -63,12 +69,56 @@ func createKeyGenMock() crypto.KeyGenerator {
 	}
 }
 
-func createFreeTxFeeHandler() *mock.FeeHandlerStub {
-	return &mock.FeeHandlerStub{
+func createFreeTxFeeHandler() *economicsmocks.EconomicsHandlerStub {
+	return &economicsmocks.EconomicsHandlerStub{
 		CheckValidityTxValuesCalled: func(tx data.TransactionWithFeeHandler) error {
 			return nil
 		},
 	}
+}
+
+func createInterceptedTxWithTxFeeHandlerAndVersionChecker(tx *dataTransaction.Transaction, txFeeHandler process.FeeHandler, txVerChecker *testscommon.TxVersionCheckerStub) (*transaction.InterceptedTransaction, error) {
+	marshaller := &marshallerMock.MarshalizerMock{}
+	txBuff, err := marshaller.Marshal(tx)
+	if err != nil {
+		return nil, err
+	}
+
+	shardCoordinator := mock.NewMultipleShardsCoordinatorMock()
+	shardCoordinator.CurrentShard = 6
+	shardCoordinator.ComputeIdCalled = func(address []byte) uint32 {
+		if bytes.Equal(address, senderAddress) {
+			return senderShard
+		}
+		if bytes.Equal(address, recvAddress) {
+			return recvShard
+		}
+
+		return shardCoordinator.CurrentShard
+	}
+
+	return transaction.NewInterceptedTransaction(
+		txBuff,
+		marshaller,
+		marshaller,
+		&hashingMocks.HasherMock{},
+		createKeyGenMock(),
+		createDummySigner(),
+		&testscommon.PubkeyConverterStub{
+			LenCalled: func() int {
+				return 32
+			},
+		},
+		shardCoordinator,
+		txFeeHandler,
+		&testscommon.WhiteListHandlerStub{},
+		&testscommon.ArgumentParserMock{},
+		[]byte("T"),
+		false,
+		&hashingMocks.HasherMock{},
+		txVerChecker,
+		enableEpochsHandlerMock.NewEnableEpochsHandlerStub(),
+	)
 }
 
 func createInterceptedTxFromPlainTx(tx *dataTransaction.Transaction, txFeeHandler process.FeeHandler, chainID []byte, minTxVersion uint32) (*transaction.InterceptedTransaction, error) {
@@ -98,7 +148,7 @@ func createInterceptedTxFromPlainTx(tx *dataTransaction.Transaction, txFeeHandle
 		&hashingMocks.HasherMock{},
 		createKeyGenMock(),
 		createDummySigner(),
-		&mock.PubkeyConverterStub{
+		&testscommon.PubkeyConverterStub{
 			LenCalled: func() int {
 				return 32
 			},
@@ -106,11 +156,12 @@ func createInterceptedTxFromPlainTx(tx *dataTransaction.Transaction, txFeeHandle
 		shardCoordinator,
 		txFeeHandler,
 		&testscommon.WhiteListHandlerStub{},
-		&mock.ArgumentParserMock{},
+		&testscommon.ArgumentParserMock{},
 		chainID,
 		false,
 		&hashingMocks.HasherMock{},
 		versioning.NewTxVersionChecker(minTxVersion),
+		enableEpochsHandlerMock.NewEnableEpochsHandlerStub(),
 	)
 }
 
@@ -124,7 +175,8 @@ func createInterceptedTxFromPlainTxWithArgParser(tx *dataTransaction.Transaction
 	shardCoordinator := mock.NewMultipleShardsCoordinatorMock()
 	shardCoordinator.CurrentShard = 0
 	shardCoordinator.ComputeIdCalled = func(address []byte) uint32 {
-		if bytes.Equal(address, senderAddress) {
+		if bytes.Equal(address, senderAddress) ||
+			bytes.Equal(address, relayerAddress) {
 			return senderShard
 		}
 		if bytes.Equal(address, recvAddress) {
@@ -132,6 +184,10 @@ func createInterceptedTxFromPlainTxWithArgParser(tx *dataTransaction.Transaction
 		}
 
 		return shardCoordinator.CurrentShard
+	}
+	shardCoordinator.SameShardCalled = func(firstAddress, secondAddress []byte) bool {
+		return string(firstAddress) == string(relayerAddress) &&
+			string(secondAddress) == string(senderAddress)
 	}
 
 	return transaction.NewInterceptedTransaction(
@@ -141,7 +197,7 @@ func createInterceptedTxFromPlainTxWithArgParser(tx *dataTransaction.Transaction
 		&hashingMocks.HasherMock{},
 		createKeyGenMock(),
 		createDummySigner(),
-		&mock.PubkeyConverterStub{
+		&testscommon.PubkeyConverterStub{
 			LenCalled: func() int {
 				return 32
 			},
@@ -154,6 +210,7 @@ func createInterceptedTxFromPlainTxWithArgParser(tx *dataTransaction.Transaction
 		false,
 		&hashingMocks.HasherMock{},
 		versioning.NewTxVersionChecker(tx.Version),
+		enableEpochsHandlerMock.NewEnableEpochsHandlerStub(common.RelayedTransactionsV3Flag),
 	)
 }
 
@@ -169,15 +226,16 @@ func TestNewInterceptedTransaction_NilBufferShouldErr(t *testing.T) {
 		&hashingMocks.HasherMock{},
 		&mock.SingleSignKeyGenMock{},
 		&mock.SignerMock{},
-		createMockPubkeyConverter(),
+		createMockPubKeyConverter(),
 		mock.NewOneShardCoordinatorMock(),
-		&mock.FeeHandlerStub{},
+		&economicsmocks.EconomicsHandlerStub{},
 		&testscommon.WhiteListHandlerStub{},
-		&mock.ArgumentParserMock{},
+		&testscommon.ArgumentParserMock{},
 		[]byte("chainID"),
 		false,
 		&hashingMocks.HasherMock{},
 		versioning.NewTxVersionChecker(1),
+		enableEpochsHandlerMock.NewEnableEpochsHandlerStub(),
 	)
 
 	assert.Nil(t, txi)
@@ -194,15 +252,16 @@ func TestNewInterceptedTransaction_NilArgsParser(t *testing.T) {
 		&hashingMocks.HasherMock{},
 		&mock.SingleSignKeyGenMock{},
 		&mock.SignerMock{},
-		createMockPubkeyConverter(),
+		createMockPubKeyConverter(),
 		mock.NewOneShardCoordinatorMock(),
-		&mock.FeeHandlerStub{},
+		&economicsmocks.EconomicsHandlerStub{},
 		&testscommon.WhiteListHandlerStub{},
 		nil,
 		[]byte("chainID"),
 		false,
 		&hashingMocks.HasherMock{},
 		versioning.NewTxVersionChecker(1),
+		enableEpochsHandlerMock.NewEnableEpochsHandlerStub(),
 	)
 
 	assert.Nil(t, txi)
@@ -219,15 +278,16 @@ func TestNewInterceptedTransaction_NilVersionChecker(t *testing.T) {
 		&hashingMocks.HasherMock{},
 		&mock.SingleSignKeyGenMock{},
 		&mock.SignerMock{},
-		createMockPubkeyConverter(),
+		createMockPubKeyConverter(),
 		mock.NewOneShardCoordinatorMock(),
-		&mock.FeeHandlerStub{},
+		&economicsmocks.EconomicsHandlerStub{},
 		&testscommon.WhiteListHandlerStub{},
-		&mock.ArgumentParserMock{},
+		&testscommon.ArgumentParserMock{},
 		[]byte("chainID"),
 		false,
 		&hashingMocks.HasherMock{},
 		nil,
+		enableEpochsHandlerMock.NewEnableEpochsHandlerStub(),
 	)
 
 	assert.Nil(t, txi)
@@ -244,15 +304,16 @@ func TestNewInterceptedTransaction_NilMarshalizerShouldErr(t *testing.T) {
 		&hashingMocks.HasherMock{},
 		&mock.SingleSignKeyGenMock{},
 		&mock.SignerMock{},
-		createMockPubkeyConverter(),
+		createMockPubKeyConverter(),
 		mock.NewOneShardCoordinatorMock(),
-		&mock.FeeHandlerStub{},
+		&economicsmocks.EconomicsHandlerStub{},
 		&testscommon.WhiteListHandlerStub{},
-		&mock.ArgumentParserMock{},
+		&testscommon.ArgumentParserMock{},
 		[]byte("chainID"),
 		false,
 		&hashingMocks.HasherMock{},
 		versioning.NewTxVersionChecker(1),
+		enableEpochsHandlerMock.NewEnableEpochsHandlerStub(),
 	)
 
 	assert.Nil(t, txi)
@@ -269,15 +330,16 @@ func TestNewInterceptedTransaction_NilSignMarshalizerShouldErr(t *testing.T) {
 		&hashingMocks.HasherMock{},
 		&mock.SingleSignKeyGenMock{},
 		&mock.SignerMock{},
-		createMockPubkeyConverter(),
+		createMockPubKeyConverter(),
 		mock.NewOneShardCoordinatorMock(),
-		&mock.FeeHandlerStub{},
+		&economicsmocks.EconomicsHandlerStub{},
 		&testscommon.WhiteListHandlerStub{},
-		&mock.ArgumentParserMock{},
+		&testscommon.ArgumentParserMock{},
 		[]byte("chainID"),
 		false,
 		&hashingMocks.HasherMock{},
 		versioning.NewTxVersionChecker(1),
+		enableEpochsHandlerMock.NewEnableEpochsHandlerStub(),
 	)
 
 	assert.Nil(t, txi)
@@ -294,15 +356,16 @@ func TestNewInterceptedTransaction_NilHasherShouldErr(t *testing.T) {
 		nil,
 		&mock.SingleSignKeyGenMock{},
 		&mock.SignerMock{},
-		createMockPubkeyConverter(),
+		createMockPubKeyConverter(),
 		mock.NewOneShardCoordinatorMock(),
-		&mock.FeeHandlerStub{},
+		&economicsmocks.EconomicsHandlerStub{},
 		&testscommon.WhiteListHandlerStub{},
-		&mock.ArgumentParserMock{},
+		&testscommon.ArgumentParserMock{},
 		[]byte("chainID"),
 		false,
 		&hashingMocks.HasherMock{},
 		versioning.NewTxVersionChecker(1),
+		enableEpochsHandlerMock.NewEnableEpochsHandlerStub(),
 	)
 
 	assert.Nil(t, txi)
@@ -319,15 +382,16 @@ func TestNewInterceptedTransaction_NilKeyGenShouldErr(t *testing.T) {
 		&hashingMocks.HasherMock{},
 		nil,
 		&mock.SignerMock{},
-		createMockPubkeyConverter(),
+		createMockPubKeyConverter(),
 		mock.NewOneShardCoordinatorMock(),
-		&mock.FeeHandlerStub{},
+		&economicsmocks.EconomicsHandlerStub{},
 		&testscommon.WhiteListHandlerStub{},
-		&mock.ArgumentParserMock{},
+		&testscommon.ArgumentParserMock{},
 		[]byte("chainID"),
 		false,
 		&hashingMocks.HasherMock{},
 		versioning.NewTxVersionChecker(1),
+		enableEpochsHandlerMock.NewEnableEpochsHandlerStub(),
 	)
 
 	assert.Nil(t, txi)
@@ -344,15 +408,16 @@ func TestNewInterceptedTransaction_NilSignerShouldErr(t *testing.T) {
 		&hashingMocks.HasherMock{},
 		&mock.SingleSignKeyGenMock{},
 		nil,
-		createMockPubkeyConverter(),
+		createMockPubKeyConverter(),
 		mock.NewOneShardCoordinatorMock(),
-		&mock.FeeHandlerStub{},
+		&economicsmocks.EconomicsHandlerStub{},
 		&testscommon.WhiteListHandlerStub{},
-		&mock.ArgumentParserMock{},
+		&testscommon.ArgumentParserMock{},
 		[]byte("chainID"),
 		false,
 		&hashingMocks.HasherMock{},
 		versioning.NewTxVersionChecker(1),
+		enableEpochsHandlerMock.NewEnableEpochsHandlerStub(),
 	)
 
 	assert.Nil(t, txi)
@@ -371,13 +436,14 @@ func TestNewInterceptedTransaction_NilPubkeyConverterShouldErr(t *testing.T) {
 		&mock.SignerMock{},
 		nil,
 		mock.NewOneShardCoordinatorMock(),
-		&mock.FeeHandlerStub{},
+		&economicsmocks.EconomicsHandlerStub{},
 		&testscommon.WhiteListHandlerStub{},
-		&mock.ArgumentParserMock{},
+		&testscommon.ArgumentParserMock{},
 		[]byte("chainID"),
 		false,
 		&hashingMocks.HasherMock{},
 		versioning.NewTxVersionChecker(1),
+		enableEpochsHandlerMock.NewEnableEpochsHandlerStub(),
 	)
 
 	assert.Nil(t, txi)
@@ -394,15 +460,16 @@ func TestNewInterceptedTransaction_NilCoordinatorShouldErr(t *testing.T) {
 		&hashingMocks.HasherMock{},
 		&mock.SingleSignKeyGenMock{},
 		&mock.SignerMock{},
-		createMockPubkeyConverter(),
+		createMockPubKeyConverter(),
 		nil,
-		&mock.FeeHandlerStub{},
+		&economicsmocks.EconomicsHandlerStub{},
 		&testscommon.WhiteListHandlerStub{},
-		&mock.ArgumentParserMock{},
+		&testscommon.ArgumentParserMock{},
 		[]byte("chainID"),
 		false,
 		&hashingMocks.HasherMock{},
 		versioning.NewTxVersionChecker(1),
+		enableEpochsHandlerMock.NewEnableEpochsHandlerStub(),
 	)
 
 	assert.Nil(t, txi)
@@ -419,15 +486,16 @@ func TestNewInterceptedTransaction_NilFeeHandlerShouldErr(t *testing.T) {
 		&hashingMocks.HasherMock{},
 		&mock.SingleSignKeyGenMock{},
 		&mock.SignerMock{},
-		createMockPubkeyConverter(),
+		createMockPubKeyConverter(),
 		mock.NewOneShardCoordinatorMock(),
 		nil,
 		&testscommon.WhiteListHandlerStub{},
-		&mock.ArgumentParserMock{},
+		&testscommon.ArgumentParserMock{},
 		[]byte("chainID"),
 		false,
 		&hashingMocks.HasherMock{},
 		versioning.NewTxVersionChecker(1),
+		enableEpochsHandlerMock.NewEnableEpochsHandlerStub(),
 	)
 
 	assert.Nil(t, txi)
@@ -444,15 +512,16 @@ func TestNewInterceptedTransaction_NilWhiteListerVerifiedTxsShouldErr(t *testing
 		&hashingMocks.HasherMock{},
 		&mock.SingleSignKeyGenMock{},
 		&mock.SignerMock{},
-		createMockPubkeyConverter(),
+		createMockPubKeyConverter(),
 		mock.NewOneShardCoordinatorMock(),
-		&mock.FeeHandlerStub{},
+		&economicsmocks.EconomicsHandlerStub{},
 		nil,
-		&mock.ArgumentParserMock{},
+		&testscommon.ArgumentParserMock{},
 		[]byte("chainID"),
 		false,
 		&hashingMocks.HasherMock{},
 		versioning.NewTxVersionChecker(1),
+		enableEpochsHandlerMock.NewEnableEpochsHandlerStub(),
 	)
 
 	assert.Nil(t, txi)
@@ -469,15 +538,16 @@ func TestNewInterceptedTransaction_InvalidChainIDShouldErr(t *testing.T) {
 		&hashingMocks.HasherMock{},
 		&mock.SingleSignKeyGenMock{},
 		&mock.SignerMock{},
-		createMockPubkeyConverter(),
+		createMockPubKeyConverter(),
 		mock.NewOneShardCoordinatorMock(),
-		&mock.FeeHandlerStub{},
+		&economicsmocks.EconomicsHandlerStub{},
 		&testscommon.WhiteListHandlerStub{},
-		&mock.ArgumentParserMock{},
+		&testscommon.ArgumentParserMock{},
 		nil,
 		false,
 		&hashingMocks.HasherMock{},
 		versioning.NewTxVersionChecker(1),
+		enableEpochsHandlerMock.NewEnableEpochsHandlerStub(),
 	)
 
 	assert.Nil(t, txi)
@@ -494,19 +564,46 @@ func TestNewInterceptedTransaction_NilTxSignHasherShouldErr(t *testing.T) {
 		&hashingMocks.HasherMock{},
 		&mock.SingleSignKeyGenMock{},
 		&mock.SignerMock{},
-		createMockPubkeyConverter(),
+		createMockPubKeyConverter(),
 		mock.NewOneShardCoordinatorMock(),
-		&mock.FeeHandlerStub{},
+		&economicsmocks.EconomicsHandlerStub{},
 		&testscommon.WhiteListHandlerStub{},
-		&mock.ArgumentParserMock{},
+		&testscommon.ArgumentParserMock{},
 		[]byte("chainID"),
 		false,
 		nil,
 		versioning.NewTxVersionChecker(1),
+		enableEpochsHandlerMock.NewEnableEpochsHandlerStub(),
 	)
 
 	assert.Nil(t, txi)
 	assert.Equal(t, process.ErrNilHasher, err)
+}
+
+func TestNewInterceptedTransaction_NilEnableEpochsHandlerShouldErr(t *testing.T) {
+	t.Parallel()
+
+	txi, err := transaction.NewInterceptedTransaction(
+		make([]byte, 0),
+		&mock.MarshalizerMock{},
+		&mock.MarshalizerMock{},
+		&hashingMocks.HasherMock{},
+		&mock.SingleSignKeyGenMock{},
+		&mock.SignerMock{},
+		createMockPubKeyConverter(),
+		mock.NewOneShardCoordinatorMock(),
+		&economicsmocks.EconomicsHandlerStub{},
+		&testscommon.WhiteListHandlerStub{},
+		&testscommon.ArgumentParserMock{},
+		[]byte("chainID"),
+		false,
+		&hashingMocks.HasherMock{},
+		versioning.NewTxVersionChecker(1),
+		nil,
+	)
+
+	assert.Nil(t, txi)
+	assert.Equal(t, process.ErrNilEnableEpochsHandler, err)
 }
 
 func TestNewInterceptedTransaction_UnmarshalingTxFailsShouldErr(t *testing.T) {
@@ -525,15 +622,16 @@ func TestNewInterceptedTransaction_UnmarshalingTxFailsShouldErr(t *testing.T) {
 		&hashingMocks.HasherMock{},
 		&mock.SingleSignKeyGenMock{},
 		&mock.SignerMock{},
-		createMockPubkeyConverter(),
+		createMockPubKeyConverter(),
 		mock.NewOneShardCoordinatorMock(),
-		&mock.FeeHandlerStub{},
+		&economicsmocks.EconomicsHandlerStub{},
 		&testscommon.WhiteListHandlerStub{},
-		&mock.ArgumentParserMock{},
+		&testscommon.ArgumentParserMock{},
 		[]byte("chainID"),
 		false,
 		&hashingMocks.HasherMock{},
 		versioning.NewTxVersionChecker(1),
+		enableEpochsHandlerMock.NewEnableEpochsHandlerStub(),
 	)
 
 	assert.Nil(t, txi)
@@ -792,7 +890,7 @@ func TestNewInterceptedTransaction_InsufficientFeeShouldErr(t *testing.T) {
 		Version:   minTxVersion,
 	}
 	errExpected := errors.New("insufficient fee")
-	feeHandler := &mock.FeeHandlerStub{
+	feeHandler := &economicsmocks.EconomicsHandlerStub{
 		CheckValidityTxValuesCalled: func(tx data.TransactionWithFeeHandler) error {
 			return errExpected
 		},
@@ -966,7 +1064,7 @@ func TestInterceptedTransaction_CheckValiditySignedWithHashButNotEnabled(t *test
 		Signature: sigOk,
 		ChainID:   chainID,
 		Version:   minTxVersion + 1,
-		Options:   versioning.MaskSignedWithHash,
+		Options:   dataTransaction.MaskSignedWithHash,
 	}
 
 	marshalizer := &mock.MarshalizerMock{}
@@ -991,7 +1089,7 @@ func TestInterceptedTransaction_CheckValiditySignedWithHashButNotEnabled(t *test
 		&hashingMocks.HasherMock{},
 		createKeyGenMock(),
 		createDummySigner(),
-		&mock.PubkeyConverterStub{
+		&testscommon.PubkeyConverterStub{
 			LenCalled: func() int {
 				return 32
 			},
@@ -999,18 +1097,19 @@ func TestInterceptedTransaction_CheckValiditySignedWithHashButNotEnabled(t *test
 		shardCoordinator,
 		createFreeTxFeeHandler(),
 		&testscommon.WhiteListHandlerStub{},
-		&mock.ArgumentParserMock{},
+		&testscommon.ArgumentParserMock{},
 		chainID,
 		false,
 		&hashingMocks.HasherMock{},
 		versioning.NewTxVersionChecker(minTxVersion),
+		enableEpochsHandlerMock.NewEnableEpochsHandlerStub(),
 	)
 
 	err := txi.CheckValidity()
 	assert.Equal(t, process.ErrTransactionSignedWithHashIsNotEnabled, err)
 }
 
-func TestInterceptedTransaction_CheckValiditySignedWithHashShoudWork(t *testing.T) {
+func TestInterceptedTransaction_CheckValiditySignedWithHashShouldWork(t *testing.T) {
 	t.Parallel()
 
 	minTxVersion := uint32(1)
@@ -1026,7 +1125,7 @@ func TestInterceptedTransaction_CheckValiditySignedWithHashShoudWork(t *testing.
 		Signature: sigOk,
 		ChainID:   chainID,
 		Version:   minTxVersion + 1,
-		Options:   versioning.MaskSignedWithHash,
+		Options:   dataTransaction.MaskSignedWithHash,
 	}
 
 	marshalizer := &mock.MarshalizerMock{}
@@ -1051,7 +1150,7 @@ func TestInterceptedTransaction_CheckValiditySignedWithHashShoudWork(t *testing.
 		&hashingMocks.HasherMock{},
 		createKeyGenMock(),
 		createDummySigner(),
-		&mock.PubkeyConverterStub{
+		&testscommon.PubkeyConverterStub{
 			LenCalled: func() int {
 				return 32
 			},
@@ -1059,11 +1158,12 @@ func TestInterceptedTransaction_CheckValiditySignedWithHashShoudWork(t *testing.
 		shardCoordinator,
 		createFreeTxFeeHandler(),
 		&testscommon.WhiteListHandlerStub{},
-		&mock.ArgumentParserMock{},
+		&testscommon.ArgumentParserMock{},
 		chainID,
 		true,
 		&hashingMocks.HasherMock{},
 		versioning.NewTxVersionChecker(minTxVersion),
+		enableEpochsHandlerMock.NewEnableEpochsHandlerStub(),
 	)
 
 	err := txi.CheckValidity()
@@ -1140,15 +1240,16 @@ func TestInterceptedTransaction_ScTxDeployRecvShardIdShouldBeSendersShardId(t *t
 		&hashingMocks.HasherMock{},
 		createKeyGenMock(),
 		createDummySigner(),
-		&mock.PubkeyConverterStub{},
+		&testscommon.PubkeyConverterStub{},
 		shardCoordinator,
 		createFreeTxFeeHandler(),
 		&testscommon.WhiteListHandlerStub{},
-		&mock.ArgumentParserMock{},
+		&testscommon.ArgumentParserMock{},
 		chainID,
 		false,
 		&hashingMocks.HasherMock{},
 		versioning.NewTxVersionChecker(minTxVersion),
+		enableEpochsHandlerMock.NewEnableEpochsHandlerStub(),
 	)
 
 	assert.Nil(t, err)
@@ -1275,7 +1376,7 @@ func TestInterceptedTransaction_CheckValiditySecondTimeDoesNotVerifySig(t *testi
 		&hashingMocks.HasherMock{},
 		createKeyGenMock(),
 		signer,
-		&mock.PubkeyConverterStub{
+		&testscommon.PubkeyConverterStub{
 			LenCalled: func() int {
 				return 32
 			},
@@ -1283,11 +1384,12 @@ func TestInterceptedTransaction_CheckValiditySecondTimeDoesNotVerifySig(t *testi
 		shardCoordinator,
 		createFreeTxFeeHandler(),
 		whiteListerVerifiedTxs,
-		&mock.ArgumentParserMock{},
+		&testscommon.ArgumentParserMock{},
 		chainID,
 		false,
 		&hashingMocks.HasherMock{},
 		versioning.NewTxVersionChecker(minTxVersion),
+		enableEpochsHandlerMock.NewEnableEpochsHandlerStub(),
 	)
 	require.Nil(t, err)
 
@@ -1350,7 +1452,7 @@ func TestInterceptedTransaction_CheckValidityOfRelayedTx(t *testing.T) {
 	tx.Data = []byte(core.RelayedTransaction + "@" + hex.EncodeToString(userTxData))
 	txi, _ = createInterceptedTxFromPlainTxWithArgParser(tx)
 	err = txi.CheckValidity()
-	assert.Equal(t, process.ErrNilValue, err)
+	assert.ErrorIs(t, err, data.ErrNilValue)
 
 	userTx.Value = big.NewInt(0)
 	userTxData, _ = marshalizer.Marshal(userTx)
@@ -1364,7 +1466,8 @@ func TestInterceptedTransaction_CheckValidityOfRelayedTx(t *testing.T) {
 	tx.Data = []byte(core.RelayedTransaction + "@" + hex.EncodeToString(userTxData))
 	txi, _ = createInterceptedTxFromPlainTxWithArgParser(tx)
 	err = txi.CheckValidity()
-	assert.Equal(t, errSignerMockVerifySigFails, err)
+	assert.ErrorIs(t, err, errSignerMockVerifySigFails)
+	assert.Contains(t, err.Error(), "inner transaction")
 
 	userTx.Signature = sigOk
 	userTx.SndAddr = []byte("otherAddress")
@@ -1380,7 +1483,8 @@ func TestInterceptedTransaction_CheckValidityOfRelayedTx(t *testing.T) {
 	tx.Data = []byte(core.RelayedTransaction + "@" + hex.EncodeToString(userTxData))
 	txi, _ = createInterceptedTxFromPlainTxWithArgParser(tx)
 	err = txi.CheckValidity()
-	assert.Equal(t, process.ErrRecursiveRelayedTxIsNotAllowed, err)
+	assert.True(t, strings.Contains(err.Error(), process.ErrRecursiveRelayedTxIsNotAllowed.Error()))
+	assert.Contains(t, err.Error(), "inner transaction")
 }
 
 func TestInterceptedTransaction_CheckValidityOfRelayedTxV2(t *testing.T) {
@@ -1433,18 +1537,96 @@ func TestInterceptedTransaction_CheckValidityOfRelayedTxV2(t *testing.T) {
 	tx.Data = []byte(core.RelayedTransactionV2 + "@" + hex.EncodeToString(userTx.RcvAddr) + "@" + hex.EncodeToString(big.NewInt(0).SetUint64(userTx.Nonce).Bytes()) + "@" + hex.EncodeToString(userTx.Data) + "@" + hex.EncodeToString(userTx.Signature))
 	txi, _ = createInterceptedTxFromPlainTxWithArgParser(tx)
 	err = txi.CheckValidity()
-	assert.Equal(t, errSignerMockVerifySigFails, err)
+	assert.ErrorIs(t, err, errSignerMockVerifySigFails)
+	assert.Contains(t, err.Error(), "inner transaction")
 
 	userTx.Signature = sigOk
 	userTx.SndAddr = []byte("otherAddress")
 	tx.Data = []byte(core.RelayedTransactionV2 + "@" + hex.EncodeToString(userTx.RcvAddr) + "@" + hex.EncodeToString(big.NewInt(0).SetUint64(userTx.Nonce).Bytes()) + "@" + hex.EncodeToString([]byte(core.RelayedTransaction)) + "@" + hex.EncodeToString(userTx.Signature))
 	txi, _ = createInterceptedTxFromPlainTxWithArgParser(tx)
 	err = txi.CheckValidity()
-	assert.Equal(t, process.ErrRecursiveRelayedTxIsNotAllowed, err)
+	assert.True(t, strings.Contains(err.Error(), process.ErrRecursiveRelayedTxIsNotAllowed.Error()))
+	assert.Contains(t, err.Error(), "inner transaction")
 
 	userTx.Signature = sigOk
 	userTx.SndAddr = []byte("otherAddress")
 	tx.Data = []byte(core.RelayedTransactionV2 + "@" + hex.EncodeToString(userTx.RcvAddr) + "@" + hex.EncodeToString(big.NewInt(0).SetUint64(userTx.Nonce).Bytes()) + "@" + hex.EncodeToString(userTx.Data) + "@" + hex.EncodeToString(userTx.Signature))
+	txi, _ = createInterceptedTxFromPlainTxWithArgParser(tx)
+	err = txi.CheckValidity()
+	assert.Nil(t, err)
+}
+
+func TestInterceptedTransaction_CheckValidityOfRelayedTxV3(t *testing.T) {
+	t.Parallel()
+
+	minTxVersion := uint32(1)
+	chainID := []byte("chain")
+	tx := &dataTransaction.Transaction{
+		Nonce:       1,
+		Value:       big.NewInt(2),
+		GasLimit:    3,
+		GasPrice:    4,
+		RcvAddr:     recvAddress,
+		SndAddr:     senderAddress,
+		ChainID:     chainID,
+		Version:     minTxVersion,
+		RelayerAddr: relayerAddress,
+	}
+	txi, _ := createInterceptedTxFromPlainTxWithArgParser(tx)
+	err := txi.CheckValidity()
+	assert.Equal(t, err, process.ErrNilSignature)
+
+	tx.Signature = sigOk
+	tx.RelayerSignature = sigOk
+
+	// flag not active should error
+	txi, _ = createInterceptedTxFromPlainTxWithArgParser(tx)
+	txi.SetEnableEpochsHandler(enableEpochsHandlerMock.NewEnableEpochsHandlerStub())
+	err = txi.CheckValidity()
+	assert.Equal(t, process.ErrRelayedTxV3Disabled, err)
+
+	// invalid relayed v3 should error
+	tx.RelayerSignature = nil
+	txi, _ = createInterceptedTxFromPlainTxWithArgParser(tx)
+	err = txi.CheckValidity()
+	assert.Equal(t, process.ErrInvalidRelayedTxV3, err)
+
+	// sender in different shard than relayer should fail
+	tx.RelayerSignature = sigOk
+	tx.RelayerAddr = bytes.Repeat([]byte("a"), len(relayerAddress))
+	txi, _ = createInterceptedTxFromPlainTxWithArgParser(tx)
+	err = txi.CheckValidity()
+	assert.Equal(t, process.ErrShardIdMissmatch, err)
+
+	// relayer == guardian should fail
+	tx.Version = 2
+	tx.Options = 2
+	tx.RelayerAddr = relayerAddress
+	tx.GuardianAddr = tx.RelayerAddr
+	tx.GuardianSignature = sigOk
+	txi, _ = createInterceptedTxFromPlainTxWithArgParser(tx)
+	err = txi.CheckValidity()
+	assert.Equal(t, process.ErrRelayedByGuardianNotAllowed, err)
+
+	// recursive relayed txs
+	tx.Version = minTxVersion
+	tx.Options = 0
+	tx.GuardianAddr = nil
+	tx.GuardianSignature = nil
+	tx.Data = []byte(core.RelayedTransactionV2 + "@" + hex.EncodeToString(recvAddress) + "@" + hex.EncodeToString(big.NewInt(0).SetUint64(0).Bytes()) + "@" + hex.EncodeToString([]byte("some method")) + "@" + hex.EncodeToString(sigOk))
+	txi, _ = createInterceptedTxFromPlainTxWithArgParser(tx)
+	err = txi.CheckValidity()
+	assert.True(t, errors.Is(err, process.ErrRecursiveRelayedTxIsNotAllowed))
+
+	// invalid relayer signature
+	tx.Data = nil
+	tx.RelayerSignature = bytes.Repeat([]byte("a"), len(sigOk)) // same length but invalid relayer sig
+	txi, _ = createInterceptedTxFromPlainTxWithArgParser(tx)
+	err = txi.CheckValidity()
+	assert.NotNil(t, err)
+
+	// should work
+	tx.RelayerSignature = sigOk
 	txi, _ = createInterceptedTxFromPlainTxWithArgParser(tx)
 	err = txi.CheckValidity()
 	assert.Nil(t, err)
@@ -1570,15 +1752,16 @@ func TestInterceptedTransaction_Fee(t *testing.T) {
 		&hashingMocks.HasherMock{},
 		createKeyGenMock(),
 		createDummySigner(),
-		&mock.PubkeyConverterStub{},
+		&testscommon.PubkeyConverterStub{},
 		shardCoordinator,
 		createFreeTxFeeHandler(),
 		&testscommon.WhiteListHandlerStub{},
-		&mock.ArgumentParserMock{},
+		&testscommon.ArgumentParserMock{},
 		[]byte("T"),
 		false,
 		&hashingMocks.HasherMock{},
 		versioning.NewTxVersionChecker(0),
+		enableEpochsHandlerMock.NewEnableEpochsHandlerStub(),
 	)
 
 	assert.Equal(t, big.NewInt(0), txin.Fee())
@@ -1613,15 +1796,16 @@ func TestInterceptedTransaction_String(t *testing.T) {
 		&hashingMocks.HasherMock{},
 		createKeyGenMock(),
 		createDummySigner(),
-		&mock.PubkeyConverterStub{},
+		&testscommon.PubkeyConverterStub{},
 		shardCoordinator,
 		createFreeTxFeeHandler(),
 		&testscommon.WhiteListHandlerStub{},
-		&mock.ArgumentParserMock{},
+		&testscommon.ArgumentParserMock{},
 		[]byte("T"),
 		false,
 		&hashingMocks.HasherMock{},
 		versioning.NewTxVersionChecker(0),
+		enableEpochsHandlerMock.NewEnableEpochsHandlerStub(),
 	)
 
 	expectedFormat := fmt.Sprintf(
@@ -1630,4 +1814,191 @@ func TestInterceptedTransaction_String(t *testing.T) {
 	)
 
 	assert.Equal(t, expectedFormat, txin.String())
+}
+
+func TestInterceptedTransaction_checkMaxGasPrice(t *testing.T) {
+	t.Parallel()
+
+	maxAllowedGasPriceSetGuardian := uint64(2000000)
+	feeHandler := &economicsmocks.EconomicsHandlerStub{
+		MaxGasPriceSetGuardianCalled: func() uint64 {
+			return maxAllowedGasPriceSetGuardian
+		},
+	}
+	setGuardianBuiltinCallData := []byte("SetGuardian@xxxx")
+	testTx1 := &dataTransaction.Transaction{
+		GasPrice: maxAllowedGasPriceSetGuardian / 2,
+		Data:     setGuardianBuiltinCallData,
+	}
+	testTx2 := &dataTransaction.Transaction{
+		GasPrice: maxAllowedGasPriceSetGuardian * 2,
+		Data:     setGuardianBuiltinCallData,
+	}
+
+	t.Run("guardedTx returns always OK no matter the gas price", func(t *testing.T) {
+		txVersionChecker := &testscommon.TxVersionCheckerStub{
+			IsGuardedTransactionCalled: func(tx *dataTransaction.Transaction) bool {
+				return true
+			},
+		}
+		inTx1, err := createInterceptedTxWithTxFeeHandlerAndVersionChecker(testTx1, feeHandler, txVersionChecker)
+		require.Nil(t, err)
+		inTx2, err := createInterceptedTxWithTxFeeHandlerAndVersionChecker(testTx2, feeHandler, txVersionChecker)
+		require.Nil(t, err)
+
+		errMaxGasPrice := inTx1.CheckMaxGasPrice()
+		require.Nil(t, errMaxGasPrice)
+
+		errMaxGasPrice = inTx2.CheckMaxGasPrice()
+		require.Nil(t, errMaxGasPrice)
+	})
+	t.Run("not guarded Tx, not setGuardian always OK", func(t *testing.T) {
+		tx1 := *testTx1
+		tx1.Data = []byte("dummy")
+		tx2 := *testTx2
+		tx2.Data = []byte("dummy")
+
+		txVersionChecker := &testscommon.TxVersionCheckerStub{
+			IsGuardedTransactionCalled: func(tx *dataTransaction.Transaction) bool {
+				return false
+			},
+		}
+
+		inTx1, err := createInterceptedTxWithTxFeeHandlerAndVersionChecker(&tx1, feeHandler, txVersionChecker)
+		require.Nil(t, err)
+		inTx2, err := createInterceptedTxWithTxFeeHandlerAndVersionChecker(&tx2, feeHandler, txVersionChecker)
+		require.Nil(t, err)
+
+		errMaxGasPrice := inTx1.CheckMaxGasPrice()
+		require.Nil(t, errMaxGasPrice)
+
+		errMaxGasPrice = inTx2.CheckMaxGasPrice()
+		require.Nil(t, errMaxGasPrice)
+	})
+	t.Run("not guarded Tx with setGuardian call and price lower than max or equal OK", func(t *testing.T) {
+		tx1 := *testTx1
+		tx1.GasPrice = maxAllowedGasPriceSetGuardian
+		tx2 := *testTx2
+		tx2.GasPrice = maxAllowedGasPriceSetGuardian / 2
+
+		txVersionChecker := &testscommon.TxVersionCheckerStub{
+			IsGuardedTransactionCalled: func(tx *dataTransaction.Transaction) bool {
+				return false
+			},
+		}
+
+		inTx1, err := createInterceptedTxWithTxFeeHandlerAndVersionChecker(&tx1, feeHandler, txVersionChecker)
+		require.Nil(t, err)
+		inTx2, err := createInterceptedTxWithTxFeeHandlerAndVersionChecker(&tx2, feeHandler, txVersionChecker)
+		require.Nil(t, err)
+
+		errMaxGasPrice := inTx1.CheckMaxGasPrice()
+		require.Nil(t, errMaxGasPrice)
+
+		errMaxGasPrice = inTx2.CheckMaxGasPrice()
+		require.Nil(t, errMaxGasPrice)
+	})
+	t.Run("not guarded Tx with setGuardian call and price higher than max err", func(t *testing.T) {
+		tx1 := *testTx1
+		tx1.GasPrice = maxAllowedGasPriceSetGuardian * 2
+		txVersionChecker := &testscommon.TxVersionCheckerStub{
+			IsGuardedTransactionCalled: func(tx *dataTransaction.Transaction) bool {
+				return false
+			},
+		}
+
+		inTx1, err := createInterceptedTxWithTxFeeHandlerAndVersionChecker(&tx1, feeHandler, txVersionChecker)
+		require.Nil(t, err)
+
+		errMaxGasPrice := inTx1.CheckMaxGasPrice()
+		require.Equal(t, process.ErrGasPriceTooHigh, errMaxGasPrice)
+	})
+}
+
+func TestInterceptedTransaction_VerifyGuardianSig(t *testing.T) {
+	t.Parallel()
+
+	testTxVersionChecker := testscommon.TxVersionCheckerStub{
+		IsGuardedTransactionCalled: func(tx *dataTransaction.Transaction) bool {
+			return true
+		},
+	}
+	feeHandler := &economicsmocks.EconomicsHandlerStub{
+		MaxGasPriceSetGuardianCalled: func() uint64 {
+			return 1000
+		},
+	}
+	testTx := dataTransaction.Transaction{
+		Data:              []byte("some data"),
+		GuardianAddr:      []byte("guardian addr"),
+		GuardianSignature: []byte("guardian signature"),
+	}
+
+	t.Run("get data for signing with error", func(t *testing.T) {
+		tx := testTx
+		txVersionChecker := testTxVersionChecker
+		txVersionChecker.IsSignedWithHashCalled = func(tx *dataTransaction.Transaction) bool {
+			return true
+		}
+		inTx, err := createInterceptedTxWithTxFeeHandlerAndVersionChecker(&tx, feeHandler, &txVersionChecker)
+		require.Nil(t, err)
+		err = inTx.VerifyGuardianSig(&tx)
+		require.Equal(t, process.ErrTransactionSignedWithHashIsNotEnabled, err)
+	})
+	t.Run("nil guardian sig", func(t *testing.T) {
+		tx := testTx
+		tx.GuardianSignature = nil
+		inTx, err := createInterceptedTxWithTxFeeHandlerAndVersionChecker(&tx, feeHandler, &testTxVersionChecker)
+		require.Nil(t, err)
+
+		err = inTx.VerifyGuardianSig(&tx)
+		require.ErrorIs(t, err, errSignerMockVerifySigFails)
+		require.Contains(t, err.Error(), "guardian's signature")
+	})
+	t.Run("normal TX with not empty guardian address", func(t *testing.T) {
+		tx := testTx
+		tx.GuardianAddr = []byte("guardian addr")
+		txVersionChecker := testTxVersionChecker
+		txVersionChecker.IsGuardedTransactionCalled = func(tx *dataTransaction.Transaction) bool {
+			return false
+		}
+		inTx, err := createInterceptedTxWithTxFeeHandlerAndVersionChecker(&tx, feeHandler, &txVersionChecker)
+		require.Nil(t, err)
+
+		err = inTx.VerifyGuardianSig(&tx)
+		require.True(t, errors.Is(err, process.ErrGuardianAddressNotExpected))
+	})
+	t.Run("normal TX with guardian sig", func(t *testing.T) {
+		tx := testTx
+		tx.GuardianAddr = nil
+		tx.GuardianSignature = []byte("guardian signature")
+		txVersionChecker := testTxVersionChecker
+		txVersionChecker.IsGuardedTransactionCalled = func(tx *dataTransaction.Transaction) bool {
+			return false
+		}
+		inTx, err := createInterceptedTxWithTxFeeHandlerAndVersionChecker(&tx, feeHandler, &txVersionChecker)
+		require.Nil(t, err)
+
+		err = inTx.VerifyGuardianSig(&tx)
+		require.True(t, errors.Is(err, process.ErrGuardianSignatureNotExpected))
+	})
+	t.Run("wrong guardian sig", func(t *testing.T) {
+		tx := testTx
+		tx.GuardianSignature = sigBad
+		inTx, err := createInterceptedTxWithTxFeeHandlerAndVersionChecker(&tx, feeHandler, &testTxVersionChecker)
+		require.Nil(t, err)
+
+		err = inTx.VerifyGuardianSig(&tx)
+		require.ErrorIs(t, err, errSignerMockVerifySigFails)
+		require.Contains(t, err.Error(), "guardian's signature")
+	})
+	t.Run("correct guardian sig", func(t *testing.T) {
+		tx := testTx
+		tx.GuardianSignature = sigOk
+		inTx, err := createInterceptedTxWithTxFeeHandlerAndVersionChecker(&tx, feeHandler, &testTxVersionChecker)
+		require.Nil(t, err)
+
+		err = inTx.VerifyGuardianSig(&tx)
+		require.Nil(t, err)
+	})
 }

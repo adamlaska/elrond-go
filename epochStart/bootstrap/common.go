@@ -3,8 +3,10 @@ package bootstrap
 import (
 	"fmt"
 
-	"github.com/ElrondNetwork/elrond-go-core/core/check"
-	"github.com/ElrondNetwork/elrond-go/epochStart"
+	"github.com/multiversx/mx-chain-core-go/core/check"
+	"github.com/multiversx/mx-chain-go/common/statistics"
+	"github.com/multiversx/mx-chain-go/epochStart"
+	"github.com/multiversx/mx-chain-go/sharding/nodesCoordinator"
 )
 
 const baseErrorMessage = "error with epoch start bootstrapper arguments"
@@ -13,8 +15,11 @@ func checkArguments(args ArgsEpochStartBootstrap) error {
 	if check.IfNil(args.GenesisShardCoordinator) {
 		return fmt.Errorf("%s: %w", baseErrorMessage, epochStart.ErrNilShardCoordinator)
 	}
-	if check.IfNil(args.Messenger) {
-		return fmt.Errorf("%s: %w", baseErrorMessage, epochStart.ErrNilMessenger)
+	if check.IfNil(args.MainMessenger) {
+		return fmt.Errorf("%s on main network: %w", baseErrorMessage, epochStart.ErrNilMessenger)
+	}
+	if check.IfNil(args.FullArchiveMessenger) {
+		return fmt.Errorf("%s on full archive network: %w", baseErrorMessage, epochStart.ErrNilMessenger)
 	}
 	if check.IfNil(args.EconomicsData) {
 		return fmt.Errorf("%s: %w", baseErrorMessage, epochStart.ErrNilEconomicsData)
@@ -51,6 +56,9 @@ func checkArguments(args ArgsEpochStartBootstrap) error {
 	}
 	if check.IfNil(args.CoreComponentsHolder.PathHandler()) {
 		return fmt.Errorf("%s: %w", baseErrorMessage, epochStart.ErrNilPathManager)
+	}
+	if check.IfNil(args.TrieSyncStatisticsProvider) {
+		return fmt.Errorf("%s: %w", baseErrorMessage, epochStart.ErrNilTrieSyncStatistics)
 	}
 	if args.GenesisNodesConfig == nil {
 		return fmt.Errorf("%s: %w", baseErrorMessage, epochStart.ErrNilGenesisNodesConfig)
@@ -105,6 +113,15 @@ func checkArguments(args ArgsEpochStartBootstrap) error {
 	}
 	if args.GeneralConfig.TrieSync.NumConcurrentTrieSyncers < 1 {
 		return fmt.Errorf("%s: %w", baseErrorMessage, epochStart.ErrInvalidNumConcurrentTrieSyncers)
+	}
+	if check.IfNil(args.CryptoComponentsHolder.ManagedPeersHolder()) {
+		return fmt.Errorf("%s: %w", baseErrorMessage, epochStart.ErrNilManagedPeersHolder)
+	}
+	if check.IfNil(args.StateStatsHandler) {
+		return fmt.Errorf("%s: %w", baseErrorMessage, statistics.ErrNilStateStatsHandler)
+	}
+	if check.IfNil(args.NodesCoordinatorRegistryFactory) {
+		return fmt.Errorf("%s: %w", baseErrorMessage, nodesCoordinator.ErrNilNodesCoordinatorRegistryFactory)
 	}
 
 	return nil

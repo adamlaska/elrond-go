@@ -10,13 +10,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ElrondNetwork/elrond-go-core/hashing/keccak"
-	"github.com/ElrondNetwork/elrond-go/genesis"
-	"github.com/ElrondNetwork/elrond-go/integrationTests"
-	"github.com/ElrondNetwork/elrond-go/integrationTests/multiShard/relayedTx"
-	"github.com/ElrondNetwork/elrond-go/process"
-	"github.com/ElrondNetwork/elrond-go/state"
-	vmcommon "github.com/ElrondNetwork/elrond-vm-common"
+	"github.com/multiversx/mx-chain-core-go/data/api"
+	"github.com/multiversx/mx-chain-core-go/hashing/keccak"
+	"github.com/multiversx/mx-chain-go/genesis"
+	"github.com/multiversx/mx-chain-go/integrationTests"
+	"github.com/multiversx/mx-chain-go/integrationTests/multiShard/relayedTx"
+	"github.com/multiversx/mx-chain-go/process"
+	"github.com/multiversx/mx-chain-go/state"
+	vmcommon "github.com/multiversx/mx-chain-vm-common-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -127,15 +128,19 @@ func prepareNodesAndPlayers() ([]*integrationTests.TestProcessorNode, []*integra
 	numMetachainNodes := 1
 
 	genesisFile := "smartcontracts.json"
-	nodes, _ := integrationTests.CreateNodesWithFullGenesis(
+	enableEpochsConfig := integrationTests.GetDefaultEnableEpochsConfig()
+	enableEpochsConfig.StakingV2EnableEpoch = integrationTests.UnreachableEpoch
+	enableEpochsConfig.ChangeUsernameEnableEpoch = integrationTests.UnreachableEpoch
+	nodes, _ := integrationTests.CreateNodesWithFullGenesisCustomEnableEpochs(
 		numOfShards,
 		nodesPerShard,
 		numMetachainNodes,
 		genesisFile,
+		enableEpochsConfig,
 	)
 
 	for _, node := range nodes {
-		node.EconomicsData.SetMaxGasLimitPerBlock(1500000000)
+		node.EconomicsData.SetMaxGasLimitPerBlock(1500000000, 0)
 	}
 
 	idxProposers := make([]int, numOfShards+1)
@@ -197,7 +202,7 @@ func sendRegisterUserNameAsRelayedTx(
 	for i, player := range players {
 		userName := generateNewUserName()
 		scAddress := selectDNSAddressFromUserName(sortedDNSAddresses, userName)
-		_ = relayedTx.CreateAndSendRelayedAndUserTx(nodes, relayer, player, []byte(scAddress), dnsRegisterValue,
+		_, _ = relayedTx.CreateAndSendRelayedAndUserTx(nodes, relayer, player, []byte(scAddress), dnsRegisterValue,
 			gasLimit, []byte("register@"+hex.EncodeToString([]byte(userName))))
 		userNames[i] = userName
 	}
@@ -250,7 +255,9 @@ func checkUserNamesAreSetCorrectly(
 			assert.Equal(t, userNames[i], string(userAcc.GetUserName()))
 
 			bech32c := integrationTests.TestAddressPubkeyConverter
-			usernameReportedByNode, err := node.Node.GetUsername(bech32c.Encode(player.Address))
+			playerAddress, err := bech32c.Encode(player.Address)
+			require.NoError(t, err)
+			usernameReportedByNode, _, err := node.Node.GetUsername(playerAddress, api.AccountQueryOptions{})
 			require.NoError(t, err)
 			require.Equal(t, userNames[i], usernameReportedByNode)
 		}
@@ -269,11 +276,11 @@ func checkUserNamesAreSetCorrectly(
 				continue
 			}
 
-			vmOutput, _ := node.SCQueryService.ExecuteQuery(scQuery)
+			vmOutput, _, _ := node.SCQueryService.ExecuteQuery(scQuery)
 
 			require.NotNil(t, vmOutput)
-			require.Equal(t, vmOutput.ReturnCode, vmcommon.Ok)
-			require.Equal(t, len(vmOutput.ReturnData), 1)
+			require.Equal(t, vmcommon.Ok, vmOutput.ReturnCode)
+			require.Equal(t, 1, len(vmOutput.ReturnData))
 			assert.True(t, bytes.Equal(player.Address, vmOutput.ReturnData[0]))
 		}
 	}
@@ -298,7 +305,7 @@ func checkUserNamesAreDeleted(
 			dnsAcc, _ := acnt.(state.UserAccountHandler)
 
 			keyFromTrie := "value_state" + string(keccak.NewKeccak().Compute(userName))
-			value, err := dnsAcc.DataTrie().Get([]byte(keyFromTrie))
+			value, _, err := dnsAcc.RetrieveValue([]byte(keyFromTrie))
 			assert.Nil(t, err)
 			assert.Nil(t, value)
 		}

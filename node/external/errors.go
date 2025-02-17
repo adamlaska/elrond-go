@@ -8,8 +8,8 @@ var ErrNilSCQueryService = errors.New("nil SC query service")
 // ErrNilStatusMetrics signals that a nil status metrics was provided
 var ErrNilStatusMetrics = errors.New("nil status metrics handler")
 
-// ErrNilTransactionCostHandler signals that a nil transaction cost handler was provided
-var ErrNilTransactionCostHandler = errors.New("nil transaction cost handler")
+// ErrNilAPITransactionEvaluator signals that a nil api transaction evaluator was provided
+var ErrNilAPITransactionEvaluator = errors.New("nil api transaction evaluator")
 
 // ErrNilTotalStakedValueHandler signals that a nil total staked value handler has been provided
 var ErrNilTotalStakedValueHandler = errors.New("nil total staked value handler")
@@ -19,12 +19,6 @@ var ErrNilDirectStakeListHandler = errors.New("nil direct stake list handler")
 
 // ErrNilDelegatedListHandler signals that a nil delegated list handler has been provided
 var ErrNilDelegatedListHandler = errors.New("nil delegated list handler")
-
-// ErrNilVmContainer signals that a nil vm container has been provided
-var ErrNilVmContainer = errors.New("nil vm container")
-
-// ErrNilVmFactory signals that a nil vm factory has been provided
-var ErrNilVmFactory = errors.New("nil vm factory")
 
 // ErrNilAPITransactionHandler signals that a nil api transaction handler has been provided
 var ErrNilAPITransactionHandler = errors.New("nil api transaction handler")
@@ -40,3 +34,15 @@ var ErrNilGenesisNodesSetupHandler = errors.New("nil genesis nodes setup handler
 
 // ErrNilValidatorPubKeyConverter signals that a nil validator pubkey converter has been provided
 var ErrNilValidatorPubKeyConverter = errors.New("nil validator public key converter")
+
+// ErrNilAccountsParser signals that a nil accounts parser has been provided
+var ErrNilAccountsParser = errors.New("nil accounts parser")
+
+// ErrNilGasScheduler signals that a nil gas scheduler has been provided
+var ErrNilGasScheduler = errors.New("nil gas scheduler")
+
+// ErrNilManagedPeersMonitor signals that a nil managed peers monitor has been provided
+var ErrNilManagedPeersMonitor = errors.New("nil managed peers monitor")
+
+// ErrNilNodesCoordinator signals a nil nodes coordinator has been provided
+var ErrNilNodesCoordinator = errors.New("nil nodes coordinator")

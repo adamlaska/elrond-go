@@ -1,11 +1,12 @@
 package mock
 
 import (
+	"context"
 	"errors"
 	"math/big"
 
-	"github.com/ElrondNetwork/elrond-go/common"
-	"github.com/ElrondNetwork/elrond-go/state"
+	"github.com/multiversx/mx-chain-core-go/core"
+	"github.com/multiversx/mx-chain-go/common"
 )
 
 // ErrNegativeValue -
@@ -31,6 +32,11 @@ func (uam *UserAccountMock) SetCode(code []byte) {
 	uam.code = code
 }
 
+// GetCode -
+func (uam *UserAccountMock) GetCode() []byte {
+	return uam.code
+}
+
 // SetCodeMetadata -
 func (uam *UserAccountMock) SetCodeMetadata(codeMetadata []byte) {
 	uam.codeMetadata = codeMetadata
@@ -47,7 +53,7 @@ func (uam *UserAccountMock) SetCodeHash(bytes []byte) {
 }
 
 // GetCodeHash -
-func (uam UserAccountMock) GetCodeHash() []byte {
+func (uam *UserAccountMock) GetCodeHash() []byte {
 	return uam.codeHash
 }
 
@@ -66,17 +72,17 @@ func (uam *UserAccountMock) SetDataTrie(_ common.Trie) {
 }
 
 // DataTrie -
-func (uam *UserAccountMock) DataTrie() common.Trie {
+func (uam *UserAccountMock) DataTrie() common.DataTrieHandler {
 	return nil
 }
 
-// RetrieveValueFromDataTrieTracker -
-func (uam *UserAccountMock) RetrieveValueFromDataTrieTracker(_ []byte) ([]byte, error) {
-	return nil, nil
+// RetrieveValue -
+func (uam *UserAccountMock) RetrieveValue(_ []byte) ([]byte, uint32, error) {
+	return nil, 0, nil
 }
 
-// DataTrieTracker -
-func (uam *UserAccountMock) DataTrieTracker() state.DataTrieTracker {
+// SaveKeyValue -
+func (uam *UserAccountMock) SaveKeyValue(_ []byte, _ []byte) error {
 	return nil
 }
 
@@ -137,5 +143,20 @@ func (uam *UserAccountMock) SetUserName(_ []byte) {
 
 // GetUserName -
 func (uam *UserAccountMock) GetUserName() []byte {
+	return nil
+}
+
+// SaveDirtyData -
+func (uam *UserAccountMock) SaveDirtyData(_ common.Trie) ([]core.TrieData, error) {
+	return nil, nil
+}
+
+// IsGuarded -
+func (uam *UserAccountMock) IsGuarded() bool {
+	return false
+}
+
+// GetAllLeaves -
+func (uam *UserAccountMock) GetAllLeaves(_ *common.TrieIteratorChannels, _ context.Context) error {
 	return nil
 }

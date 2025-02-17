@@ -5,14 +5,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ElrondNetwork/elrond-go-core/core"
-	"github.com/ElrondNetwork/elrond-go-core/data"
-	"github.com/ElrondNetwork/elrond-go-core/data/block"
-	"github.com/ElrondNetwork/elrond-go-crypto"
-	"github.com/ElrondNetwork/elrond-go-crypto/signing"
-	"github.com/ElrondNetwork/elrond-go-crypto/signing/mcl"
-	mclsinglesig "github.com/ElrondNetwork/elrond-go-crypto/signing/mcl/singlesig"
-	"github.com/ElrondNetwork/elrond-go/integrationTests"
+	"github.com/multiversx/mx-chain-core-go/core"
+	"github.com/multiversx/mx-chain-core-go/data"
+	"github.com/multiversx/mx-chain-core-go/data/block"
+	"github.com/multiversx/mx-chain-crypto-go"
+	"github.com/multiversx/mx-chain-crypto-go/signing"
+	"github.com/multiversx/mx-chain-crypto-go/signing/mcl"
+	"github.com/multiversx/mx-chain-go/integrationTests"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -27,7 +26,7 @@ func TestInterceptedShardBlockHeaderVerifiedWithCorrectConsensusGroup(t *testing
 	nbMetaNodes := 4
 	nbShards := 1
 	consensusGroupSize := 3
-	singleSigner := &mclsinglesig.BlsSingleSigner{}
+	singleSigner := integrationTests.TestSingleBlsSigner
 
 	// create map of shard - testNodeProcessors for metachain and shard chain
 	nodesMap := integrationTests.CreateNodesWithNodesCoordinator(
@@ -62,7 +61,8 @@ func TestInterceptedShardBlockHeaderVerifiedWithCorrectConsensusGroup(t *testing
 	header, err = fillHeaderFields(nodesMap[0][0], header, singleSigner)
 	assert.Nil(t, err)
 
-	nodesMap[0][0].BroadcastBlock(body, header)
+	pk := nodesMap[0][0].NodeKeys.MainKey.Pk
+	nodesMap[0][0].BroadcastBlock(body, header, pk)
 
 	time.Sleep(broadcastDelay)
 
@@ -71,15 +71,15 @@ func TestInterceptedShardBlockHeaderVerifiedWithCorrectConsensusGroup(t *testing
 
 	// all nodes in metachain have the block header in pool as interceptor validates it
 	for _, metaNode := range nodesMap[core.MetachainShardId] {
-		v, err := metaNode.DataPool.Headers().GetHeaderByHash(headerHash)
-		assert.Nil(t, err)
+		v, errGet := metaNode.DataPool.Headers().GetHeaderByHash(headerHash)
+		assert.Nil(t, errGet)
 		assert.Equal(t, header, v)
 	}
 
 	// all nodes in shard have the block in pool as interceptor validates it
 	for _, shardNode := range nodesMap[0] {
-		v, err := shardNode.DataPool.Headers().GetHeaderByHash(headerHash)
-		assert.Nil(t, err)
+		v, errGet := shardNode.DataPool.Headers().GetHeaderByHash(headerHash)
+		assert.Nil(t, errGet)
 		assert.Equal(t, header, v)
 	}
 }
@@ -131,7 +131,8 @@ func TestInterceptedMetaBlockVerifiedWithCorrectConsensusGroup(t *testing.T) {
 		0,
 	)
 
-	nodesMap[core.MetachainShardId][0].BroadcastBlock(body, header)
+	pk := nodesMap[core.MetachainShardId][0].NodeKeys.MainKey.Pk
+	nodesMap[core.MetachainShardId][0].BroadcastBlock(body, header, pk)
 
 	time.Sleep(broadcastDelay)
 
@@ -164,7 +165,7 @@ func TestInterceptedShardBlockHeaderWithLeaderSignatureAndRandSeedChecks(t *test
 	nbShards := 1
 	consensusGroupSize := 3
 
-	singleSigner := &mclsinglesig.BlsSingleSigner{}
+	singleSigner := integrationTests.TestSingleBlsSigner
 	keyGen := signing.NewKeyGenerator(mcl.NewSuiteBLS12())
 	// create map of shard - testNodeProcessors for metachain and shard chain
 	nodesMap := integrationTests.CreateNodesWithNodesCoordinatorKeygenAndSingleSigner(
@@ -204,7 +205,8 @@ func TestInterceptedShardBlockHeaderWithLeaderSignatureAndRandSeedChecks(t *test
 	header, err = fillHeaderFields(nodeToSendFrom, header, singleSigner)
 	assert.Nil(t, err)
 
-	nodeToSendFrom.BroadcastBlock(body, header)
+	pk := nodeToSendFrom.NodeKeys.MainKey.Pk
+	nodeToSendFrom.BroadcastBlock(body, header, pk)
 
 	time.Sleep(broadcastDelay)
 
@@ -213,15 +215,15 @@ func TestInterceptedShardBlockHeaderWithLeaderSignatureAndRandSeedChecks(t *test
 
 	// all nodes in metachain have the block header in pool as interceptor validates it
 	for _, metaNode := range nodesMap[core.MetachainShardId] {
-		v, err := metaNode.DataPool.Headers().GetHeaderByHash(headerHash)
-		assert.Nil(t, err)
+		v, errGet := metaNode.DataPool.Headers().GetHeaderByHash(headerHash)
+		assert.Nil(t, errGet)
 		assert.Equal(t, header, v)
 	}
 
 	// all nodes in shard have the block in pool as interceptor validates it
 	for _, shardNode := range nodesMap[0] {
-		v, err := shardNode.DataPool.Headers().GetHeaderByHash(headerHash)
-		assert.Nil(t, err)
+		v, errGet := shardNode.DataPool.Headers().GetHeaderByHash(headerHash)
+		assert.Nil(t, errGet)
 		assert.Equal(t, header, v)
 	}
 }
@@ -236,7 +238,7 @@ func TestInterceptedShardHeaderBlockWithWrongPreviousRandSeedShouldNotBeAccepted
 	nbShards := 1
 	consensusGroupSize := 3
 
-	singleSigner := &mclsinglesig.BlsSingleSigner{}
+	singleSigner := integrationTests.TestSingleBlsSigner
 	keyGen := signing.NewKeyGenerator(mcl.NewSuiteBLS12())
 	// create map of shard - testNodeProcessors for metachain and shard chain
 	nodesMap := integrationTests.CreateNodesWithNodesCoordinatorKeygenAndSingleSigner(
@@ -268,7 +270,8 @@ func TestInterceptedShardHeaderBlockWithWrongPreviousRandSeedShouldNotBeAccepted
 	nonce := uint64(2)
 	body, header, _, _ := integrationTests.ProposeBlockWithConsensusSignature(0, nodesMap, round, nonce, wrongRandomness, 0)
 
-	nodesMap[0][0].BroadcastBlock(body, header)
+	pk := nodesMap[0][0].NodeKeys.MainKey.Pk
+	nodesMap[0][0].BroadcastBlock(body, header, pk)
 
 	time.Sleep(broadcastDelay)
 
@@ -289,7 +292,7 @@ func TestInterceptedShardHeaderBlockWithWrongPreviousRandSeedShouldNotBeAccepted
 }
 
 func fillHeaderFields(proposer *integrationTests.TestProcessorNode, hdr data.HeaderHandler, signer crypto.SingleSigner) (data.HeaderHandler, error) {
-	leaderSk := proposer.NodeKeys.Sk
+	leaderSk := proposer.NodeKeys.MainKey.Sk
 
 	randSeed, _ := signer.Sign(leaderSk, hdr.GetPrevRandSeed())
 	err := hdr.SetRandSeed(randSeed)

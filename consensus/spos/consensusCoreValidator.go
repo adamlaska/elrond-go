@@ -1,6 +1,6 @@
 package spos
 
-import "github.com/ElrondNetwork/elrond-go-core/core/check"
+import "github.com/multiversx/mx-chain-core-go/core/check"
 
 // ValidateConsensusCore checks for nil all the container objects
 func ValidateConsensusCore(container ConsensusCoreHandler) error {
@@ -28,7 +28,11 @@ func ValidateConsensusCore(container ConsensusCoreHandler) error {
 	if check.IfNil(container.Marshalizer()) {
 		return ErrNilMarshalizer
 	}
-	if check.IfNil(container.MultiSigner()) {
+	if check.IfNil(container.MultiSignerContainer()) {
+		return ErrNilMultiSignerContainer
+	}
+	multiSigner, _ := container.MultiSignerContainer().GetMultiSigner(0)
+	if check.IfNil(multiSigner) {
 		return ErrNilMultiSigner
 	}
 	if check.IfNil(container.RoundHandler()) {
@@ -42,12 +46,6 @@ func ValidateConsensusCore(container ConsensusCoreHandler) error {
 	}
 	if check.IfNil(container.NodesCoordinator()) {
 		return ErrNilNodesCoordinator
-	}
-	if check.IfNil(container.PrivateKey()) {
-		return ErrNilBlsPrivateKey
-	}
-	if check.IfNil(container.SingleSigner()) {
-		return ErrNilBlsSingleSigner
 	}
 	if check.IfNil(container.GetAntiFloodHandler()) {
 		return ErrNilAntifloodHandler
@@ -63,6 +61,18 @@ func ValidateConsensusCore(container ConsensusCoreHandler) error {
 	}
 	if check.IfNil(container.NodeRedundancyHandler()) {
 		return ErrNilNodeRedundancyHandler
+	}
+	if check.IfNil(container.ScheduledProcessor()) {
+		return ErrNilScheduledProcessor
+	}
+	if check.IfNil(container.MessageSigningHandler()) {
+		return ErrNilMessageSigningHandler
+	}
+	if check.IfNil(container.PeerBlacklistHandler()) {
+		return ErrNilPeerBlacklistHandler
+	}
+	if check.IfNil(container.SigningHandler()) {
+		return ErrNilSigningHandler
 	}
 
 	return nil

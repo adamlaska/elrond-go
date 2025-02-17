@@ -7,7 +7,7 @@ import (
 // ErrInvalidNumberOfShards signals that an invalid number of shards was passed to the sharding registry
 var ErrInvalidNumberOfShards = errors.New("the number of shards must be greater than zero")
 
-// ErrInvalidShardId signals that an invalid shard is was passed
+// ErrInvalidShardId signals that an invalid shard id was passed
 var ErrInvalidShardId = errors.New("shard id must be smaller than the total number of shards")
 
 // ErrNilPubKey signals that the public key is nil
@@ -21,9 +21,6 @@ var ErrNilNodesCoordinator = errors.New("nil nodesCoordinator")
 
 // ErrNilMarshalizer signals that the marshalizer is nil
 var ErrNilMarshalizer = errors.New("nil marshalizer")
-
-// ErrNilPubkeyConverter signals that a nil public key converter has been provided
-var ErrNilPubkeyConverter = errors.New("trying to set nil pubkey converter")
 
 // ErrNilInputNodesMap signals that a nil nodes map was provided
 var ErrNilInputNodesMap = errors.New("nil input nodes map")
@@ -91,12 +88,6 @@ var ErrNilBlockBody = errors.New("nil block body")
 // ErrNilShuffledOutHandler signals that a nil shuffled out handler has been provided
 var ErrNilShuffledOutHandler = errors.New("nil shuffled out handler")
 
-// ErrNilEpochNotifier signals that the provided epoch notifier is nil
-var ErrNilEpochNotifier = errors.New("nil epoch notifier")
-
-// ErrNilEndOfProcessingHandler signals that a nil end of processing handler has been provided
-var ErrNilEndOfProcessingHandler = errors.New("nil end of processing handler")
-
 // ErrNilOrEmptyDestinationForDistribute signals that a nil or empty value was provided for destination of distributedNodes
 var ErrNilOrEmptyDestinationForDistribute = errors.New("nil or empty destination list for distributeNodes")
 
@@ -111,3 +102,24 @@ var ErrValidatorCannotBeFullArchive = errors.New("validator cannot be a full arc
 
 // ErrNilNodeTypeProvider signals that a nil node type provider has been given
 var ErrNilNodeTypeProvider = errors.New("nil node type provider")
+
+// ErrNilEnableEpochsHandler signals that a nil enable epochs handler has been provided
+var ErrNilEnableEpochsHandler = errors.New("nil enable epochs handler")
+
+// ErrNilValidatorInfoCacher signals that a nil value for the validator info cacher has been provided
+var ErrNilValidatorInfoCacher = errors.New("validator info cacher is nil")
+
+// ErrNilGenesisNodesSetupHandler signals that a nil genesis nodes setup handler has been provided
+var ErrNilGenesisNodesSetupHandler = errors.New("nil genesis nodes setup handler")
+
+// ErrKeyNotFoundInWaitingList signals that the provided key has not been found in waiting list
+var ErrKeyNotFoundInWaitingList = errors.New("key not found in waiting list")
+
+// ErrNilNodesCoordinatorRegistryFactory signals that a nil nodes coordinator registry factory has been given
+var ErrNilNodesCoordinatorRegistryFactory = errors.New("nil nodes coordinator registry factory has been given")
+
+// ErrReceivedAuctionValidatorsBeforeStakingV4 signals that auction nodes have been received from peer mini blocks before enabling staking v4
+var ErrReceivedAuctionValidatorsBeforeStakingV4 = errors.New("should not have received selected nodes from auction in peer mini blocks, since staking v4 is not enabled yet")
+
+// ErrNilEpochNotifier signals that a nil EpochNotifier has been provided
+var ErrNilEpochNotifier = errors.New("nil epoch notifier provided")

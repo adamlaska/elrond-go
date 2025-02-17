@@ -8,16 +8,19 @@ import (
 	"math/big"
 	"testing"
 
-	"github.com/ElrondNetwork/elrond-go-core/core"
-	"github.com/ElrondNetwork/elrond-go-core/data/receipt"
-	"github.com/ElrondNetwork/elrond-go-core/data/smartContractResult"
-	"github.com/ElrondNetwork/elrond-go-core/data/transaction"
-	"github.com/ElrondNetwork/elrond-go/dataRetriever"
-	"github.com/ElrondNetwork/elrond-go/dblookupext"
-	"github.com/ElrondNetwork/elrond-go/node/mock"
-	"github.com/ElrondNetwork/elrond-go/storage"
-	dbLookupExtMock "github.com/ElrondNetwork/elrond-go/testscommon/dblookupext"
-	storageStubs "github.com/ElrondNetwork/elrond-go/testscommon/storage"
+	"github.com/multiversx/mx-chain-core-go/data/receipt"
+	"github.com/multiversx/mx-chain-core-go/data/smartContractResult"
+	"github.com/multiversx/mx-chain-core-go/data/transaction"
+	"github.com/multiversx/mx-chain-go/dataRetriever"
+	"github.com/multiversx/mx-chain-go/dblookupext"
+	"github.com/multiversx/mx-chain-go/node/mock"
+	"github.com/multiversx/mx-chain-go/storage"
+	"github.com/multiversx/mx-chain-go/testscommon"
+	dbLookupExtMock "github.com/multiversx/mx-chain-go/testscommon/dblookupext"
+	"github.com/multiversx/mx-chain-go/testscommon/genericMocks"
+	"github.com/multiversx/mx-chain-go/testscommon/marshallerMock"
+	storageStubs "github.com/multiversx/mx-chain-go/testscommon/storage"
+	datafield "github.com/multiversx/mx-chain-vm-common-go/parsers/dataField"
 	"github.com/stretchr/testify/require"
 )
 
@@ -34,14 +37,14 @@ func TestPutEventsInTransactionReceipt(t *testing.T) {
 	}
 
 	marshalizerdMock := &mock.MarshalizerFake{}
-	dataStore := &mock.ChainStorerMock{
-		GetStorerCalled: func(unitType dataRetriever.UnitType) storage.Storer {
+	dataStore := &storageStubs.ChainStorerStub{
+		GetStorerCalled: func(unitType dataRetriever.UnitType) (storage.Storer, error) {
 			return &storageStubs.StorerStub{
 				GetFromEpochCalled: func(key []byte, epoch uint32) ([]byte, error) {
 					recBytes, _ := json.Marshal(rec)
 					return recBytes, nil
 				},
-			}
+			}, nil
 		},
 	}
 	historyRepo := &dbLookupExtMock.HistoryRepositoryStub{
@@ -52,35 +55,80 @@ func TestPutEventsInTransactionReceipt(t *testing.T) {
 		},
 	}
 
-	pubKeyConverter := &mock.PubkeyConverterMock{}
-	txUnmarshalerAndPreparer := newTransactionUnmarshaller(marshalizerdMock, pubKeyConverter)
-	n := newAPITransactionResultProcessor(pubKeyConverter, historyRepo, dataStore, marshalizerdMock, txUnmarshalerAndPreparer, 0)
+	pubKeyConverter := &testscommon.PubkeyConverterMock{}
+	logsFacade := &testscommon.LogsFacadeStub{}
+	dataFieldParser := &testscommon.DataFieldParserStub{
+		ParseCalled: func(dataField []byte, sender, receiver []byte, _ uint32) *datafield.ResponseParseData {
+			return &datafield.ResponseParseData{}
+		},
+	}
+	shardCoordinator := mock.NewOneShardCoordinatorMock()
+	txUnmarshalerAndPreparer := newTransactionUnmarshaller(marshalizerdMock, pubKeyConverter, dataFieldParser, shardCoordinator)
+	n := newAPITransactionResultProcessor(pubKeyConverter, historyRepo, dataStore, marshalizerdMock, txUnmarshalerAndPreparer, logsFacade, shardCoordinator, dataFieldParser)
 
 	epoch := uint32(0)
 
 	tx := &transaction.ApiTransactionResult{}
 
+	encodedSndAddr, err := pubKeyConverter.Encode(rec.SndAddr)
+	require.Nil(t, err)
+
 	expectedRecAPI := &transaction.ApiReceipt{
 		Value:   rec.Value,
 		Data:    string(rec.Data),
 		TxHash:  hex.EncodeToString(txHash),
-		SndAddr: pubKeyConverter.Encode(rec.SndAddr),
+		SndAddr: encodedSndAddr,
 	}
 
-	n.putResultsInTransaction(txHash, tx, epoch)
+	err = n.putResultsInTransaction(txHash, tx, epoch)
+	require.Nil(t, err)
 	require.Equal(t, expectedRecAPI, tx.Receipt)
+}
+
+func TestApiTransactionProcessor_PutResultsInTransactionWhenNoResultsShouldWork(t *testing.T) {
+	t.Parallel()
+
+	epoch := uint32(0)
+	historyRepo := &dbLookupExtMock.HistoryRepositoryStub{
+		GetEventsHashesByTxHashCalled: func(hash []byte, epoch uint32) (*dblookupext.ResultsHashesByTxHash, error) {
+			return nil, dblookupext.ErrNotFoundInStorage
+		},
+	}
+
+	dataFieldParser := &testscommon.DataFieldParserStub{
+		ParseCalled: func(dataField []byte, sender, receiver []byte, _ uint32) *datafield.ResponseParseData {
+			return &datafield.ResponseParseData{}
+		},
+	}
+
+	shardCoordinator := mock.NewOneShardCoordinatorMock()
+	n := newAPITransactionResultProcessor(
+		testscommon.RealWorldBech32PubkeyConverter,
+		historyRepo,
+		genericMocks.NewChainStorerMock(epoch),
+		&marshallerMock.MarshalizerMock{},
+		newTransactionUnmarshaller(&marshallerMock.MarshalizerMock{}, testscommon.RealWorldBech32PubkeyConverter, dataFieldParser, shardCoordinator),
+		&testscommon.LogsFacadeStub{},
+		shardCoordinator,
+		dataFieldParser,
+	)
+
+	tx := &transaction.ApiTransactionResult{}
+	err := n.putResultsInTransaction([]byte("txHash"), tx, epoch)
+	require.Nil(t, err)
+	require.Empty(t, tx.SmartContractResults)
 }
 
 func TestPutEventsInTransactionSmartContractResults(t *testing.T) {
 	t.Parallel()
 
-	epoch := uint32(0)
-	txHash := []byte("txHash")
+	testEpoch := uint32(0)
+	testTxHash := []byte("txHash")
 	scrHash1 := []byte("scrHash1")
 	scrHash2 := []byte("scrHash2")
 
 	scr1 := &smartContractResult.SmartContractResult{
-		OriginalTxHash: txHash,
+		OriginalTxHash: testTxHash,
 		RelayerAddr:    []byte("rlr"),
 		OriginalSender: []byte("osn"),
 		PrevTxHash:     []byte("prevTxHash"),
@@ -94,24 +142,30 @@ func TestPutEventsInTransactionSmartContractResults(t *testing.T) {
 		Data:           []byte("data"),
 	}
 	scr2 := &smartContractResult.SmartContractResult{
-		OriginalTxHash: txHash,
+		OriginalTxHash: testTxHash,
 	}
 
-	logsAndEvents := &transaction.Log{
-		Address: []byte("sender"),
-		Events: []*transaction.Event{
+	logs := &transaction.ApiLogs{
+		Address: "erd1contract",
+		Events: []*transaction.Events{
 			{
-				Address:    []byte("addr1"),
-				Identifier: []byte("myLog"),
-				Topics:     [][]byte{[]byte("topic1"), []byte("topic2")},
+				Address:    "erd1alice",
+				Identifier: "first",
+				Topics:     [][]byte{[]byte("hello")},
 				Data:       []byte("data1"),
+			},
+			{
+				Address:    "erd1bob",
+				Identifier: "second",
+				Topics:     [][]byte{[]byte("world")},
+				Data:       []byte("data2"),
 			},
 		},
 	}
 
 	marshalizerdMock := &mock.MarshalizerFake{}
-	dataStore := &mock.ChainStorerMock{
-		GetStorerCalled: func(unitType dataRetriever.UnitType) storage.Storer {
+	dataStore := &storageStubs.ChainStorerStub{
+		GetStorerCalled: func(unitType dataRetriever.UnitType) (storage.Storer, error) {
 			switch unitType {
 			case dataRetriever.UnsignedTransactionUnit:
 				return &storageStubs.StorerStub{
@@ -125,30 +179,20 @@ func TestPutEventsInTransactionSmartContractResults(t *testing.T) {
 							return nil, nil
 						}
 					},
-				}
-			case dataRetriever.TxLogsUnit:
-				return &storageStubs.StorerStub{
-					GetFromEpochCalled: func(key []byte, epoch uint32) ([]byte, error) {
-						switch {
-						case bytes.Equal(key, scrHash1):
-							return marshalizerdMock.Marshal(logsAndEvents)
-						default:
-							return nil, nil
-						}
-					},
-				}
+				}, nil
 			default:
-				return mock.NewStorerMock()
+				return genericMocks.NewStorerMock(), nil
 			}
 		},
 	}
+
 	historyRepo := &dbLookupExtMock.HistoryRepositoryStub{
 		GetEventsHashesByTxHashCalled: func(hash []byte, e uint32) (*dblookupext.ResultsHashesByTxHash, error) {
 			return &dblookupext.ResultsHashesByTxHash{
 				ReceiptsHash: nil,
 				ScResultsHashesAndEpoch: []*dblookupext.ScResultsHashesAndEpoch{
 					{
-						Epoch:           epoch,
+						Epoch:           testEpoch,
 						ScResultsHashes: [][]byte{scrHash1, scrHash2},
 					},
 				},
@@ -156,9 +200,34 @@ func TestPutEventsInTransactionSmartContractResults(t *testing.T) {
 		},
 	}
 
-	pubKeyConverter := mock.NewPubkeyConverterMock(3)
-	txUnmarshalerAndPreparer := newTransactionUnmarshaller(marshalizerdMock, pubKeyConverter)
-	n := newAPITransactionResultProcessor(pubKeyConverter, historyRepo, dataStore, marshalizerdMock, txUnmarshalerAndPreparer, 0)
+	logsFacade := &testscommon.LogsFacadeStub{
+		GetLogCalled: func(txHash []byte, epoch uint32) (*transaction.ApiLogs, error) {
+			if bytes.Equal(txHash, scrHash1) && epoch == testEpoch {
+				return logs, nil
+			}
+
+			return nil, nil
+		},
+	}
+
+	dataFieldParser := &testscommon.DataFieldParserStub{
+		ParseCalled: func(dataField []byte, sender, receiver []byte, _ uint32) *datafield.ResponseParseData {
+			return &datafield.ResponseParseData{}
+		},
+	}
+	shardCoordinator := mock.NewOneShardCoordinatorMock()
+	pubKeyConverter := testscommon.NewPubkeyConverterMock(3)
+	txUnmarshalerAndPreparer := newTransactionUnmarshaller(marshalizerdMock, pubKeyConverter, dataFieldParser, shardCoordinator)
+	n := newAPITransactionResultProcessor(pubKeyConverter, historyRepo, dataStore, marshalizerdMock, txUnmarshalerAndPreparer, logsFacade, shardCoordinator, dataFieldParser)
+
+	encodedSndAddr, err := pubKeyConverter.Encode(scr1.SndAddr)
+	require.Nil(t, err)
+	encodedRcvAddr, err := pubKeyConverter.Encode(scr1.RcvAddr)
+	require.Nil(t, err)
+	encodedRelayerAddr, err := pubKeyConverter.Encode(scr1.RelayerAddr)
+	require.Nil(t, err)
+	encodedOriginalAddr, err := pubKeyConverter.Encode(scr1.OriginalSender)
+	require.Nil(t, err)
 
 	expectedSCRS := []*transaction.ApiSmartContractResult{
 		{
@@ -175,73 +244,53 @@ func TestPutEventsInTransactionSmartContractResults(t *testing.T) {
 			CallType:       scr1.CallType,
 			CodeMetadata:   string(scr1.CodeMetadata),
 			ReturnMessage:  string(scr1.ReturnMessage),
-			SndAddr:        pubKeyConverter.Encode(scr1.SndAddr),
-			RcvAddr:        pubKeyConverter.Encode(scr1.RcvAddr),
-			RelayerAddr:    pubKeyConverter.Encode(scr1.RelayerAddr),
-			OriginalSender: pubKeyConverter.Encode(scr1.OriginalSender),
-			Logs: &transaction.ApiLogs{
-				Address: pubKeyConverter.Encode(logsAndEvents.Address),
-				Events: []*transaction.Events{
-					{
-						Address:    pubKeyConverter.Encode(logsAndEvents.Events[0].Address),
-						Identifier: string(logsAndEvents.Events[0].Identifier),
-						Topics:     logsAndEvents.Events[0].Topics,
-						Data:       logsAndEvents.Events[0].Data,
-					},
-				},
-			},
+			SndAddr:        encodedSndAddr,
+			RcvAddr:        encodedRcvAddr,
+			RelayerAddr:    encodedRelayerAddr,
+			OriginalSender: encodedOriginalAddr,
+			Logs:           logs,
+			Receivers:      []string{},
 		},
 		{
 			Hash:           hex.EncodeToString(scrHash2),
 			OriginalTxHash: hex.EncodeToString(scr1.OriginalTxHash),
 			Logs:           nil,
+			Receivers:      []string{},
 		},
 	}
 
 	tx := &transaction.ApiTransactionResult{}
-	n.putResultsInTransaction(txHash, tx, epoch)
+	err = n.putResultsInTransaction(testTxHash, tx, testEpoch)
+	require.Nil(t, err)
 	require.Equal(t, expectedSCRS, tx.SmartContractResults)
 }
 
 func TestPutLogsInTransaction(t *testing.T) {
 	t.Parallel()
 
-	epoch := uint32(0)
-	txHash := []byte("txHash")
+	testEpoch := uint32(7)
+	testTxHash := []byte("txHash")
 
-	logsAndEvents := &transaction.Log{
-		Address: []byte("sender"),
-		Events: []*transaction.Event{
+	logs := &transaction.ApiLogs{
+		Address: "erd1contract",
+		Events: []*transaction.Events{
 			{
-				Address:    []byte("addr1"),
-				Identifier: []byte(core.BuiltInFunctionESDTNFTCreate),
-				Topics:     [][]byte{[]byte("topic1"), []byte("topic2")},
+				Address:    "erd1alice",
+				Identifier: "first",
+				Topics:     [][]byte{[]byte("hello")},
 				Data:       []byte("data1"),
 			},
 			{
-				Address:    []byte("addr2"),
-				Identifier: []byte(core.BuiltInFunctionESDTBurn),
-				Topics:     [][]byte{[]byte("topic1"), []byte("topic2")},
-				Data:       []byte("data1"),
+				Address:    "erd1bob",
+				Identifier: "second",
+				Topics:     [][]byte{[]byte("world")},
+				Data:       []byte("data2"),
 			},
 		},
 	}
 
 	marshalizerMock := &mock.MarshalizerFake{}
-	dataStore := &mock.ChainStorerMock{
-		GetStorerCalled: func(unitType dataRetriever.UnitType) storage.Storer {
-			return &storageStubs.StorerStub{
-				GetFromEpochCalled: func(key []byte, epoch uint32) ([]byte, error) {
-					switch {
-					case bytes.Equal(key, txHash):
-						return marshalizerMock.Marshal(logsAndEvents)
-					default:
-						return nil, nil
-					}
-				},
-			}
-		},
-	}
+	dataStore := &storageStubs.ChainStorerStub{}
 
 	historyRepo := &dbLookupExtMock.HistoryRepositoryStub{
 		GetEventsHashesByTxHashCalled: func(hash []byte, e uint32) (*dblookupext.ResultsHashesByTxHash, error) {
@@ -249,28 +298,30 @@ func TestPutLogsInTransaction(t *testing.T) {
 		},
 	}
 
-	pubKeyConverter := &mock.PubkeyConverterMock{}
-	txUnmarshalerAndPreparer := newTransactionUnmarshaller(marshalizerMock, pubKeyConverter)
-	n := newAPITransactionResultProcessor(pubKeyConverter, historyRepo, dataStore, marshalizerMock, txUnmarshalerAndPreparer, 0)
-	expectedLogs := &transaction.ApiLogs{
-		Address: pubKeyConverter.Encode(logsAndEvents.Address),
-		Events: []*transaction.Events{
-			{
-				Address:    pubKeyConverter.Encode(logsAndEvents.Events[0].Address),
-				Identifier: string(logsAndEvents.Events[0].Identifier),
-				Topics:     logsAndEvents.Events[0].Topics,
-				Data:       logsAndEvents.Events[0].Data,
-			},
-			{
-				Address:    pubKeyConverter.Encode(logsAndEvents.Events[1].Address),
-				Identifier: string(logsAndEvents.Events[1].Identifier),
-				Topics:     logsAndEvents.Events[1].Topics,
-				Data:       logsAndEvents.Events[1].Data,
-			},
+	logsFacade := &testscommon.LogsFacadeStub{
+		GetLogCalled: func(txHash []byte, epoch uint32) (*transaction.ApiLogs, error) {
+			if bytes.Equal(txHash, testTxHash) && epoch == testEpoch {
+				return logs, nil
+			}
+
+			return nil, nil
 		},
 	}
 
+	dataFieldParser := &testscommon.DataFieldParserStub{
+		ParseCalled: func(dataField []byte, sender, receiver []byte, _ uint32) *datafield.ResponseParseData {
+			return &datafield.ResponseParseData{}
+		},
+	}
+	shardCoordinator := mock.NewOneShardCoordinatorMock()
+	pubKeyConverter := &testscommon.PubkeyConverterMock{}
+	txUnmarshalerAndPreparer := newTransactionUnmarshaller(marshalizerMock, pubKeyConverter, dataFieldParser, shardCoordinator)
+	n := newAPITransactionResultProcessor(pubKeyConverter, historyRepo, dataStore, marshalizerMock, txUnmarshalerAndPreparer, logsFacade, shardCoordinator, dataFieldParser)
+
 	tx := &transaction.ApiTransactionResult{}
-	n.putResultsInTransaction(txHash, tx, epoch)
-	require.Equal(t, expectedLogs, tx.Logs)
+	err := n.putResultsInTransaction(testTxHash, tx, testEpoch)
+	// TODO: Note that "putResultsInTransaction" produces an effect on "tx" even if it returns an error.
+	// TODO: Refactor this package to use less functions with side-effects.
+	require.Errorf(t, err, "local err")
+	require.Equal(t, logs, tx.Logs)
 }

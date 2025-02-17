@@ -3,18 +3,19 @@ package interceptedRequestHdr
 import (
 	"encoding/base64"
 	"fmt"
+	"math/big"
 	"reflect"
 	"testing"
 	"time"
 
-	"github.com/ElrondNetwork/elrond-go-core/core"
-	"github.com/ElrondNetwork/elrond-go-core/data"
-	"github.com/ElrondNetwork/elrond-go-core/data/block"
-	"github.com/ElrondNetwork/elrond-go-core/data/typeConverters/uint64ByteSlice"
-	"github.com/ElrondNetwork/elrond-go/dataRetriever"
-	"github.com/ElrondNetwork/elrond-go/dataRetriever/resolvers"
-	"github.com/ElrondNetwork/elrond-go/integrationTests"
-	"github.com/ElrondNetwork/elrond-go/process/factory"
+	"github.com/multiversx/mx-chain-core-go/core"
+	"github.com/multiversx/mx-chain-core-go/data"
+	"github.com/multiversx/mx-chain-core-go/data/block"
+	"github.com/multiversx/mx-chain-core-go/data/typeConverters/uint64ByteSlice"
+	"github.com/multiversx/mx-chain-go/dataRetriever"
+	"github.com/multiversx/mx-chain-go/dataRetriever/requestHandlers"
+	"github.com/multiversx/mx-chain-go/integrationTests"
+	"github.com/multiversx/mx-chain-go/process/factory"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -29,24 +30,32 @@ func TestNode_GenerateSendInterceptHeaderByNonceWithNetMessenger(t *testing.T) {
 	hasher := integrationTests.TestHasher
 	marshalizer := integrationTests.TestMarshalizer
 	uint64Converter := uint64ByteSlice.NewBigEndianConverter()
-	var nrOfShards uint32 = 1
+	var numOfShards uint32 = 1
 	var shardID uint32 = 0
 	var txSignPrivKeyShardId uint32 = 0
 
 	fmt.Println("Requester:	")
-	nRequester := integrationTests.NewTestProcessorNode(nrOfShards, shardID, txSignPrivKeyShardId)
+	nRequester := integrationTests.NewTestProcessorNode(integrationTests.ArgTestProcessorNode{
+		MaxShards:            numOfShards,
+		NodeShardId:          shardID,
+		TxSignPrivKeyShardId: txSignPrivKeyShardId,
+	})
 
 	fmt.Println("Resolver:")
-	nResolver := integrationTests.NewTestProcessorNode(nrOfShards, shardID, txSignPrivKeyShardId)
+	nResolver := integrationTests.NewTestProcessorNode(integrationTests.ArgTestProcessorNode{
+		MaxShards:            numOfShards,
+		NodeShardId:          shardID,
+		TxSignPrivKeyShardId: txSignPrivKeyShardId,
+	})
 
 	defer func() {
-		_ = nRequester.Messenger.Close()
-		_ = nResolver.Messenger.Close()
+		nRequester.Close()
+		nResolver.Close()
 	}()
 
 	//connect messengers together
 	time.Sleep(time.Second)
-	err := nResolver.ConnectTo(nRequester)
+	err := nResolver.ConnectOnMain(nRequester)
 	require.Nil(t, err)
 
 	time.Sleep(time.Second)
@@ -60,19 +69,23 @@ func TestNode_GenerateSendInterceptHeaderByNonceWithNetMessenger(t *testing.T) {
 	//resolver has the headers
 	nResolver.DataPool.Headers().AddHeader(hdrHash1, hdr1)
 
-	_ = nResolver.Storage.GetStorer(dataRetriever.BlockHeaderUnit).Put(hdrHash2, hdrBuff2)
-	_ = nResolver.Storage.GetStorer(dataRetriever.ShardHdrNonceHashDataUnit).Put(uint64Converter.ToByteSlice(1), hdrHash2)
+	storer, err := nResolver.Storage.GetStorer(dataRetriever.BlockHeaderUnit)
+	assert.Nil(t, err)
+	_ = storer.Put(hdrHash2, hdrBuff2)
+	storer, err = nResolver.Storage.GetStorer(dataRetriever.ShardHdrNonceHashDataUnit)
+	assert.Nil(t, err)
+	_ = storer.Put(uint64Converter.ToByteSlice(1), hdrHash2)
 
 	chanDone1, chanDone2 := wireUpHandler(nRequester, hdr1, hdr2)
 
 	//request header from pool
-	res, err := nRequester.ResolverFinder.CrossShardResolver(factory.ShardBlocksTopic, core.MetachainShardId)
+	requester, err := nRequester.RequestersFinder.CrossShardRequester(factory.ShardBlocksTopic, core.MetachainShardId)
 	assert.Nil(t, err)
-	hdrResolver := res.(*resolvers.HeaderResolver)
-	_ = hdrResolver.RequestDataFromNonce(0, 0)
+	hdrRequester := requester.(requestHandlers.HeaderRequester)
+	_ = hdrRequester.RequestDataFromNonce(0, 0)
 
 	//request header that is stored
-	_ = hdrResolver.RequestDataFromNonce(1, 0)
+	_ = hdrRequester.RequestDataFromNonce(1, 0)
 
 	testChansShouldReadBoth(t, chanDone1, chanDone2)
 }
@@ -85,24 +98,32 @@ func TestNode_InterceptedHeaderWithWrongChainIDShouldBeDiscarded(t *testing.T) {
 	hasher := integrationTests.TestHasher
 	marshalizer := integrationTests.TestMarshalizer
 	uint64Converter := uint64ByteSlice.NewBigEndianConverter()
-	var nrOfShards uint32 = 1
+	var numOfShards uint32 = 1
 	var shardID uint32 = 0
 	var txSignPrivKeyShardId uint32 = 0
 
 	fmt.Println("Requester:	")
-	nRequester := integrationTests.NewTestProcessorNode(nrOfShards, shardID, txSignPrivKeyShardId)
+	nRequester := integrationTests.NewTestProcessorNode(integrationTests.ArgTestProcessorNode{
+		MaxShards:            numOfShards,
+		NodeShardId:          shardID,
+		TxSignPrivKeyShardId: txSignPrivKeyShardId,
+	})
 
 	fmt.Println("Resolver:")
-	nResolver := integrationTests.NewTestProcessorNode(nrOfShards, shardID, txSignPrivKeyShardId)
+	nResolver := integrationTests.NewTestProcessorNode(integrationTests.ArgTestProcessorNode{
+		MaxShards:            numOfShards,
+		NodeShardId:          shardID,
+		TxSignPrivKeyShardId: txSignPrivKeyShardId,
+	})
 
 	defer func() {
-		_ = nRequester.Messenger.Close()
-		_ = nResolver.Messenger.Close()
+		nRequester.Close()
+		nResolver.Close()
 	}()
 
 	//connect messengers together
 	time.Sleep(time.Second)
-	err := nResolver.ConnectTo(nRequester)
+	err := nResolver.ConnectOnMain(nRequester)
 	require.Nil(t, err)
 
 	time.Sleep(time.Second)
@@ -117,19 +138,23 @@ func TestNode_InterceptedHeaderWithWrongChainIDShouldBeDiscarded(t *testing.T) {
 	//resolver has the headers
 	nResolver.DataPool.Headers().AddHeader(hdrHash1, hdr1)
 
-	_ = nResolver.Storage.GetStorer(dataRetriever.BlockHeaderUnit).Put(hdrHash2, hdrBuff2)
-	_ = nResolver.Storage.GetStorer(dataRetriever.ShardHdrNonceHashDataUnit).Put(uint64Converter.ToByteSlice(1), hdrHash2)
+	storer, err := nResolver.Storage.GetStorer(dataRetriever.BlockHeaderUnit)
+	assert.Nil(t, err)
+	_ = storer.Put(hdrHash2, hdrBuff2)
+	storer, err = nResolver.Storage.GetStorer(dataRetriever.ShardHdrNonceHashDataUnit)
+	assert.Nil(t, err)
+	_ = storer.Put(uint64Converter.ToByteSlice(1), hdrHash2)
 
 	chanDone1, chanDone2 := wireUpHandler(nRequester, hdr1, hdr2)
 
 	//request header from pool
-	res, err := nRequester.ResolverFinder.CrossShardResolver(factory.ShardBlocksTopic, core.MetachainShardId)
+	requester, err := nRequester.RequestersFinder.CrossShardRequester(factory.ShardBlocksTopic, core.MetachainShardId)
 	assert.Nil(t, err)
-	hdrResolver := res.(*resolvers.HeaderResolver)
-	_ = hdrResolver.RequestDataFromNonce(0, 0)
+	hdrRequester := requester.(requestHandlers.HeaderRequester)
+	_ = hdrRequester.RequestDataFromNonce(0, 0)
 
 	//request header that is stored
-	_ = hdrResolver.RequestDataFromNonce(1, 0)
+	_ = hdrRequester.RequestDataFromNonce(1, 0)
 
 	testChansShouldReadNone(t, chanDone1, chanDone2)
 }
@@ -151,6 +176,8 @@ func generateTwoHeaders(chainID []byte) (data.HeaderHandler, data.HeaderHandler)
 		MiniBlockHeaders: nil,
 		ChainID:          chainID,
 		SoftwareVersion:  []byte("version"),
+		AccumulatedFees:  big.NewInt(0),
+		DeveloperFees:    big.NewInt(0),
 	}
 
 	hdr2 := &block.Header{
@@ -169,6 +196,8 @@ func generateTwoHeaders(chainID []byte) (data.HeaderHandler, data.HeaderHandler)
 		MiniBlockHeaders: nil,
 		ChainID:          chainID,
 		SoftwareVersion:  []byte("version"),
+		AccumulatedFees:  big.NewInt(0),
+		DeveloperFees:    big.NewInt(0),
 	}
 
 	return hdr1, hdr2

@@ -6,10 +6,11 @@ import (
 	"os"
 	"runtime"
 
-	logger "github.com/ElrondNetwork/elrond-go-logger"
-	"github.com/ElrondNetwork/elrond-go/common"
-	"github.com/ElrondNetwork/elrond-go/config"
-	"github.com/ElrondNetwork/elrond-go/facade"
+	"github.com/multiversx/mx-chain-go/common"
+	"github.com/multiversx/mx-chain-go/common/operationmodes"
+	"github.com/multiversx/mx-chain-go/config"
+	"github.com/multiversx/mx-chain-go/facade"
+	logger "github.com/multiversx/mx-chain-logger-go"
 	"github.com/urfave/cli"
 )
 
@@ -90,6 +91,13 @@ var (
 			"configurations such as port, target peer count or KadDHT settings",
 		Value: "./config/p2p.toml",
 	}
+	// fullArchiveP2PConfigurationFile defines a flag for the path to the toml file containing P2P configuration for the full archive network
+	fullArchiveP2PConfigurationFile = cli.StringFlag{
+		Name: "full-archive-p2p-config",
+		Usage: "The `" + filePathPlaceholder + "` for the p2p configuration file for the full archive network. This TOML file contains peer-to-peer " +
+			"configurations such as port, target peer count or KadDHT settings",
+		Value: "./config/fullArchiveP2P.toml",
+	}
 	// epochConfigurationFile defines a flag for the path to the toml file containing the epoch configuration
 	epochConfigurationFile = cli.StringFlag{
 		Name: "epoch-config",
@@ -110,11 +118,18 @@ var (
 		Usage: "The `" + filePathPlaceholder + "` for the gas costs configuration directory.",
 		Value: "./config/gasSchedules",
 	}
-	// port defines a flag for setting the port on which the node will listen for connections
+	// port defines a flag for setting the port on which the node will listen for connections on the main network
 	port = cli.StringFlag{
 		Name: "port",
 		Usage: "The `[p2p port]` number on which the application will start. Can use single values such as " +
 			"`0, 10230, 15670` or range of ports such as `5000-10000`",
+		Value: "0",
+	}
+	// fullArchivePort defines a flag for setting the port on which the node will listen for connections on the full archive network
+	fullArchivePort = cli.StringFlag{
+		Name: "full-archive-port",
+		Usage: "The `[p2p port]` number on which the application will start the second network when running in full archive mode. " +
+			"Can use single values such as `0, 10230, 15670` or range of ports such as `5000-10000`",
 		Value: "0",
 	}
 	// profileMode defines a flag for profiling the binary
@@ -203,9 +218,18 @@ var (
 
 	// validatorKeyPemFile defines a flag for the path to the validator key used in block signing
 	validatorKeyPemFile = cli.StringFlag{
-		Name:  "validator-key-pem-file",
-		Usage: "The `filepath` for the PEM file which contains the secret keys for the validator key.",
+		Name: "validator-key-pem-file",
+		Usage: "The `filepath` for the PEM file which contains the secret keys to be used by this node. If the file " +
+			"does not exists or can not be loaded, the node will autogenerate and use a random key. The key may or may not " +
+			"be registered to be a consensus validator.",
 		Value: "./config/validatorKey.pem",
+	}
+	// allValidatorKeysPemFile defines a flag for the path to the file that hold all validator keys used in block signing
+	// managed by the current node
+	allValidatorKeysPemFile = cli.StringFlag{
+		Name:  "all-validator-keys-pem-file",
+		Usage: "The `filepath` for the PEM file which contains all the secret keys managed by the current node.",
+		Value: "./config/allValidatorsKeys.pem",
 	}
 
 	// logLevel defines the logger level
@@ -246,7 +270,19 @@ var (
 	// workingDirectory defines a flag for the path for the working directory.
 	workingDirectory = cli.StringFlag{
 		Name:  "working-directory",
-		Usage: "This flag specifies the `directory` where the node will store databases, logs and statistics.",
+		Usage: "This flag specifies the `directory` where the node will store databases, logs and statistics if no other related flags are set.",
+		Value: "",
+	}
+	// dbDirectory defines a flag for the path for the db directory.
+	dbDirectory = cli.StringFlag{
+		Name:  "db-path",
+		Usage: "This flag specifies the `directory` where the node will store databases.",
+		Value: "",
+	}
+	// logsDirectory defines a flag for the path for the logs directory.
+	logsDirectory = cli.StringFlag{
+		Name:  "logs-path",
+		Usage: "This flag specifies the `directory` where the node will store logs.",
 		Value: "",
 	}
 
@@ -295,12 +331,6 @@ var (
 		Name:  "import-db-save-epoch-root-hash",
 		Usage: "This flag, if set, will export the trie snapshots at every new epoch",
 	}
-	// importDbStartInEpoch defines a flag for an optional flag that can specify the start in epoch value when executing the import-db process
-	importDbStartInEpoch = cli.Uint64Flag{
-		Name:  "import-db-start-epoch",
-		Value: 0,
-		Usage: "This flag will specify the start in epoch value in import-db process",
-	}
 	// redundancyLevel defines a flag that specifies the level of redundancy used by the current instance for the node (-1 = disabled, 0 = main instance (default), 1 = first backup, 2 = second backup, etc.)
 	redundancyLevel = cli.Int64Flag{
 		Name:  "redundancy-level",
@@ -327,6 +357,57 @@ var (
 		Name:  "force-start-from-network",
 		Usage: "Flag that will force the start from network bootstrap process",
 	}
+	// disableConsensusWatchdog defines a flag that will disable the consensus watchdog
+	disableConsensusWatchdog = cli.BoolFlag{
+		Name:  "disable-consensus-watchdog",
+		Usage: "Flag that will disable the consensus watchdog",
+	}
+	// serializeSnapshots defines a flag that will serialize `state snapshotting` and `processing`
+	serializeSnapshots = cli.BoolFlag{
+		Name:  "serialize-snapshots",
+		Usage: "Flag that will serialize `state snapshotting` and `processing`",
+	}
+
+	// noKey defines a flag that, if set, will generate every time when node starts a new signing key
+	// TODO: remove this in the next releases
+	noKey = cli.BoolFlag{
+		Name: "no-key",
+		Usage: "DEPRECATED option, it will be removed in the next releases. To start a node without a key, " +
+			"simply omit to provide a validatorKey.pem file",
+	}
+
+	// p2pKeyPemFile defines the flag for the path to the key pem file used for p2p signing
+	p2pKeyPemFile = cli.StringFlag{
+		Name:  "p2p-key-pem-file",
+		Usage: "The `filepath` for the PEM file which contains the secret keys for the p2p key. If this is not specified a new key will be generated (internally) by default.",
+		Value: "./config/p2pKey.pem",
+	}
+
+	// snapshotsEnabled is used to enable snapshots, if it is not set it defaults to true, it will be set to false if it is set specifically
+	snapshotsEnabled = cli.BoolTFlag{
+		Name:  "snapshots-enabled",
+		Usage: "Boolean option for enabling state snapshots. If it is not set it defaults to true, it will be set to false if it is set specifically as --snapshots-enabled=false",
+	}
+
+	// operationMode defines the flag for specifying how configs should be altered depending on the node's intent
+	operationMode = cli.StringFlag{
+		Name:  "operation-mode",
+		Usage: "String flag for specifying the desired `operation mode`(s) of the node, resulting in altering some configuration values accordingly. Possible values are: snapshotless-observer, full-archive, db-lookup-extension, historical-balances or `\"\"` (empty). Multiple values can be separated via ,",
+		Value: "",
+	}
+
+	// repopulateTokensSupplies defines a flag that, if set, will repopulate the tokens supplies database by iterating over the trie
+	repopulateTokensSupplies = cli.BoolFlag{
+		Name:  "repopulate-tokens-supplies",
+		Usage: "Boolean flag for repopulating the tokens supplies database. It will delete the current data, iterate over the entire trie and add he new obtained supplies",
+	}
+
+	// p2pPrometheusMetrics defines a flag for p2p prometheus metrics
+	// If enabled, it will open a new route, /debug/metrics/prometheus, where p2p prometheus metrics will be available
+	p2pPrometheusMetrics = cli.BoolFlag{
+		Name:  "p2p-prometheus-metrics",
+		Usage: "Boolean option for enabling the /debug/metrics/prometheus route for p2p prometheus metrics",
+	}
 )
 
 func getFlags() []cli.Flag {
@@ -342,12 +423,15 @@ func getFlags() []cli.Flag {
 		configurationPreferencesFile,
 		externalConfigFile,
 		p2pConfigurationFile,
+		fullArchiveP2PConfigurationFile,
 		epochConfigurationFile,
 		roundConfigurationFile,
 		gasScheduleConfigurationDirectory,
 		validatorKeyIndex,
 		validatorKeyPemFile,
+		allValidatorKeysPemFile,
 		port,
+		fullArchivePort,
 		profileMode,
 		useHealthService,
 		storageCleanup,
@@ -371,20 +455,30 @@ func getFlags() []cli.Flag {
 		importDbDirectory,
 		importDbNoSigCheck,
 		importDbSaveEpochRootHash,
-		importDbStartInEpoch,
 		redundancyLevel,
 		fullArchive,
 		memBallast,
 		memoryUsageToCreateProfiles,
 		forceStartFromNetwork,
+		disableConsensusWatchdog,
+		serializeSnapshots,
+		noKey,
+		p2pKeyPemFile,
+		snapshotsEnabled,
+		dbDirectory,
+		logsDirectory,
+		operationMode,
+		repopulateTokensSupplies,
+		p2pPrometheusMetrics,
 	}
 }
 
 func getFlagsConfig(ctx *cli.Context, log logger.Logger) *config.ContextFlagsConfig {
 	flagsConfig := &config.ContextFlagsConfig{}
 
-	workingDir := ctx.GlobalString(workingDirectory.Name)
-	flagsConfig.WorkingDir = getWorkingDir(workingDir, log)
+	flagsConfig.WorkingDir = getWorkingDir(ctx, workingDirectory, log)
+	flagsConfig.DbDir = getCustomDirIfSet(ctx, dbDirectory, log)
+	flagsConfig.LogsDir = getCustomDirIfSet(ctx, logsDirectory, log)
 	flagsConfig.EnableGops = ctx.GlobalBool(gopsEn.Name)
 	flagsConfig.SaveLogFile = ctx.GlobalBool(logSaveFile.Name)
 	flagsConfig.EnableLogCorrelation = ctx.GlobalBool(logWithCorrelation.Name)
@@ -400,6 +494,17 @@ func getFlagsConfig(ctx *cli.Context, log logger.Logger) *config.ContextFlagsCon
 	flagsConfig.UseLogView = ctx.GlobalBool(useLogView.Name)
 	flagsConfig.ValidatorKeyIndex = ctx.GlobalInt(validatorKeyIndex.Name)
 	flagsConfig.ForceStartFromNetwork = ctx.GlobalBool(forceStartFromNetwork.Name)
+	flagsConfig.DisableConsensusWatchdog = ctx.GlobalBool(disableConsensusWatchdog.Name)
+	flagsConfig.SerializeSnapshots = ctx.GlobalBool(serializeSnapshots.Name)
+	flagsConfig.OperationMode = ctx.GlobalString(operationMode.Name)
+	flagsConfig.RepopulateTokensSupplies = ctx.GlobalBool(repopulateTokensSupplies.Name)
+	flagsConfig.P2PPrometheusMetricsEnabled = ctx.GlobalBool(p2pPrometheusMetrics.Name)
+
+	if ctx.GlobalBool(noKey.Name) {
+		log.Warn("the provided -no-key option is deprecated and will soon be removed. To start a node without " +
+			"a key, simply omit to provide the validatorKey.pem file to the node binary")
+	}
+
 	return flagsConfig
 }
 
@@ -410,6 +515,8 @@ func applyFlags(ctx *cli.Context, cfgs *config.Configs, flagsConfig *config.Cont
 	cfgs.ConfigurationPathsHolder.GasScheduleDirectoryName = ctx.GlobalString(gasScheduleConfigurationDirectory.Name)
 	cfgs.ConfigurationPathsHolder.SmartContracts = ctx.GlobalString(smartContractsFile.Name)
 	cfgs.ConfigurationPathsHolder.ValidatorKey = ctx.GlobalString(validatorKeyPemFile.Name)
+	cfgs.ConfigurationPathsHolder.AllValidatorKeys = ctx.GlobalString(allValidatorKeysPemFile.Name)
+	cfgs.ConfigurationPathsHolder.P2pKey = ctx.GlobalString(p2pKeyPemFile.Name)
 
 	if ctx.IsSet(startInEpoch.Name) {
 		log.Debug("start in epoch is enabled")
@@ -433,6 +540,9 @@ func applyFlags(ctx *cli.Context, cfgs *config.Configs, flagsConfig *config.Cont
 		log.Info("setting a new value for the memoryUsageToCreateProfiles option",
 			"new value", cfgs.GeneralConfig.Health.MemoryUsageToCreateProfiles)
 	}
+	if ctx.IsSet(snapshotsEnabled.Name) {
+		cfgs.GeneralConfig.StateTriesConfig.SnapshotsEnabled = ctx.GlobalBool(snapshotsEnabled.Name)
+	}
 
 	importDbDirectoryValue := ctx.GlobalString(importDbDirectory.Name)
 	importDBConfigs := &config.ImportDbConfig{
@@ -440,7 +550,6 @@ func applyFlags(ctx *cli.Context, cfgs *config.Configs, flagsConfig *config.Cont
 		ImportDBWorkingDir:            importDbDirectoryValue,
 		ImportDbNoSigCheckFlag:        ctx.GlobalBool(importDbNoSigCheck.Name),
 		ImportDbSaveTrieEpochRootHash: ctx.GlobalBool(importDbSaveEpochRootHash.Name),
-		ImportDBStartInEpoch:          uint32(ctx.GlobalUint64(importDbStartInEpoch.Name)),
 	}
 	cfgs.FlagsConfig = flagsConfig
 	cfgs.ImportDbConfig = importDBConfigs
@@ -459,8 +568,10 @@ func applyFlags(ctx *cli.Context, cfgs *config.Configs, flagsConfig *config.Cont
 	return nil
 }
 
-func getWorkingDir(workingDir string, log logger.Logger) string {
+func getWorkingDir(ctx *cli.Context, cliFlag cli.StringFlag, log logger.Logger) string {
 	var err error
+
+	workingDir := ctx.GlobalString(cliFlag.Name)
 	if len(workingDir) == 0 {
 		workingDir, err = os.Getwd()
 		if err != nil {
@@ -468,36 +579,104 @@ func getWorkingDir(workingDir string, log logger.Logger) string {
 			workingDir = ""
 		}
 	}
-	log.Trace("working directory", "path", workingDir)
+	log.Trace("working directory", "dirName", cliFlag.Name, "path", workingDir)
 
 	return workingDir
 }
 
-func applyCompatibleConfigs(log logger.Logger, configs *config.Configs) error {
-	importDbFlags := configs.ImportDbConfig
-	importDbFlags.ImportDbNoSigCheckFlag = importDbFlags.ImportDbNoSigCheckFlag && importDbFlags.IsImportDBMode
-	importDbFlags.ImportDbSaveTrieEpochRootHash = importDbFlags.ImportDbSaveTrieEpochRootHash && importDbFlags.IsImportDBMode
+func getCustomDirIfSet(ctx *cli.Context, cliFlag cli.StringFlag, log logger.Logger) string {
+	dirStr := ctx.GlobalString(cliFlag.Name)
 
-	if importDbFlags.IsImportDBMode {
-		return processConfigImportDBMode(log, configs)
+	if len(dirStr) == 0 {
+		return getWorkingDir(ctx, workingDirectory, log)
+	}
+
+	return getWorkingDir(ctx, cliFlag, log)
+}
+
+func applyCompatibleConfigs(log logger.Logger, configs *config.Configs) error {
+	if configs.FlagsConfig.EnablePprof {
+		runtime.SetMutexProfileFraction(5)
+	}
+
+	// import-db is not an operation mode because it needs the path to the DB to be imported from. Making it an operation mode
+	// would bring confusion
+	isInImportDBMode := configs.ImportDbConfig.IsImportDBMode
+	if isInImportDBMode {
+		err := processConfigImportDBMode(log, configs)
+		if err != nil {
+			return err
+		}
+	}
+	if !isInImportDBMode && configs.ImportDbConfig.ImportDbNoSigCheckFlag {
+		return fmt.Errorf("import-db-no-sig-check can only be used with the import-db flag")
+	}
+
+	if configs.PreferencesConfig.BlockProcessingCutoff.Enabled {
+		log.Debug("node is started by using the block processing cut-off - will disable the watchdog")
+		configs.FlagsConfig.DisableConsensusWatchdog = true
+	}
+
+	operationModes, err := operationmodes.ParseOperationModes(configs.FlagsConfig.OperationMode)
+	if err != nil {
+		return err
 	}
 
 	// if FullArchive is enabled, we override the conflicting StoragePruning settings and StartInEpoch as well
-	if configs.PreferencesConfig.Preferences.FullArchive {
-		return processConfigFullArchiveMode(log, configs)
+	if operationmodes.SliceContainsElement(operationModes, operationmodes.OperationModeFullArchive) {
+		configs.PreferencesConfig.Preferences.FullArchive = true
+	}
+	isInFullArchiveMode := configs.PreferencesConfig.Preferences.FullArchive
+	if isInFullArchiveMode {
+		processConfigFullArchiveMode(log, configs)
 	}
 
-	if configs.FlagsConfig.EnablePprof {
-		runtime.SetMutexProfileFraction(5)
+	isInHistoricalBalancesMode := operationmodes.SliceContainsElement(operationModes, operationmodes.OperationModeHistoricalBalances)
+	if isInHistoricalBalancesMode {
+		// TODO move all operation modes settings in the common/operationmodes package and add tests
+		operationmodes.ProcessHistoricalBalancesMode(log, configs)
+	}
+
+	isInDbLookupExtensionMode := operationmodes.SliceContainsElement(operationModes, operationmodes.OperationModeDbLookupExtension)
+	if isInDbLookupExtensionMode {
+		processDbLookupExtensionMode(log, configs)
+	}
+
+	isInSnapshotLessObserverMode := operationmodes.SliceContainsElement(operationModes, operationmodes.OperationModeSnapshotlessObserver)
+	if isInSnapshotLessObserverMode {
+		processSnapshotLessObserverMode(log, configs)
 	}
 
 	return nil
 }
 
+func processDbLookupExtensionMode(log logger.Logger, configs *config.Configs) {
+	configs.GeneralConfig.DbLookupExtensions.Enabled = true
+	configs.GeneralConfig.StoragePruning.Enabled = true
+
+	log.Warn("the node is in DB lookup extension mode! Will auto-set some config values",
+		"DbLookupExtensions.Enabled", configs.GeneralConfig.DbLookupExtensions.Enabled,
+		"StoragePruning.Enabled", configs.GeneralConfig.StoragePruning.Enabled,
+	)
+}
+
+func processSnapshotLessObserverMode(log logger.Logger, configs *config.Configs) {
+	configs.GeneralConfig.StoragePruning.ObserverCleanOldEpochsData = true
+	configs.GeneralConfig.StateTriesConfig.SnapshotsEnabled = false
+	configs.GeneralConfig.StateTriesConfig.AccountsStatePruningEnabled = true
+
+	log.Warn("the node is in snapshotless observer mode! Will auto-set some config values",
+		"StoragePruning.ObserverCleanOldEpochsData", configs.GeneralConfig.StoragePruning.ObserverCleanOldEpochsData,
+		"StateTriesConfig.SnapshotsEnabled", configs.GeneralConfig.StateTriesConfig.SnapshotsEnabled,
+		"StateTriesConfig.AccountsStatePruningEnabled", configs.GeneralConfig.StateTriesConfig.AccountsStatePruningEnabled,
+	)
+}
+
 func processConfigImportDBMode(log logger.Logger, configs *config.Configs) error {
 	importDbFlags := configs.ImportDbConfig
 	generalConfigs := configs.GeneralConfig
-	p2pConfigs := configs.P2pConfig
+	p2pConfigs := configs.MainP2pConfig
+	fullArchiveP2PConfigs := configs.FullArchiveP2pConfig
 	prefsConfig := configs.PreferencesConfig
 
 	var err error
@@ -507,34 +686,32 @@ func processConfigImportDBMode(log logger.Logger, configs *config.Configs) error
 		return err
 	}
 
-	if importDbFlags.ImportDBStartInEpoch == 0 {
-		generalConfigs.GeneralSettings.StartInEpochEnabled = false
-	}
+	generalConfigs.GeneralSettings.StartInEpochEnabled = false
 
-	generalConfigs.StoragePruning.NumActivePersisters = generalConfigs.StoragePruning.NumEpochsToKeep
-	generalConfigs.StateTriesConfig.CheckpointsEnabled = false
-	generalConfigs.StateTriesConfig.CheckpointRoundsModulus = 100000000
+	// We need to increment "NumActivePersisters" in order to make the storage resolvers work (since they open 2 epochs in advance)
+	generalConfigs.StoragePruning.NumActivePersisters++
 	p2pConfigs.Node.ThresholdMinConnectedPeers = 0
 	p2pConfigs.KadDhtPeerDiscovery.Enabled = false
+	fullArchiveP2PConfigs.Node.ThresholdMinConnectedPeers = 0
+	fullArchiveP2PConfigs.KadDhtPeerDiscovery.Enabled = false
 
 	alterStorageConfigsForDBImport(generalConfigs)
 
 	log.Warn("the node is in import mode! Will auto-set some config values, including storage config values",
 		"GeneralSettings.StartInEpochEnabled", generalConfigs.GeneralSettings.StartInEpochEnabled,
-		"StateTriesConfig.CheckpointsEnabled", generalConfigs.StateTriesConfig.CheckpointsEnabled,
-		"StateTriesConfig.CheckpointRoundsModulus", generalConfigs.StateTriesConfig.CheckpointRoundsModulus,
-		"StoragePruning.NumActivePersisters", generalConfigs.StoragePruning.NumEpochsToKeep,
+		"StoragePruning.NumEpochsToKeep", generalConfigs.StoragePruning.NumEpochsToKeep,
+		"StoragePruning.NumActivePersisters", generalConfigs.StoragePruning.NumActivePersisters,
 		"p2p.ThresholdMinConnectedPeers", p2pConfigs.Node.ThresholdMinConnectedPeers,
+		"fullArchiveP2P.ThresholdMinConnectedPeers", fullArchiveP2PConfigs.Node.ThresholdMinConnectedPeers,
 		"no sig check", importDbFlags.ImportDbNoSigCheckFlag,
 		"import save trie epoch root hash", importDbFlags.ImportDbSaveTrieEpochRootHash,
-		"import DB start in epoch", importDbFlags.ImportDBStartInEpoch,
 		"import DB shard ID", importDbFlags.ImportDBTargetShardID,
 		"kad dht discoverer", "off",
 	)
 	return nil
 }
 
-func processConfigFullArchiveMode(log logger.Logger, configs *config.Configs) error {
+func processConfigFullArchiveMode(log logger.Logger, configs *config.Configs) {
 	generalConfigs := configs.GeneralConfig
 
 	configs.GeneralConfig.GeneralSettings.StartInEpochEnabled = false
@@ -548,8 +725,6 @@ func processConfigFullArchiveMode(log logger.Logger, configs *config.Configs) er
 		"StoragePruning.ObserverCleanOldEpochsData", generalConfigs.StoragePruning.ObserverCleanOldEpochsData,
 		"StoragePruning.Enabled", generalConfigs.StoragePruning.Enabled,
 	)
-
-	return nil
 }
 
 func alterStorageConfigsForDBImport(config *config.Config) {

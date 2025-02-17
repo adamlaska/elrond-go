@@ -1,17 +1,13 @@
 package processor
 
 import (
-	"github.com/ElrondNetwork/elrond-go-core/core"
-	"github.com/ElrondNetwork/elrond-go-core/core/check"
-	"github.com/ElrondNetwork/elrond-go/process"
-	"github.com/ElrondNetwork/elrond-go/storage"
+	"github.com/multiversx/mx-chain-core-go/core"
+	"github.com/multiversx/mx-chain-core-go/core/check"
+	"github.com/multiversx/mx-chain-go/process"
+	"github.com/multiversx/mx-chain-go/storage"
 )
 
 var _ process.InterceptorProcessor = (*TrieNodeInterceptorProcessor)(nil)
-
-type interceptedTrieNodeHandler interface {
-	SizeInBytes() int
-}
 
 // TrieNodeInterceptorProcessor is the processor used when intercepting trie nodes
 type TrieNodeInterceptorProcessor struct {
@@ -36,7 +32,7 @@ func (tnip *TrieNodeInterceptorProcessor) Validate(_ process.InterceptedData, _ 
 
 // Save saves the intercepted trie node in the intercepted nodes cacher
 func (tnip *TrieNodeInterceptorProcessor) Save(data process.InterceptedData, _ core.PeerID, _ string) error {
-	nodeData, ok := data.(interceptedTrieNodeHandler)
+	nodeData, ok := data.(interceptedDataSizeHandler)
 	if !ok {
 		return process.ErrWrongTypeAssertion
 	}

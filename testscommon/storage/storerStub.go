@@ -1,5 +1,9 @@
 package storage
 
+import (
+	"github.com/multiversx/mx-chain-core-go/data"
+)
+
 // StorerStub -
 type StorerStub struct {
 	PutCalled                    func(key, data []byte) error
@@ -12,9 +16,10 @@ type StorerStub struct {
 	ClearCacheCalled             func()
 	DestroyUnitCalled            func() error
 	GetFromEpochCalled           func(key []byte, epoch uint32) ([]byte, error)
-	GetBulkFromEpochCalled       func(keys [][]byte, epoch uint32) (map[string][]byte, error)
+	GetBulkFromEpochCalled       func(keys [][]byte, epoch uint32) ([]data.KeyValuePair, error)
 	GetOldestEpochCalled         func() (uint32, error)
 	RangeKeysCalled              func(handler func(key []byte, val []byte) bool)
+	GetIdentifierCalled          func() string
 	CloseCalled                  func() error
 }
 
@@ -98,7 +103,7 @@ func (ss *StorerStub) GetFromEpoch(key []byte, epoch uint32) ([]byte, error) {
 }
 
 // GetBulkFromEpoch -
-func (ss *StorerStub) GetBulkFromEpoch(keys [][]byte, epoch uint32) (map[string][]byte, error) {
+func (ss *StorerStub) GetBulkFromEpoch(keys [][]byte, epoch uint32) ([]data.KeyValuePair, error) {
 	if ss.GetBulkFromEpochCalled != nil {
 		return ss.GetBulkFromEpochCalled(keys, epoch)
 	}
@@ -118,6 +123,14 @@ func (ss *StorerStub) RangeKeys(handler func(key []byte, val []byte) bool) {
 	if ss.RangeKeysCalled != nil {
 		ss.RangeKeysCalled(handler)
 	}
+}
+
+// GetIdentifier -
+func (ss *StorerStub) GetIdentifier() string {
+	if ss.GetIdentifierCalled != nil {
+		return ss.GetIdentifierCalled()
+	}
+	return ""
 }
 
 // Close -

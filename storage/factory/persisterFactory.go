@@ -1,57 +1,95 @@
 package factory
 
 import (
-	"errors"
+	"os"
+	"path"
+	"time"
 
-	"github.com/ElrondNetwork/elrond-go/config"
-	"github.com/ElrondNetwork/elrond-go/storage"
-	"github.com/ElrondNetwork/elrond-go/storage/leveldb"
-	"github.com/ElrondNetwork/elrond-go/storage/memorydb"
-	"github.com/ElrondNetwork/elrond-go/storage/storageUnit"
+	"github.com/multiversx/mx-chain-go/config"
+	"github.com/multiversx/mx-chain-go/storage"
+	"github.com/multiversx/mx-chain-go/storage/disabled"
 )
 
-// PersisterFactory is the factory which will handle creating new databases
-type PersisterFactory struct {
-	dbType            string
-	batchDelaySeconds int
-	maxBatchSize      int
-	maxOpenFiles      int
+// persisterFactory is the factory which will handle creating new databases
+type persisterFactory struct {
+	dbConfigHandler storage.DBConfigHandler
 }
 
-// NewPersisterFactory will return a new instance of a PersisterFactory
-func NewPersisterFactory(config config.DBConfig) *PersisterFactory {
-	return &PersisterFactory{
-		dbType:            config.Type,
-		batchDelaySeconds: config.BatchDelaySeconds,
-		maxBatchSize:      config.MaxBatchSize,
-		maxOpenFiles:      config.MaxOpenFiles,
+// NewPersisterFactory will return a new instance of persister factory
+func NewPersisterFactory(config config.DBConfig) (*persisterFactory, error) {
+	dbConfigHandler := NewDBConfigHandler(config)
+
+	return &persisterFactory{
+		dbConfigHandler: dbConfigHandler,
+	}, nil
+}
+
+// CreateWithRetries will return a new instance of a DB with a given path
+// It will try to create db multiple times
+func (pf *persisterFactory) CreateWithRetries(path string) (storage.Persister, error) {
+	var persister storage.Persister
+	var err error
+
+	for i := 0; i < storage.MaxRetriesToCreateDB; i++ {
+		persister, err = pf.Create(path)
+		if err == nil {
+			return persister, nil
+		}
+		log.Warn("Create Persister failed", "path", path, "error", err)
+
+		// TODO: extract this in a parameter and inject it
+		time.Sleep(storage.SleepTimeBetweenCreateDBRetries)
 	}
+
+	return nil, err
 }
 
 // Create will return a new instance of a DB with a given path
-func (pf *PersisterFactory) Create(path string) (storage.Persister, error) {
+func (pf *persisterFactory) Create(path string) (storage.Persister, error) {
 	if len(path) == 0 {
-		return nil, errors.New("invalid file path")
+		return nil, storage.ErrInvalidFilePath
 	}
 
-	switch storageUnit.DBType(pf.dbType) {
-	case storageUnit.LvlDB:
-		return leveldb.NewDB(path, pf.batchDelaySeconds, pf.maxBatchSize, pf.maxOpenFiles)
-	case storageUnit.LvlDBSerial:
-		return leveldb.NewSerialDB(path, pf.batchDelaySeconds, pf.maxBatchSize, pf.maxOpenFiles)
-	case storageUnit.MemoryDB:
-		return memorydb.New(), nil
-	default:
-		return nil, storage.ErrNotSupportedDBType
+	dbConfig, err := pf.dbConfigHandler.GetDBConfig(path)
+	if err != nil {
+		return nil, err
 	}
+
+	if dbConfig.UseTmpAsFilePath {
+		filePath, err := getTmpFilePath(path)
+		if err != nil {
+			return nil, err
+		}
+
+		path = filePath
+	}
+
+	pc := newPersisterCreator(*dbConfig)
+
+	persister, err := pc.Create(path)
+	if err != nil {
+		return nil, err
+	}
+
+	err = pf.dbConfigHandler.SaveDBConfigToFilePath(path, dbConfig)
+	if err != nil {
+		return nil, err
+	}
+
+	return persister, nil
 }
 
 // CreateDisabled will return a new disabled persister
-func (pf *PersisterFactory) CreateDisabled() storage.Persister {
-	return &disabledPersister{}
+func (pf *persisterFactory) CreateDisabled() storage.Persister {
+	return disabled.NewErrorDisabledPersister()
+}
+
+func getTmpFilePath(p string) (string, error) {
+	_, file := path.Split(p)
+	return os.MkdirTemp("", file)
 }
 
 // IsInterfaceNil returns true if there is no value under the interface
-func (pf *PersisterFactory) IsInterfaceNil() bool {
+func (pf *persisterFactory) IsInterfaceNil() bool {
 	return pf == nil
 }

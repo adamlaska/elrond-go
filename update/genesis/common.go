@@ -3,43 +3,47 @@ package genesis
 import (
 	"math/big"
 
-	"github.com/ElrondNetwork/elrond-go-core/core"
-	"github.com/ElrondNetwork/elrond-go-core/marshal"
-	"github.com/ElrondNetwork/elrond-go/common"
-	"github.com/ElrondNetwork/elrond-go/sharding"
-	"github.com/ElrondNetwork/elrond-go/state"
+	"github.com/multiversx/mx-chain-core-go/core"
+	"github.com/multiversx/mx-chain-core-go/marshal"
+	"github.com/multiversx/mx-chain-go/common"
+
+	"github.com/multiversx/mx-chain-go/state"
+	"github.com/multiversx/mx-chain-go/state/accounts"
 )
 
 // TODO: create a structure or use this function also in process/peer/process.go
 func getValidatorDataFromLeaves(
-	leavesChannel chan core.KeyValueHolder,
-	shardCoordinator sharding.Coordinator,
+	leavesChannels *common.TrieIteratorChannels,
 	marshalizer marshal.Marshalizer,
-) (map[uint32][]*state.ValidatorInfo, error) {
-
-	validators := make(map[uint32][]*state.ValidatorInfo, shardCoordinator.NumberOfShards()+1)
-	for i := uint32(0); i < shardCoordinator.NumberOfShards(); i++ {
-		validators[i] = make([]*state.ValidatorInfo, 0)
-	}
-	validators[core.MetachainShardId] = make([]*state.ValidatorInfo, 0)
-
-	for pa := range leavesChannel {
-		peerAccount, err := unmarshalPeer(pa.Value(), marshalizer)
+) (state.ShardValidatorsInfoMapHandler, error) {
+	validators := state.NewShardValidatorsInfoMap()
+	for pa := range leavesChannels.LeavesChan {
+		peerAccount, err := unmarshalPeer(pa, marshalizer)
 		if err != nil {
 			return nil, err
 		}
 
-		currentShardId := peerAccount.GetShardId()
 		validatorInfoData := peerAccountToValidatorInfo(peerAccount)
-		validators[currentShardId] = append(validators[currentShardId], validatorInfoData)
+		err = validators.Add(validatorInfoData)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	err := leavesChannels.ErrChan.ReadFromChanNonBlocking()
+	if err != nil {
+		return nil, err
 	}
 
 	return validators, nil
 }
 
-func unmarshalPeer(pa []byte, marshalizer marshal.Marshalizer) (state.PeerAccountHandler, error) {
-	peerAccount := state.NewEmptyPeerAccount()
-	err := marshalizer.Unmarshal(peerAccount, pa)
+func unmarshalPeer(peerAccountData core.KeyValueHolder, marshalizer marshal.Marshalizer) (state.PeerAccountHandler, error) {
+	peerAccount, err := accounts.NewPeerAccount(peerAccountData.Key())
+	if err != nil {
+		return nil, err
+	}
+	err = marshalizer.Unmarshal(peerAccount, peerAccountData.Value())
 	if err != nil {
 		return nil, err
 	}
@@ -48,21 +52,23 @@ func unmarshalPeer(pa []byte, marshalizer marshal.Marshalizer) (state.PeerAccoun
 
 func peerAccountToValidatorInfo(peerAccount state.PeerAccountHandler) *state.ValidatorInfo {
 	return &state.ValidatorInfo{
-		PublicKey:                  peerAccount.GetBLSPublicKey(),
+		PublicKey:                  peerAccount.AddressBytes(),
 		ShardId:                    peerAccount.GetShardId(),
 		List:                       getActualList(peerAccount),
+		PreviousList:               peerAccount.GetPreviousList(),
 		Index:                      peerAccount.GetIndexInList(),
+		PreviousIndex:              peerAccount.GetPreviousIndexInList(),
 		TempRating:                 peerAccount.GetTempRating(),
 		Rating:                     peerAccount.GetRating(),
 		RewardAddress:              peerAccount.GetRewardAddress(),
-		LeaderSuccess:              peerAccount.GetLeaderSuccessRate().NumSuccess,
-		LeaderFailure:              peerAccount.GetLeaderSuccessRate().NumFailure,
-		ValidatorSuccess:           peerAccount.GetValidatorSuccessRate().NumSuccess,
-		ValidatorFailure:           peerAccount.GetValidatorSuccessRate().NumFailure,
-		TotalLeaderSuccess:         peerAccount.GetTotalLeaderSuccessRate().NumSuccess,
-		TotalLeaderFailure:         peerAccount.GetTotalLeaderSuccessRate().NumFailure,
-		TotalValidatorSuccess:      peerAccount.GetTotalValidatorSuccessRate().NumSuccess,
-		TotalValidatorFailure:      peerAccount.GetTotalValidatorSuccessRate().NumFailure,
+		LeaderSuccess:              peerAccount.GetLeaderSuccessRate().GetNumSuccess(),
+		LeaderFailure:              peerAccount.GetLeaderSuccessRate().GetNumFailure(),
+		ValidatorSuccess:           peerAccount.GetValidatorSuccessRate().GetNumSuccess(),
+		ValidatorFailure:           peerAccount.GetValidatorSuccessRate().GetNumFailure(),
+		TotalLeaderSuccess:         peerAccount.GetTotalLeaderSuccessRate().GetNumSuccess(),
+		TotalLeaderFailure:         peerAccount.GetTotalLeaderSuccessRate().GetNumFailure(),
+		TotalValidatorSuccess:      peerAccount.GetTotalValidatorSuccessRate().GetNumSuccess(),
+		TotalValidatorFailure:      peerAccount.GetTotalValidatorSuccessRate().GetNumFailure(),
 		NumSelectedInSuccessBlocks: peerAccount.GetNumSelectedInSuccessBlocks(),
 		AccumulatedFees:            big.NewInt(0).Set(peerAccount.GetAccumulatedFees()),
 	}
@@ -83,7 +89,7 @@ func getActualList(peerAccount state.PeerAccountHandler) string {
 	return string(common.LeavingList)
 }
 
-func shouldExportValidator(validator *state.ValidatorInfo, allowedLists []common.PeerType) bool {
+func shouldExportValidator(validator state.ValidatorInfoHandler, allowedLists []common.PeerType) bool {
 	validatorList := validator.GetList()
 
 	for _, list := range allowedLists {

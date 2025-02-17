@@ -3,28 +3,22 @@ package resolvers
 import (
 	"fmt"
 
-	"github.com/ElrondNetwork/elrond-go-core/core"
-	"github.com/ElrondNetwork/elrond-go-core/core/check"
-	"github.com/ElrondNetwork/elrond-go-core/data/batch"
-	"github.com/ElrondNetwork/elrond-go-core/marshal"
-	logger "github.com/ElrondNetwork/elrond-go-logger"
-	"github.com/ElrondNetwork/elrond-go/dataRetriever"
-	"github.com/ElrondNetwork/elrond-go/dataRetriever/requestHandlers"
-	"github.com/ElrondNetwork/elrond-go/p2p"
-	"github.com/ElrondNetwork/elrond-go/storage"
+	"github.com/multiversx/mx-chain-core-go/core"
+	"github.com/multiversx/mx-chain-core-go/core/check"
+	"github.com/multiversx/mx-chain-core-go/data/batch"
+	"github.com/multiversx/mx-chain-go/dataRetriever"
+	"github.com/multiversx/mx-chain-go/p2p"
+	"github.com/multiversx/mx-chain-go/storage"
+	logger "github.com/multiversx/mx-chain-logger-go"
 )
 
-var _ dataRetriever.MiniBlocksResolver = (*miniblockResolver)(nil)
-var _ requestHandlers.HashSliceResolver = (*miniblockResolver)(nil)
+var _ dataRetriever.Resolver = (*miniblockResolver)(nil)
 
 // ArgMiniblockResolver is the argument structure used to create a new miniblockResolver instance
 type ArgMiniblockResolver struct {
-	SenderResolver    dataRetriever.TopicResolverSender
+	ArgBaseResolver
 	MiniBlockPool     storage.Cacher
 	MiniBlockStorage  storage.Storer
-	Marshalizer       marshal.Marshalizer
-	AntifloodHandler  dataRetriever.P2PAntifloodHandler
-	Throttler         dataRetriever.ResolverThrottler
 	DataPacker        dataRetriever.DataPacker
 	IsFullHistoryNode bool
 }
@@ -32,7 +26,7 @@ type ArgMiniblockResolver struct {
 // miniblockResolver is a wrapper over Resolver that is specialized in resolving miniblocks requests
 // TODO extract common functionality between this and transactionResolver
 type miniblockResolver struct {
-	dataRetriever.TopicResolverSender
+	*baseResolver
 	messageProcessor
 	baseStorageResolver
 	miniBlockPool storage.Cacher
@@ -41,35 +35,20 @@ type miniblockResolver struct {
 
 // NewMiniblockResolver creates a miniblock resolver
 func NewMiniblockResolver(arg ArgMiniblockResolver) (*miniblockResolver, error) {
-	if check.IfNil(arg.SenderResolver) {
-		return nil, dataRetriever.ErrNilResolverSender
-	}
-	if check.IfNil(arg.MiniBlockPool) {
-		return nil, dataRetriever.ErrNilMiniblocksPool
-	}
-	if check.IfNil(arg.MiniBlockStorage) {
-		return nil, dataRetriever.ErrNilMiniblocksStorage
-	}
-	if check.IfNil(arg.Marshalizer) {
-		return nil, dataRetriever.ErrNilMarshalizer
-	}
-	if check.IfNil(arg.AntifloodHandler) {
-		return nil, dataRetriever.ErrNilAntifloodHandler
-	}
-	if check.IfNil(arg.Throttler) {
-		return nil, dataRetriever.ErrNilThrottler
-	}
-	if check.IfNil(arg.DataPacker) {
-		return nil, dataRetriever.ErrNilDataPacker
+	err := checkArgMiniblockResolver(arg)
+	if err != nil {
+		return nil, err
 	}
 
 	mbResolver := &miniblockResolver{
-		TopicResolverSender: arg.SenderResolver,
+		baseResolver: &baseResolver{
+			TopicResolverSender: arg.SenderResolver,
+		},
 		miniBlockPool:       arg.MiniBlockPool,
 		baseStorageResolver: createBaseStorageResolver(arg.MiniBlockStorage, arg.IsFullHistoryNode),
 		dataPacker:          arg.DataPacker,
 		messageProcessor: messageProcessor{
-			marshalizer:      arg.Marshalizer,
+			marshalizer:      arg.Marshaller,
 			antifloodHandler: arg.AntifloodHandler,
 			topic:            arg.SenderResolver.RequestTopic(),
 			throttler:        arg.Throttler,
@@ -79,9 +58,26 @@ func NewMiniblockResolver(arg ArgMiniblockResolver) (*miniblockResolver, error) 
 	return mbResolver, nil
 }
 
+func checkArgMiniblockResolver(arg ArgMiniblockResolver) error {
+	err := checkArgBase(arg.ArgBaseResolver)
+	if err != nil {
+		return err
+	}
+	if check.IfNil(arg.MiniBlockPool) {
+		return dataRetriever.ErrNilMiniblocksPool
+	}
+	if check.IfNil(arg.MiniBlockStorage) {
+		return dataRetriever.ErrNilMiniblocksStorage
+	}
+	if check.IfNil(arg.DataPacker) {
+		return dataRetriever.ErrNilDataPacker
+	}
+	return nil
+}
+
 // ProcessReceivedMessage will be the callback func from the p2p.Messenger and will be called each time a new message was received
 // (for the topic this validator was registered to, usually a request topic)
-func (mbRes *miniblockResolver) ProcessReceivedMessage(message p2p.MessageP2P, fromConnectedPeer core.PeerID) error {
+func (mbRes *miniblockResolver) ProcessReceivedMessage(message p2p.MessageP2P, fromConnectedPeer core.PeerID, source p2p.MessageHandler) error {
 	err := mbRes.canProcessMessage(message, fromConnectedPeer)
 	if err != nil {
 		return err
@@ -97,9 +93,9 @@ func (mbRes *miniblockResolver) ProcessReceivedMessage(message p2p.MessageP2P, f
 
 	switch rd.Type {
 	case dataRetriever.HashType:
-		err = mbRes.resolveMbRequestByHash(rd.Value, message.Peer(), rd.Epoch)
+		err = mbRes.resolveMbRequestByHash(rd.Value, message.Peer(), rd.Epoch, source)
 	case dataRetriever.HashArrayType:
-		err = mbRes.resolveMbRequestByHashArray(rd.Value, message.Peer(), rd.Epoch)
+		err = mbRes.resolveMbRequestByHashArray(rd.Value, message.Peer(), rd.Epoch, source)
 	default:
 		err = dataRetriever.ErrRequestTypeNotImplemented
 	}
@@ -111,7 +107,7 @@ func (mbRes *miniblockResolver) ProcessReceivedMessage(message p2p.MessageP2P, f
 	return err
 }
 
-func (mbRes *miniblockResolver) resolveMbRequestByHash(hash []byte, pid core.PeerID, epoch uint32) error {
+func (mbRes *miniblockResolver) resolveMbRequestByHash(hash []byte, pid core.PeerID, epoch uint32, source p2p.MessageHandler) error {
 	mb, err := mbRes.fetchMbAsByteSlice(hash, epoch)
 	if err != nil {
 		return err
@@ -125,7 +121,7 @@ func (mbRes *miniblockResolver) resolveMbRequestByHash(hash []byte, pid core.Pee
 		return err
 	}
 
-	return mbRes.Send(buffToSend, pid)
+	return mbRes.Send(buffToSend, pid, source)
 }
 
 func (mbRes *miniblockResolver) fetchMbAsByteSlice(hash []byte, epoch uint32) ([]byte, error) {
@@ -136,7 +132,7 @@ func (mbRes *miniblockResolver) fetchMbAsByteSlice(hash []byte, epoch uint32) ([
 
 	buff, err := mbRes.getFromStorage(hash, epoch)
 	if err != nil {
-		mbRes.ResolverDebugHandler().LogFailedToResolveData(
+		mbRes.DebugHandler().LogFailedToResolveData(
 			mbRes.topic,
 			hash,
 			err,
@@ -145,12 +141,12 @@ func (mbRes *miniblockResolver) fetchMbAsByteSlice(hash []byte, epoch uint32) ([
 		return nil, err
 	}
 
-	mbRes.ResolverDebugHandler().LogSucceededToResolveData(mbRes.topic, hash)
+	mbRes.DebugHandler().LogSucceededToResolveData(mbRes.topic, hash)
 
 	return buff, nil
 }
 
-func (mbRes *miniblockResolver) resolveMbRequestByHashArray(mbBuff []byte, pid core.PeerID, epoch uint32) error {
+func (mbRes *miniblockResolver) resolveMbRequestByHashArray(mbBuff []byte, pid core.PeerID, epoch uint32, source p2p.MessageHandler) error {
 	b := batch.Batch{}
 	err := mbRes.marshalizer.Unmarshal(&b, mbBuff)
 	if err != nil {
@@ -181,7 +177,7 @@ func (mbRes *miniblockResolver) resolveMbRequestByHashArray(mbBuff []byte, pid c
 	}
 
 	for _, buff := range buffsToSend {
-		errSend := mbRes.Send(buff, pid)
+		errSend := mbRes.Send(buff, pid, source)
 		if errSend != nil {
 			return errSend
 		}
@@ -192,59 +188,6 @@ func (mbRes *miniblockResolver) resolveMbRequestByHashArray(mbBuff []byte, pid c
 	}
 
 	return errFetch
-}
-
-// RequestDataFromHash requests a block body from other peers having input the block body hash
-func (mbRes *miniblockResolver) RequestDataFromHash(hash []byte, epoch uint32) error {
-	return mbRes.SendOnRequestTopic(
-		&dataRetriever.RequestData{
-			Type:  dataRetriever.HashType,
-			Value: hash,
-			Epoch: epoch,
-		},
-		[][]byte{hash},
-	)
-}
-
-// RequestDataFromHashArray requests a block body from other peers having input the block body hash
-func (mbRes *miniblockResolver) RequestDataFromHashArray(hashes [][]byte, epoch uint32) error {
-	b := &batch.Batch{
-		Data: hashes,
-	}
-	batchBytes, err := mbRes.marshalizer.Marshal(b)
-
-	if err != nil {
-		return err
-	}
-
-	return mbRes.SendOnRequestTopic(
-		&dataRetriever.RequestData{
-			Type:  dataRetriever.HashArrayType,
-			Value: batchBytes,
-			Epoch: epoch,
-		},
-		hashes,
-	)
-}
-
-// SetNumPeersToQuery will set the number of intra shard and cross shard number of peer to query
-func (mbRes *miniblockResolver) SetNumPeersToQuery(intra int, cross int) {
-	mbRes.TopicResolverSender.SetNumPeersToQuery(intra, cross)
-}
-
-// NumPeersToQuery will return the number of intra shard and cross shard number of peer to query
-func (mbRes *miniblockResolver) NumPeersToQuery() (int, int) {
-	return mbRes.TopicResolverSender.NumPeersToQuery()
-}
-
-// SetResolverDebugHandler will set a resolver debug handler
-func (mbRes *miniblockResolver) SetResolverDebugHandler(handler dataRetriever.ResolverDebugHandler) error {
-	return mbRes.TopicResolverSender.SetResolverDebugHandler(handler)
-}
-
-// Close returns nil
-func (mbRes *miniblockResolver) Close() error {
-	return nil
 }
 
 // IsInterfaceNil returns true if there is no value under the interface

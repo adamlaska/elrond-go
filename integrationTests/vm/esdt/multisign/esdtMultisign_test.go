@@ -1,22 +1,19 @@
-//go:build !race
-// +build !race
-
 package multisign
 
 import (
 	"encoding/hex"
-	"io/ioutil"
 	"math/big"
+	"os"
 	"strings"
 	"testing"
 	"time"
 
-	logger "github.com/ElrondNetwork/elrond-go-logger"
-	"github.com/ElrondNetwork/elrond-go/integrationTests"
-	"github.com/ElrondNetwork/elrond-go/integrationTests/vm/esdt"
-	"github.com/ElrondNetwork/elrond-go/process"
-	"github.com/ElrondNetwork/elrond-go/vm"
-	vmcommon "github.com/ElrondNetwork/elrond-vm-common"
+	"github.com/multiversx/mx-chain-go/integrationTests"
+	"github.com/multiversx/mx-chain-go/integrationTests/vm/esdt"
+	"github.com/multiversx/mx-chain-go/process"
+	"github.com/multiversx/mx-chain-go/vm"
+	logger "github.com/multiversx/mx-chain-logger-go"
+	vmcommon "github.com/multiversx/mx-chain-vm-common-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -143,7 +140,7 @@ func checkCallBackWasSaved(t *testing.T, nodes []*integrationTests.TestProcessor
 			CallValue:  big.NewInt(0),
 			Arguments:  [][]byte{},
 		}
-		vmOutput, err := node.SCQueryService.ExecuteQuery(scQuery)
+		vmOutput, _, err := node.SCQueryService.ExecuteQuery(scQuery)
 		assert.Nil(t, err)
 		assert.Equal(t, vmOutput.ReturnCode, vmcommon.Ok)
 		assert.Equal(t, 1, len(vmOutput.ReturnData))
@@ -157,7 +154,7 @@ func deployMultisig(t *testing.T, nodes []*integrationTests.TestProcessorNode, o
 		Readable:    true,
 	}
 
-	contractBytes, err := ioutil.ReadFile("../testdata/multisig-callback.wasm")
+	contractBytes, err := os.ReadFile("../testdata/multisig-callback.wasm")
 	require.Nil(t, err)
 	proposers := make([]string, 0, len(proposersIndexes)+1)
 	proposers = append(proposers, hex.EncodeToString(nodes[ownerIdx].OwnAccount.Address))
@@ -186,8 +183,11 @@ func deployMultisig(t *testing.T, nodes []*integrationTests.TestProcessorNode, o
 	)
 	require.Nil(t, err)
 
-	log.Info("multisign contract", "address", integrationTests.TestAddressPubkeyConverter.Encode(multisigContractAddress))
-	integrationTests.CreateAndSendTransaction(nodes[ownerIdx], nodes, big.NewInt(0), emptyAddress, txData, 100000)
+	encodedMultisigContractAddress, err := integrationTests.TestAddressPubkeyConverter.Encode(multisigContractAddress)
+	require.Nil(t, err)
+
+	log.Info("multisign contract", "address", encodedMultisigContractAddress)
+	integrationTests.CreateAndSendTransaction(nodes[ownerIdx], nodes, big.NewInt(0), emptyAddress, txData, 1000000)
 
 	return multisigContractAddress
 }
@@ -233,8 +233,8 @@ func proposeIssueTokenAndTransferFunds(
 	params = append(params, tokenPropertiesParams...)
 	txData := strings.Join(params, "@")
 
-	integrationTests.CreateAndSendTransaction(nodes[ownerIdx], nodes, big.NewInt(1000000), multisignContractAddress, "deposit", 100000)
-	integrationTests.CreateAndSendTransaction(nodes[ownerIdx], nodes, big.NewInt(0), multisignContractAddress, txData, 100000)
+	integrationTests.CreateAndSendTransaction(nodes[ownerIdx], nodes, big.NewInt(1000000), multisignContractAddress, "deposit", 1000000)
+	integrationTests.CreateAndSendTransaction(nodes[ownerIdx], nodes, big.NewInt(0), multisignContractAddress, txData, 1000000)
 }
 
 func getActionID(t *testing.T, nodes []*integrationTests.TestProcessorNode, multisignContractAddress []byte) []byte {
@@ -250,7 +250,7 @@ func getActionID(t *testing.T, nodes []*integrationTests.TestProcessorNode, mult
 		Arguments:  make([][]byte, 0),
 	}
 
-	vmOutput, err := node.SCQueryService.ExecuteQuery(query)
+	vmOutput, _, err := node.SCQueryService.ExecuteQuery(query)
 	require.Nil(t, err)
 	require.Equal(t, 1, len(vmOutput.ReturnData))
 
@@ -284,7 +284,7 @@ func boardMembersSignActionID(
 		}
 
 		txData := strings.Join(params, "@")
-		integrationTests.CreateAndSendTransaction(node, nodes, big.NewInt(0), multisignContractAddress, txData, 100000)
+		integrationTests.CreateAndSendTransaction(node, nodes, big.NewInt(0), multisignContractAddress, txData, 1000000)
 	}
 }
 
@@ -327,5 +327,5 @@ func proposeTransferToken(
 	params := append(multisigParams, esdtParams...)
 	txData := strings.Join(params, "@")
 
-	integrationTests.CreateAndSendTransaction(nodes[ownerIdx], nodes, big.NewInt(0), multisignContractAddress, txData, 100000)
+	integrationTests.CreateAndSendTransaction(nodes[ownerIdx], nodes, big.NewInt(0), multisignContractAddress, txData, 1000000)
 }

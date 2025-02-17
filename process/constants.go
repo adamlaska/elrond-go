@@ -1,5 +1,10 @@
 package process
 
+import (
+	"fmt"
+	"time"
+)
+
 // BlockHeaderState specifies which is the state of the block header received
 type BlockHeaderState int
 
@@ -38,6 +43,29 @@ const (
 	InvalidTransaction
 )
 
+func (transactionType TransactionType) String() string {
+	switch transactionType {
+	case MoveBalance:
+		return "MoveBalance"
+	case SCDeployment:
+		return "SCDeployment"
+	case SCInvoking:
+		return "SCInvoking"
+	case BuiltInFunctionCall:
+		return "BuiltInFunctionCall"
+	case RelayedTx:
+		return "RelayedTx"
+	case RelayedTxV2:
+		return "RelayedTxV2"
+	case RewardTx:
+		return "RewardTx"
+	case InvalidTransaction:
+		return "InvalidTransaction"
+	default:
+		return fmt.Sprintf("type %d", transactionType)
+	}
+}
+
 // BlockFinality defines the block finality which is used in meta-chain/shards (the real finality in shards is given
 // by meta-chain)
 const BlockFinality = 1
@@ -51,11 +79,6 @@ const EpochChangeGracePeriod = 1
 // MaxHeaderRequestsAllowed defines the maximum number of missing cross-shard headers (gaps) which could be requested
 // in one round, when node processes a received block
 const MaxHeaderRequestsAllowed = 20
-
-// NumTxPerSenderBatchForFillingMiniblock defines the number of transactions to be drawn
-// from the transactions pool, for a specific sender, in a single pass.
-// Drawing transactions for a miniblock happens in multiple passes, until "MaxItemsInBlock" are drawn.
-const NumTxPerSenderBatchForFillingMiniblock = 10
 
 // NonceDifferenceWhenSynced defines the difference between probable highest nonce seen from network and node's last
 // committed block nonce, after which, node is considered himself not synced
@@ -108,20 +131,6 @@ const MaxShardHeadersAllowedInOneMetaBlock = 60
 // which would be included in one meta block if they are available
 const MinShardHeadersFromSameShardInOneMetaBlock = 10
 
-// MaxNumOfTxsToSelect defines the maximum number of transactions that should be selected from the cache
-const MaxNumOfTxsToSelect = 30000
-
-// MaxGasBandwidthPerBatchPerSender defines the maximum gas bandwidth that should be selected for a sender per batch from the cache
-const MaxGasBandwidthPerBatchPerSender = 5000000
-
-// MaxRoundsToKeepUnprocessedMiniBlocks defines the maximum number of rounds for which unprocessed miniblocks are kept in pool
-// TODO extract this in configs (EN-11896)
-const MaxRoundsToKeepUnprocessedMiniBlocks = 300
-
-// MaxRoundsToKeepUnprocessedTransactions defines the maximum number of rounds for which unprocessed transactions are kept in pool
-// TODO extract this in configs (EN-11896)
-const MaxRoundsToKeepUnprocessedTransactions = 300
-
 // MaxHeadersToWhitelistInAdvance defines the maximum number of headers whose miniblocks will be whitelisted in advance
 const MaxHeadersToWhitelistInAdvance = 300
 
@@ -129,3 +138,12 @@ const MaxHeadersToWhitelistInAdvance = 300
 // the real gas used, after which the transaction will be considered an attack and all the gas will be consumed and
 // nothing will be refunded to the sender
 const MaxGasFeeHigherFactorAccepted = 10
+
+// TxCacheSelectionGasRequested defines the maximum total gas for transactions that should be selected from the cache.
+const TxCacheSelectionGasRequested = 10_000_000_000
+
+// TxCacheSelectionMaxNumTxs defines the maximum number of transactions that should be selected from the cache.
+const TxCacheSelectionMaxNumTxs = 30_000
+
+// TxCacheSelectionLoopMaximumDuration defines the maximum duration for the loop that selects transactions from the cache.
+const TxCacheSelectionLoopMaximumDuration = 250 * time.Millisecond

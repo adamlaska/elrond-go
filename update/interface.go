@@ -4,13 +4,13 @@ import (
 	"context"
 	"time"
 
-	"github.com/ElrondNetwork/elrond-go-core/core"
-	"github.com/ElrondNetwork/elrond-go-core/data"
-	"github.com/ElrondNetwork/elrond-go-core/data/block"
-	"github.com/ElrondNetwork/elrond-go/common"
-	"github.com/ElrondNetwork/elrond-go/process"
-	"github.com/ElrondNetwork/elrond-go/sharding/nodesCoordinator"
-	"github.com/ElrondNetwork/elrond-go/state"
+	"github.com/multiversx/mx-chain-core-go/core"
+	"github.com/multiversx/mx-chain-core-go/data"
+	"github.com/multiversx/mx-chain-core-go/data/block"
+	"github.com/multiversx/mx-chain-go/common"
+	"github.com/multiversx/mx-chain-go/process"
+	"github.com/multiversx/mx-chain-go/sharding/nodesCoordinator"
+	"github.com/multiversx/mx-chain-go/state"
 )
 
 // StateSyncer interface defines the methods needed to sync and get all states
@@ -20,6 +20,7 @@ type StateSyncer interface {
 	SyncAllState(epoch uint32) error
 	GetAllTries() (map[string]common.Trie, error)
 	GetAllTransactions() (map[string]data.TransactionHandler, error)
+	GetAllValidatorsInfo() (map[string]*state.ShardValidatorInfo, error)
 	GetAllMiniBlocks() (map[string]*block.MiniBlock, error)
 	IsInterfaceNil() bool
 }
@@ -143,6 +144,8 @@ type EpochStartPendingMiniBlocksSyncHandler interface {
 type TransactionsSyncHandler interface {
 	SyncTransactionsFor(miniBlocks map[string]*block.MiniBlock, epoch uint32, ctx context.Context) error
 	GetTransactions() (map[string]data.TransactionHandler, error)
+	GetValidatorsInfo() (map[string]*state.ShardValidatorInfo, error)
+	ClearFields()
 	IsInterfaceNil() bool
 }
 
@@ -172,7 +175,7 @@ type WhiteListHandler interface {
 // AccountsDBSyncer defines the methods for the accounts db syncer
 type AccountsDBSyncer interface {
 	GetSyncedTries() map[string]common.Trie
-	SyncAccounts(rootHash []byte) error
+	SyncAccounts(rootHash []byte, storageMarker common.StorageMarker) error
 	IsInterfaceNil() bool
 }
 
@@ -263,7 +266,8 @@ type RoundHandler interface {
 
 // PreferredPeersHolderHandler defines the behavior of a component able to handle preferred peers operations
 type PreferredPeersHolderHandler interface {
-	Put(publicKey []byte, peerID core.PeerID, shardID uint32)
+	PutConnectionAddress(peerID core.PeerID, address string)
+	PutShardID(peerID core.PeerID, shardID uint32)
 	Get() map[uint32][]core.PeerID
 	Contains(peerID core.PeerID) bool
 	Remove(peerID core.PeerID)

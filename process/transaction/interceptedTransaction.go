@@ -6,16 +6,17 @@ import (
 	"fmt"
 	"math/big"
 
-	"github.com/ElrondNetwork/elrond-go-core/core"
-	"github.com/ElrondNetwork/elrond-go-core/core/check"
-	"github.com/ElrondNetwork/elrond-go-core/data"
-	"github.com/ElrondNetwork/elrond-go-core/data/transaction"
-	"github.com/ElrondNetwork/elrond-go-core/hashing"
-	"github.com/ElrondNetwork/elrond-go-core/marshal"
-	"github.com/ElrondNetwork/elrond-go-crypto"
-	logger "github.com/ElrondNetwork/elrond-go-logger"
-	"github.com/ElrondNetwork/elrond-go/process"
-	"github.com/ElrondNetwork/elrond-go/sharding"
+	"github.com/multiversx/mx-chain-core-go/core"
+	"github.com/multiversx/mx-chain-core-go/core/check"
+	"github.com/multiversx/mx-chain-core-go/data"
+	"github.com/multiversx/mx-chain-core-go/data/transaction"
+	"github.com/multiversx/mx-chain-core-go/hashing"
+	"github.com/multiversx/mx-chain-core-go/marshal"
+	"github.com/multiversx/mx-chain-crypto-go"
+	"github.com/multiversx/mx-chain-go/common"
+	"github.com/multiversx/mx-chain-go/process"
+	"github.com/multiversx/mx-chain-go/sharding"
+	logger "github.com/multiversx/mx-chain-logger-go"
 )
 
 var _ process.TxValidatorHandler = (*InterceptedTransaction)(nil)
@@ -42,6 +43,7 @@ type InterceptedTransaction struct {
 	sndShard               uint32
 	isForCurrentShard      bool
 	enableSignedTxWithHash bool
+	enableEpochsHandler    common.EnableEpochsHandler
 }
 
 // NewInterceptedTransaction returns a new instance of InterceptedTransaction
@@ -61,6 +63,7 @@ func NewInterceptedTransaction(
 	enableSignedTxWithHash bool,
 	txSignHasher hashing.Hasher,
 	txVersionChecker process.TxVersionCheckerHandler,
+	enableEpochsHandler common.EnableEpochsHandler,
 ) (*InterceptedTransaction, error) {
 
 	if txBuff == nil {
@@ -105,6 +108,9 @@ func NewInterceptedTransaction(
 	if check.IfNil(txVersionChecker) {
 		return nil, process.ErrNilTransactionVersionChecker
 	}
+	if check.IfNil(enableEpochsHandler) {
+		return nil, process.ErrNilEnableEpochsHandler
+	}
 
 	tx, err := createTx(protoMarshalizer, txBuff)
 	if err != nil {
@@ -127,6 +133,7 @@ func NewInterceptedTransaction(
 		enableSignedTxWithHash: enableSignedTxWithHash,
 		txVersionChecker:       txVersionChecker,
 		txSignHasher:           txSignHasher,
+		enableEpochsHandler:    enableEpochsHandler,
 	}
 
 	err = inTx.processFields(txBuff)
@@ -152,17 +159,19 @@ func createRelayedV2(relayedTx *transaction.Transaction, args [][]byte) (*transa
 		return nil, process.ErrInvalidArguments
 	}
 	tx := &transaction.Transaction{
-		Nonce:     big.NewInt(0).SetBytes(args[1]).Uint64(),
-		Value:     big.NewInt(0),
-		RcvAddr:   args[0],
-		SndAddr:   relayedTx.RcvAddr,
-		GasPrice:  relayedTx.GasPrice,
-		GasLimit:  0, // the user had to sign a transaction with 0 gasLimit - as all gasLimit is coming from the relayer
-		Data:      args[2],
-		ChainID:   relayedTx.ChainID,
-		Version:   relayedTx.Version,
-		Signature: args[3],
-		Options:   relayedTx.Options,
+		Nonce:             big.NewInt(0).SetBytes(args[1]).Uint64(),
+		Value:             big.NewInt(0),
+		RcvAddr:           args[0],
+		SndAddr:           relayedTx.RcvAddr,
+		GasPrice:          relayedTx.GasPrice,
+		GasLimit:          0, // the user had to sign a transaction with 0 gasLimit - as all gasLimit is coming from the relayer
+		Data:              args[2],
+		ChainID:           relayedTx.ChainID,
+		Version:           relayedTx.Version,
+		Signature:         args[3],
+		Options:           relayedTx.Options,
+		GuardianAddr:      nil,
+		GuardianSignature: nil,
 	}
 
 	return tx, nil
@@ -178,6 +187,16 @@ func (inTx *InterceptedTransaction) CheckValidity() error {
 	whiteListedVerified := inTx.whiteListerVerifiedTxs.IsWhiteListed(inTx)
 	if !whiteListedVerified {
 		err = inTx.verifySig(inTx.tx)
+		if err != nil {
+			return err
+		}
+
+		err = inTx.VerifyGuardianSig(inTx.tx)
+		if err != nil {
+			return err
+		}
+
+		err = inTx.verifyIfRelayedTxV3(inTx.tx)
 		if err != nil {
 			return err
 		}
@@ -198,8 +217,67 @@ func (inTx *InterceptedTransaction) CheckValidity() error {
 	return nil
 }
 
+func (inTx *InterceptedTransaction) checkRecursiveRelayed(userTx *transaction.Transaction) error {
+	if common.IsValidRelayedTxV3(userTx) {
+		return process.ErrRecursiveRelayedTxIsNotAllowed
+	}
+
+	funcName, _, err := inTx.argsParser.ParseCallData(string(userTx.Data))
+	if err != nil {
+		return nil
+	}
+
+	if isRelayedTx(funcName) {
+		return process.ErrRecursiveRelayedTxIsNotAllowed
+	}
+
+	return nil
+}
+
 func isRelayedTx(funcName string) bool {
-	return core.RelayedTransaction == funcName || core.RelayedTransactionV2 == funcName
+	return core.RelayedTransaction == funcName ||
+		core.RelayedTransactionV2 == funcName
+}
+
+func (inTx *InterceptedTransaction) verifyIfRelayedTxV3(tx *transaction.Transaction) error {
+	if !common.IsRelayedTxV3(tx) {
+		return nil
+	}
+
+	if !inTx.enableEpochsHandler.IsFlagEnabled(common.RelayedTransactionsV3Flag) {
+		return process.ErrRelayedTxV3Disabled
+	}
+
+	if !common.IsValidRelayedTxV3(tx) {
+		return process.ErrInvalidRelayedTxV3
+	}
+
+	err := inTx.integrity(tx)
+	if err != nil {
+		return err
+	}
+
+	if !inTx.coordinator.SameShard(tx.RelayerAddr, tx.SndAddr) {
+		return process.ErrShardIdMissmatch
+	}
+
+	if bytes.Equal(tx.RelayerAddr, tx.GuardianAddr) {
+		return process.ErrRelayedByGuardianNotAllowed
+	}
+
+	userTx := *tx
+	userTx.RelayerSignature = make([]byte, 0) // temporary removed signature for recursive relayed checks
+	err = inTx.verifyUserTx(&userTx)
+	if err != nil {
+		return fmt.Errorf("inner transaction: %w", err)
+	}
+
+	err = inTx.verifyRelayerSig(tx)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func (inTx *InterceptedTransaction) verifyIfRelayedTxV2(tx *transaction.Transaction) error {
@@ -216,22 +294,7 @@ func (inTx *InterceptedTransaction) verifyIfRelayedTxV2(tx *transaction.Transact
 		return err
 	}
 
-	err = inTx.verifySig(userTx)
-	if err != nil {
-		return err
-	}
-
-	funcName, _, err = inTx.argsParser.ParseCallData(string(userTx.Data))
-	if err != nil {
-		return nil
-	}
-
-	// recursive relayed transactions are not allowed
-	if isRelayedTx(funcName) {
-		return process.ErrRecursiveRelayedTxIsNotAllowed
-	}
-
-	return nil
+	return inTx.verifyUserTx(userTx)
 }
 
 func (inTx *InterceptedTransaction) verifyIfRelayedTx(tx *transaction.Transaction) error {
@@ -249,7 +312,7 @@ func (inTx *InterceptedTransaction) verifyIfRelayedTx(tx *transaction.Transactio
 
 	userTx, err := createTx(inTx.signMarshalizer, userTxArgs[0])
 	if err != nil {
-		return err
+		return fmt.Errorf("inner transaction: %w", err)
 	}
 
 	if !bytes.Equal(userTx.SndAddr, tx.RcvAddr) {
@@ -258,26 +321,26 @@ func (inTx *InterceptedTransaction) verifyIfRelayedTx(tx *transaction.Transactio
 
 	err = inTx.integrity(userTx)
 	if err != nil {
-		return err
+		return fmt.Errorf("inner transaction: %w", err)
 	}
 
+	return inTx.verifyUserTx(userTx)
+}
+
+func (inTx *InterceptedTransaction) verifyUserTx(userTx *transaction.Transaction) error {
+	// recursive relayed transactions are not allowed
+	err := inTx.checkRecursiveRelayed(userTx)
+	if err != nil {
+		return fmt.Errorf("inner transaction: %w", err)
+	}
 	err = inTx.verifySig(userTx)
 	if err != nil {
-		return err
+		return fmt.Errorf("inner transaction: %w", err)
 	}
 
-	if len(userTx.Data) == 0 {
-		return nil
-	}
-
-	funcName, _, err = inTx.argsParser.ParseCallData(string(userTx.Data))
+	err = inTx.VerifyGuardianSig(userTx)
 	if err != nil {
-		return nil
-	}
-
-	// recursive relayed transactions are not allowed
-	if isRelayedTx(funcName) {
-		return process.ErrRecursiveRelayedTxIsNotAllowed
+		return fmt.Errorf("inner transaction: %w", err)
 	}
 
 	return nil
@@ -322,12 +385,36 @@ func (inTx *InterceptedTransaction) integrity(tx *transaction.Transaction) error
 		return process.ErrInvalidSndAddr
 	}
 
+	err = inTx.checkMaxGasPrice()
+	if err != nil {
+		return err
+	}
+
 	return inTx.feeHandler.CheckValidityTxValues(tx)
+}
+
+func (inTx *InterceptedTransaction) checkMaxGasPrice() error {
+	tx := inTx.tx
+	// no need to check max gas for guarded transactions as they are co-signed
+	if inTx.txVersionChecker.IsGuardedTransaction(tx) {
+		return nil
+	}
+
+	txData := tx.GetData()
+	if !process.IsSetGuardianCall(txData) {
+		return nil
+	}
+
+	if tx.GetGasPrice() > inTx.feeHandler.MaxGasPriceSetGuardian() {
+		return process.ErrGasPriceTooHigh
+	}
+
+	return nil
 }
 
 // verifySig checks if the tx is correctly signed
 func (inTx *InterceptedTransaction) verifySig(tx *transaction.Transaction) error {
-	buffCopiedTx, err := tx.GetDataForSigning(inTx.pubkeyConv, inTx.signMarshalizer)
+	txMessageForSigVerification, err := inTx.getTxMessageForGivenTx(tx)
 	if err != nil {
 		return err
 	}
@@ -337,17 +424,75 @@ func (inTx *InterceptedTransaction) verifySig(tx *transaction.Transaction) error
 		return err
 	}
 
-	if !inTx.txVersionChecker.IsSignedWithHash(tx) {
-		return inTx.singleSigner.Verify(senderPubKey, buffCopiedTx, tx.Signature)
+	return inTx.singleSigner.Verify(senderPubKey, txMessageForSigVerification, tx.Signature)
+}
+
+// verifyRelayerSig checks if the tx is correctly signed by relayer
+func (inTx *InterceptedTransaction) verifyRelayerSig(tx *transaction.Transaction) error {
+	txMessageForSigVerification, err := inTx.getTxMessageForGivenTx(tx)
+	if err != nil {
+		return err
 	}
 
-	if !inTx.enableSignedTxWithHash {
-		return process.ErrTransactionSignedWithHashIsNotEnabled
+	relayerPubKey, err := inTx.keyGen.PublicKeyFromByteArray(tx.RelayerAddr)
+	if err != nil {
+		return err
 	}
 
-	txHash := inTx.txSignHasher.Compute(string(buffCopiedTx))
+	return inTx.singleSigner.Verify(relayerPubKey, txMessageForSigVerification, tx.RelayerSignature)
+}
 
-	return inTx.singleSigner.Verify(senderPubKey, txHash, tx.Signature)
+// VerifyGuardianSig verifies if the guardian signature is valid
+func (inTx *InterceptedTransaction) VerifyGuardianSig(tx *transaction.Transaction) error {
+	txMessageForSigVerification, err := inTx.getTxMessageForGivenTx(tx)
+	if err != nil {
+		return err
+	}
+
+	if !inTx.txVersionChecker.IsGuardedTransaction(tx) {
+		return verifyConsistencyForNotGuardedTx(tx)
+	}
+
+	guardianPubKey, err := inTx.keyGen.PublicKeyFromByteArray(tx.GuardianAddr)
+	if err != nil {
+		return err
+	}
+
+	errVerifySig := inTx.singleSigner.Verify(guardianPubKey, txMessageForSigVerification, tx.GuardianSignature)
+	if errVerifySig != nil {
+		return fmt.Errorf("%w when checking the guardian's signature", errVerifySig)
+	}
+
+	return nil
+}
+
+func verifyConsistencyForNotGuardedTx(tx *transaction.Transaction) error {
+	if len(tx.GetGuardianAddr()) > 0 {
+		return process.ErrGuardianAddressNotExpected
+	}
+	if len(tx.GetGuardianSignature()) > 0 {
+		return process.ErrGuardianSignatureNotExpected
+	}
+
+	return nil
+}
+
+func (inTx *InterceptedTransaction) getTxMessageForGivenTx(tx *transaction.Transaction) ([]byte, error) {
+	if inTx.txVersionChecker.IsSignedWithHash(tx) && !inTx.enableSignedTxWithHash {
+		return nil, process.ErrTransactionSignedWithHashIsNotEnabled
+	}
+
+	txSigningData, err := tx.GetDataForSigning(inTx.pubkeyConv, inTx.signMarshalizer, inTx.txSignHasher)
+	if err != nil {
+		return nil, err
+	}
+
+	return txSigningData, nil
+}
+
+// GetTxMessageForSignatureVerification returns the transaction data that the signature needs to be verified on
+func (inTx *InterceptedTransaction) GetTxMessageForSignatureVerification() ([]byte, error) {
+	return inTx.getTxMessageForGivenTx(inTx.tx)
 }
 
 // ReceiverShardId returns the receiver shard id

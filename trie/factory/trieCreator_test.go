@@ -1,22 +1,30 @@
 package factory_test
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
-	"github.com/ElrondNetwork/elrond-go-core/core/check"
-	"github.com/ElrondNetwork/elrond-go/config"
-	"github.com/ElrondNetwork/elrond-go/testscommon"
-	"github.com/ElrondNetwork/elrond-go/testscommon/hashingMocks"
-	"github.com/ElrondNetwork/elrond-go/trie"
-	"github.com/ElrondNetwork/elrond-go/trie/factory"
+	"github.com/multiversx/mx-chain-core-go/core/check"
+	"github.com/multiversx/mx-chain-go/common/statistics/disabled"
+	"github.com/multiversx/mx-chain-go/config"
+	"github.com/multiversx/mx-chain-go/dataRetriever"
+	"github.com/multiversx/mx-chain-go/integrationTests/mock"
+	"github.com/multiversx/mx-chain-go/storage"
+	"github.com/multiversx/mx-chain-go/testscommon"
+	"github.com/multiversx/mx-chain-go/testscommon/enableEpochsHandlerMock"
+	"github.com/multiversx/mx-chain-go/testscommon/hashingMocks"
+	"github.com/multiversx/mx-chain-go/testscommon/marshallerMock"
+	storageStubs "github.com/multiversx/mx-chain-go/testscommon/storage"
+	"github.com/multiversx/mx-chain-go/trie"
+	"github.com/multiversx/mx-chain-go/trie/factory"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func getArgs() factory.TrieFactoryArgs {
 	return factory.TrieFactoryArgs{
-		Marshalizer:              &testscommon.MarshalizerMock{},
+		Marshalizer:              &marshallerMock.MarshalizerMock{},
 		Hasher:                   &hashingMocks.HasherMock{},
 		PathManager:              &testscommon.PathManagerStub{},
 		TrieStorageManagerConfig: config.TrieStorageManagerConfig{SnapshotsGoroutineNum: 1},
@@ -25,12 +33,14 @@ func getArgs() factory.TrieFactoryArgs {
 
 func getCreateArgs() factory.TrieCreateArgs {
 	return factory.TrieCreateArgs{
-		MainStorer:         testscommon.CreateMemUnit(),
-		CheckpointsStorer:  testscommon.CreateMemUnit(),
-		PruningEnabled:     false,
-		CheckpointsEnabled: false,
-		MaxTrieLevelInMem:  5,
-		IdleProvider:       &testscommon.ProcessStatusHandlerStub{},
+		MainStorer:          testscommon.CreateMemUnit(),
+		PruningEnabled:      false,
+		SnapshotsEnabled:    true,
+		MaxTrieLevelInMem:   5,
+		IdleProvider:        &testscommon.ProcessStatusHandlerStub{},
+		Identifier:          dataRetriever.UserAccountsUnit.String(),
+		EnableEpochsHandler: &enableEpochsHandlerMock.EnableEpochsHandlerStub{},
+		StatsCollector:      disabled.NewStateStatistics(),
 	}
 }
 
@@ -101,7 +111,7 @@ func TestTrieCreator_CreateWithPruningShouldWork(t *testing.T) {
 	require.NotNil(t, tr)
 }
 
-func TestTrieCreator_CreateWithoutCheckpointShouldWork(t *testing.T) {
+func TestTrieCreator_CreateWithoutSnapshotsShouldWork(t *testing.T) {
 	t.Parallel()
 
 	args := getArgs()
@@ -109,10 +119,10 @@ func TestTrieCreator_CreateWithoutCheckpointShouldWork(t *testing.T) {
 
 	createArgs := getCreateArgs()
 	createArgs.PruningEnabled = true
-	createArgs.CheckpointsEnabled = true
+	createArgs.SnapshotsEnabled = false
 	_, tr, err := tf.Create(createArgs)
-	require.NotNil(t, tr)
 	require.Nil(t, err)
+	require.NotNil(t, tr)
 }
 
 func TestTrieCreator_CreateWithNilMainStorerShouldErr(t *testing.T) {
@@ -126,19 +136,81 @@ func TestTrieCreator_CreateWithNilMainStorerShouldErr(t *testing.T) {
 	createArgs.MainStorer = nil
 	_, tr, err := tf.Create(createArgs)
 	require.Nil(t, tr)
+	require.NotNil(t, err)
 	require.True(t, strings.Contains(err.Error(), trie.ErrNilStorer.Error()))
 }
 
-func TestTrieCreator_CreateWithNilCheckpointsStorerShouldErr(t *testing.T) {
+func TestTrieCreator_CreateWithInvalidMaxTrieLevelInMemShouldErr(t *testing.T) {
 	t.Parallel()
 
 	args := getArgs()
 	tf, _ := factory.NewTrieFactory(args)
 
 	createArgs := getCreateArgs()
-	createArgs.PruningEnabled = true
-	createArgs.CheckpointsStorer = nil
+	createArgs.MaxTrieLevelInMem = 0
 	_, tr, err := tf.Create(createArgs)
 	require.Nil(t, tr)
-	require.True(t, strings.Contains(err.Error(), trie.ErrNilStorer.Error()))
+	require.NotNil(t, err)
+	require.Contains(t, err.Error(), trie.ErrInvalidLevelValue.Error())
+}
+
+func TestTrieCreator_CreateTriesComponentsForShardId(t *testing.T) {
+	t.Parallel()
+
+	t.Run("missing UserAccountsUnit", testWithMissingStorer(dataRetriever.UserAccountsUnit))
+	t.Run("missing PeerAccountsUnit", testWithMissingStorer(dataRetriever.PeerAccountsUnit))
+	t.Run("should work", func(t *testing.T) {
+		t.Parallel()
+
+		holder, storageManager, err := factory.CreateTriesComponentsForShardId(
+			testscommon.GetGeneralConfig(),
+			&mock.CoreComponentsStub{
+				InternalMarshalizerField:     &marshallerMock.MarshalizerMock{},
+				HasherField:                  &hashingMocks.HasherMock{},
+				PathHandlerField:             &testscommon.PathManagerStub{},
+				ProcessStatusHandlerInternal: &testscommon.ProcessStatusHandlerStub{},
+				EnableEpochsHandlerField:     &enableEpochsHandlerMock.EnableEpochsHandlerStub{},
+			},
+			&storageStubs.ChainStorerStub{
+				GetStorerCalled: func(unitType dataRetriever.UnitType) (storage.Storer, error) {
+					return &storageStubs.StorerStub{}, nil
+				},
+			},
+			disabled.NewStateStatistics(),
+		)
+		require.NotNil(t, holder)
+		require.NotNil(t, storageManager)
+		require.Nil(t, err)
+	})
+}
+
+func testWithMissingStorer(missingUnit dataRetriever.UnitType) func(t *testing.T) {
+	return func(t *testing.T) {
+		t.Parallel()
+
+		holder, storageManager, err := factory.CreateTriesComponentsForShardId(
+			testscommon.GetGeneralConfig(),
+			&mock.CoreComponentsStub{
+				InternalMarshalizerField:     &marshallerMock.MarshalizerMock{},
+				HasherField:                  &hashingMocks.HasherMock{},
+				PathHandlerField:             &testscommon.PathManagerStub{},
+				ProcessStatusHandlerInternal: &testscommon.ProcessStatusHandlerStub{},
+				EnableEpochsHandlerField:     &enableEpochsHandlerMock.EnableEpochsHandlerStub{},
+			},
+			&storageStubs.ChainStorerStub{
+				GetStorerCalled: func(unitType dataRetriever.UnitType) (storage.Storer, error) {
+					if unitType == missingUnit {
+						return nil, fmt.Errorf("%w for %s", storage.ErrKeyNotFound, missingUnit.String())
+					}
+					return &storageStubs.StorerStub{}, nil
+				},
+			},
+			disabled.NewStateStatistics(),
+		)
+		require.True(t, check.IfNil(holder))
+		require.Nil(t, storageManager)
+		require.NotNil(t, err)
+		require.True(t, strings.Contains(err.Error(), storage.ErrKeyNotFound.Error()))
+		require.True(t, strings.Contains(err.Error(), missingUnit.String()))
+	}
 }

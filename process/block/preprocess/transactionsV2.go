@@ -5,12 +5,12 @@ import (
 	"errors"
 	"time"
 
-	"github.com/ElrondNetwork/elrond-go-core/core"
-	"github.com/ElrondNetwork/elrond-go-core/data/block"
-	"github.com/ElrondNetwork/elrond-go-core/data/transaction"
-	"github.com/ElrondNetwork/elrond-go/common"
-	"github.com/ElrondNetwork/elrond-go/process"
-	"github.com/ElrondNetwork/elrond-go/storage/txcache"
+	"github.com/multiversx/mx-chain-core-go/core"
+	"github.com/multiversx/mx-chain-core-go/data/block"
+	"github.com/multiversx/mx-chain-core-go/data/transaction"
+	"github.com/multiversx/mx-chain-go/common"
+	"github.com/multiversx/mx-chain-go/process"
+	"github.com/multiversx/mx-chain-go/storage/txcache"
 )
 
 func (txs *transactions) createAndProcessMiniBlocksFromMeV2(
@@ -24,10 +24,6 @@ func (txs *transactions) createAndProcessMiniBlocksFromMeV2(
 	mbInfo := txs.initCreateAndProcessMiniBlocks()
 
 	log.Debug("createAndProcessMiniBlocksFromMeV2", "totalGasConsumedInSelfShard", mbInfo.gasInfo.totalGasConsumedInSelfShard)
-
-	defer func() {
-		go txs.notifyTransactionProviderIfNeeded()
-	}()
 
 	remainingTxs := make([]*txcache.WrappedTransaction, 0)
 	for index := range sortedTxs {
@@ -70,6 +66,9 @@ func (txs *transactions) createAndProcessMiniBlocksFromMeV2(
 			receiverShardID,
 			mbInfo)
 		if err != nil {
+			if core.IsGetNodeFromDBError(err) {
+				return nil, nil, nil, err
+			}
 			if shouldAddToRemaining {
 				remainingTxs = append(remainingTxs, sortedTxs[index])
 			}
@@ -172,10 +171,6 @@ func (txs *transactions) processTransaction(
 	elapsedTime = time.Since(startTime)
 	mbInfo.processingInfo.totalTimeUsedForProcess += elapsedTime
 
-	txs.accountTxsShards.Lock()
-	txs.accountTxsShards.accountsInfo[string(tx.GetSndAddr())] = &txShardInfo{senderShardID: senderShardID, receiverShardID: receiverShardID}
-	txs.accountTxsShards.Unlock()
-
 	if err != nil && !errors.Is(err, process.ErrFailedTransaction) {
 		if errors.Is(err, process.ErrHigherNonceInTransaction) {
 			mbInfo.senderAddressToSkip = tx.GetSndAddr()
@@ -185,7 +180,7 @@ func (txs *transactions) processTransaction(
 		log.Trace("bad tx", "error", err.Error(), "hash", txHash)
 
 		errRevert := txs.accounts.RevertToSnapshot(snapshot)
-		if errRevert != nil {
+		if errRevert != nil && !core.IsClosingError(errRevert) {
 			log.Warn("revert to snapshot", "error", errRevert.Error())
 		}
 
@@ -215,7 +210,7 @@ func (txs *transactions) processTransaction(
 	}
 
 	if errors.Is(err, process.ErrFailedTransaction) {
-		log.Debug("transactions.processTransaction",
+		log.Trace("transactions.processTransaction",
 			"txHash", txHash,
 			"nonce", tx.Nonce,
 			"value", tx.Value,
@@ -269,7 +264,7 @@ func (txs *transactions) createScheduledMiniBlocks(
 	isMaxBlockSizeReached func(int, int) bool,
 	sortedTxs []*txcache.WrappedTransaction,
 	mapSCTxs map[string]struct{},
-) block.MiniBlockSlice {
+) (block.MiniBlockSlice, error) {
 	log.Debug("createScheduledMiniBlocks has been started")
 
 	mbInfo := txs.initCreateScheduledMiniBlocks()
@@ -312,6 +307,9 @@ func (txs *transactions) createScheduledMiniBlocks(
 			receiverShardID,
 			mbInfo)
 		if err != nil {
+			if core.IsGetNodeFromDBError(err) {
+				return nil, err
+			}
 			continue
 		}
 
@@ -330,7 +328,7 @@ func (txs *transactions) createScheduledMiniBlocks(
 
 	log.Debug("createScheduledMiniBlocks has been finished")
 
-	return miniBlocks
+	return miniBlocks, nil
 }
 
 func (txs *transactions) verifyTransaction(
@@ -373,12 +371,8 @@ func (txs *transactions) verifyTransaction(
 	elapsedTime = time.Since(startTime)
 	mbInfo.schedulingInfo.totalTimeUsedForScheduledVerify += elapsedTime
 
-	txs.accountTxsShards.Lock()
-	txs.accountTxsShards.accountsInfo[string(tx.GetSndAddr())] = &txShardInfo{senderShardID: senderShardID, receiverShardID: receiverShardID}
-	txs.accountTxsShards.Unlock()
-
 	if err != nil {
-		isTxTargetedForDeletion := errors.Is(err, process.ErrLowerNonceInTransaction) || errors.Is(err, process.ErrInsufficientFee)
+		isTxTargetedForDeletion := errors.Is(err, process.ErrLowerNonceInTransaction) || errors.Is(err, process.ErrInsufficientFee) || errors.Is(err, process.ErrTransactionNotExecutable)
 		if isTxTargetedForDeletion {
 			strCache := process.ShardCacherIdentifier(senderShardID, receiverShardID)
 			txs.txPool.RemoveData(txHash, strCache)
@@ -555,7 +549,7 @@ func (txs *transactions) getTxAndMbInfo(
 	}
 	numNewTxs := 1
 
-	_, txTypeDstShard := txs.txTypeHandler.ComputeTransactionType(tx)
+	_, txTypeDstShard, _ := txs.txTypeHandler.ComputeTransactionType(tx)
 	isReceiverSmartContractAddress := txTypeDstShard == process.SCDeployment || txTypeDstShard == process.SCInvoking
 	isCrossShardScCallOrSpecialTx := receiverShardID != txs.shardCoordinator.SelfId() &&
 		(isReceiverSmartContractAddress || len(tx.RcvUserName) > 0)
@@ -689,7 +683,7 @@ func (txs *transactions) shouldContinueProcessingScheduledTx(
 
 	mbInfo.senderAddressToSkip = tx.GetSndAddr()
 
-	_, txTypeDstShard := txs.txTypeHandler.ComputeTransactionType(tx)
+	_, txTypeDstShard, _ := txs.txTypeHandler.ComputeTransactionType(tx)
 	isReceiverSmartContractAddress := txTypeDstShard == process.SCDeployment || txTypeDstShard == process.SCInvoking
 	if !isReceiverSmartContractAddress {
 		return nil, nil, false

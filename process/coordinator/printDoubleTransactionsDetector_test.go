@@ -1,21 +1,25 @@
 package coordinator
 
 import (
+	"errors"
 	"testing"
 
-	"github.com/ElrondNetwork/elrond-go-core/core/check"
-	"github.com/ElrondNetwork/elrond-go-core/data/block"
-	"github.com/ElrondNetwork/elrond-go/process"
-	"github.com/ElrondNetwork/elrond-go/testscommon"
-	"github.com/ElrondNetwork/elrond-go/vm/mock"
+	"github.com/multiversx/mx-chain-core-go/core"
+	"github.com/multiversx/mx-chain-core-go/core/check"
+	"github.com/multiversx/mx-chain-core-go/data/block"
+	"github.com/multiversx/mx-chain-go/common"
+	"github.com/multiversx/mx-chain-go/process"
+	"github.com/multiversx/mx-chain-go/testscommon"
+	"github.com/multiversx/mx-chain-go/testscommon/enableEpochsHandlerMock"
+	"github.com/multiversx/mx-chain-go/testscommon/marshallerMock"
 	"github.com/stretchr/testify/assert"
 )
 
 func createMockArgsPrintDoubleTransactionsDetector() ArgsPrintDoubleTransactionsDetector {
 	return ArgsPrintDoubleTransactionsDetector{
-		Marshaller:    &testscommon.MarshalizerMock{},
-		Hasher:        &testscommon.HasherStub{},
-		EpochNotifier: &mock.EpochNotifierStub{},
+		Marshaller:          &marshallerMock.MarshalizerMock{},
+		Hasher:              &testscommon.HasherStub{},
+		EnableEpochsHandler: enableEpochsHandlerMock.NewEnableEpochsHandlerStub(),
 	}
 }
 
@@ -42,15 +46,25 @@ func TestNewPrintDoubleTransactionsDetector(t *testing.T) {
 		assert.True(t, check.IfNil(detector))
 		assert.Equal(t, process.ErrNilHasher, err)
 	})
-	t.Run("nil epoch notifier should error", func(t *testing.T) {
+	t.Run("nil enable epochs handler should error", func(t *testing.T) {
 		t.Parallel()
 
 		args := createMockArgsPrintDoubleTransactionsDetector()
-		args.EpochNotifier = nil
+		args.EnableEpochsHandler = nil
 
 		detector, err := NewPrintDoubleTransactionsDetector(args)
 		assert.True(t, check.IfNil(detector))
-		assert.Equal(t, process.ErrNilEpochNotifier, err)
+		assert.Equal(t, process.ErrNilEnableEpochsHandler, err)
+	})
+	t.Run("invalid enable epochs handler should error", func(t *testing.T) {
+		t.Parallel()
+
+		args := createMockArgsPrintDoubleTransactionsDetector()
+		args.EnableEpochsHandler = enableEpochsHandlerMock.NewEnableEpochsHandlerStubWithNoFlagsDefined()
+
+		detector, err := NewPrintDoubleTransactionsDetector(args)
+		assert.True(t, check.IfNil(detector))
+		assert.True(t, errors.Is(err, core.ErrInvalidEnableEpochsHandler))
 	})
 	t.Run("should work", func(t *testing.T) {
 		t.Parallel()
@@ -132,7 +146,7 @@ func TestPrintDoubleTransactionsDetector_ProcessBlockBody(t *testing.T) {
 
 		debugCalled := false
 		args := createMockArgsPrintDoubleTransactionsDetector()
-		args.AddFailedRelayedTxToInvalidMBsDisableEpoch = 100000
+		args.EnableEpochsHandler = enableEpochsHandlerMock.NewEnableEpochsHandlerStub(common.AddFailedRelayedTxToInvalidMBsFlag)
 		detector, _ := NewPrintDoubleTransactionsDetector(args)
 		detector.logger = &testscommon.LoggerStub{
 			ErrorCalled: func(message string, args ...interface{}) {

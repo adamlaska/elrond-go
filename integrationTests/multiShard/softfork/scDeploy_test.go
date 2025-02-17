@@ -2,19 +2,19 @@ package softfork
 
 import (
 	"encoding/hex"
-	"io/ioutil"
 	"math/big"
+	"os"
 	"testing"
 	"time"
 
-	"github.com/ElrondNetwork/elrond-go-core/core"
-	"github.com/ElrondNetwork/elrond-go-core/core/check"
-	"github.com/ElrondNetwork/elrond-go-crypto"
-	logger "github.com/ElrondNetwork/elrond-go-logger"
-	"github.com/ElrondNetwork/elrond-go/config"
-	"github.com/ElrondNetwork/elrond-go/integrationTests"
-	"github.com/ElrondNetwork/elrond-go/process/factory"
-	"github.com/ElrondNetwork/elrond-go/state"
+	crypto "github.com/multiversx/mx-chain-crypto-go"
+
+	"github.com/multiversx/mx-chain-core-go/core"
+	"github.com/multiversx/mx-chain-core-go/core/check"
+	"github.com/multiversx/mx-chain-go/integrationTests"
+	"github.com/multiversx/mx-chain-go/process/factory"
+	"github.com/multiversx/mx-chain-go/state"
+	logger "github.com/multiversx/mx-chain-logger-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -26,33 +26,35 @@ func TestScDeploy(t *testing.T) {
 		t.Skip("this is not a short test")
 	}
 
-	builtinEnableEpoch := uint32(0)
 	deployEnableEpoch := uint32(1)
 	relayedTxEnableEpoch := uint32(0)
 	penalizedTooMuchGasEnableEpoch := uint32(0)
 	roundsPerEpoch := uint64(10)
+	scProcessorV2EnableEpoch := integrationTests.UnreachableEpoch
 
-	enableEpochs := config.EnableEpochs{
-		BuiltInFunctionsEnableEpoch:    builtinEnableEpoch,
-		SCDeployEnableEpoch:            deployEnableEpoch,
-		RelayedTransactionsEnableEpoch: relayedTxEnableEpoch,
-		PenalizedTooMuchGasEnableEpoch: penalizedTooMuchGasEnableEpoch,
-	}
+	enableEpochs := integrationTests.CreateEnableEpochsConfig()
+	enableEpochs.SCDeployEnableEpoch = deployEnableEpoch
+	enableEpochs.RelayedTransactionsEnableEpoch = relayedTxEnableEpoch
+	enableEpochs.PenalizedTooMuchGasEnableEpoch = penalizedTooMuchGasEnableEpoch
+	enableEpochs.SCProcessorV2EnableEpoch = scProcessorV2EnableEpoch
+	enableEpochs.StakingV4Step1EnableEpoch = integrationTests.StakingV4Step1EnableEpoch
+	enableEpochs.StakingV4Step2EnableEpoch = integrationTests.StakingV4Step2EnableEpoch
+	enableEpochs.StakingV4Step3EnableEpoch = integrationTests.StakingV4Step3EnableEpoch
 
-	shardNode := integrationTests.NewTestProcessorNodeWithEnableEpochs(
-		1,
-		0,
-		0,
-		enableEpochs,
-	)
+	shardNode := integrationTests.NewTestProcessorNode(integrationTests.ArgTestProcessorNode{
+		MaxShards:            1,
+		NodeShardId:          0,
+		TxSignPrivKeyShardId: 0,
+		EpochsConfig:         &enableEpochs,
+	})
 	shardNode.EpochStartTrigger.SetRoundsPerEpoch(roundsPerEpoch)
 
-	metaNode := integrationTests.NewTestProcessorNodeWithEnableEpochs(
-		1,
-		core.MetachainShardId,
-		0,
-		enableEpochs,
-	)
+	metaNode := integrationTests.NewTestProcessorNode(integrationTests.ArgTestProcessorNode{
+		MaxShards:            1,
+		NodeShardId:          core.MetachainShardId,
+		TxSignPrivKeyShardId: 0,
+		EpochsConfig:         &enableEpochs,
+	})
 	metaNode.EpochStartTrigger.SetRoundsPerEpoch(roundsPerEpoch)
 
 	nodes := []*integrationTests.TestProcessorNode{
@@ -98,7 +100,9 @@ func TestScDeploy(t *testing.T) {
 		time.Sleep(integrationTests.StepDelay)
 	}
 
-	log.Info("resulted sc address (failed)", "address", integrationTests.TestAddressPubkeyConverter.Encode(deployedFailedAddress))
+	encodedDeployFailedAddr, err := integrationTests.TestAddressPubkeyConverter.Encode(deployedFailedAddress)
+	assert.Nil(t, err)
+	log.Info("resulted sc address (failed)", "address", encodedDeployFailedAddr)
 	assert.False(t, scAccountExists(shardNode, deployedFailedAddress))
 
 	deploySucceeded := deploySc(t, nodes)
@@ -111,19 +115,21 @@ func TestScDeploy(t *testing.T) {
 		time.Sleep(integrationTests.StepDelay)
 	}
 
-	log.Info("resulted sc address (success)", "address", integrationTests.TestAddressPubkeyConverter.Encode(deploySucceeded))
+	encodedDeploySucceededAddr, err := integrationTests.TestAddressPubkeyConverter.Encode(deploySucceeded)
+	assert.Nil(t, err)
+	log.Info("resulted sc address (success)", "address", encodedDeploySucceededAddr)
 	assert.True(t, scAccountExists(shardNode, deploySucceeded))
 }
 
 func deploySc(t *testing.T, nodes []*integrationTests.TestProcessorNode) []byte {
-	scCode, err := ioutil.ReadFile("./testdata/answer.wasm")
+	scCode, err := os.ReadFile("./testdata/answer.wasm")
 	require.Nil(t, err)
 
 	node := nodes[0]
-	scAddress, err := node.BlockchainHook.NewAddress(node.OwnAccount.Address, node.OwnAccount.Nonce, factory.ArwenVirtualMachine)
+	scAddress, err := node.BlockchainHook.NewAddress(node.OwnAccount.Address, node.OwnAccount.Nonce, factory.WasmVirtualMachine)
 	require.Nil(t, err)
 
-	integrationTests.DeployScTx(nodes, 0, hex.EncodeToString(scCode), factory.ArwenVirtualMachine, "001000000000")
+	integrationTests.DeployScTx(nodes, 0, hex.EncodeToString(scCode), factory.WasmVirtualMachine, "001000000000")
 
 	return scAddress
 }

@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ElrondNetwork/elrond-go-core/data/transaction"
-	"github.com/ElrondNetwork/elrond-go/integrationTests"
+	"github.com/multiversx/mx-chain-core-go/data/transaction"
+	"github.com/multiversx/mx-chain-go/integrationTests"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -15,6 +15,10 @@ import (
 const mintingValue = "100000000"
 
 func TestInterceptedTxWithoutDataField(t *testing.T) {
+	if testing.Short() {
+		t.Skip("this is not a short test")
+	}
+
 	value := big.NewInt(0)
 	value.SetString("999", 10)
 
@@ -35,6 +39,10 @@ func TestInterceptedTxWithoutDataField(t *testing.T) {
 }
 
 func TestInterceptedTxWithDataField(t *testing.T) {
+	if testing.Short() {
+		t.Skip("this is not a short test")
+	}
+
 	value := big.NewInt(0)
 	value.SetString("999", 10)
 
@@ -55,6 +63,10 @@ func TestInterceptedTxWithDataField(t *testing.T) {
 }
 
 func TestInterceptedTxWithSigningOverTxHash(t *testing.T) {
+	if testing.Short() {
+		t.Skip("this is not a short test")
+	}
+
 	value := big.NewInt(0)
 	value.SetString("1000000000000000000", 10)
 
@@ -102,11 +114,11 @@ func testInterceptedTxFromFrontendGeneratedParams(
 	valMinting, _ := big.NewInt(0).SetString(mintingValue, 10)
 	valMinting.Mul(valMinting, big.NewInt(5000000))
 
-	node := integrationTests.NewTestProcessorNode(
-		maxShards,
-		nodeShardId,
-		txSignPrivKeyShardId,
-	)
+	node := integrationTests.NewTestProcessorNode(integrationTests.ArgTestProcessorNode{
+		MaxShards:            maxShards,
+		NodeShardId:          nodeShardId,
+		TxSignPrivKeyShardId: txSignPrivKeyShardId,
+	})
 
 	node.EconomicsData.SetMinGasPrice(10)
 	txHexHash := ""

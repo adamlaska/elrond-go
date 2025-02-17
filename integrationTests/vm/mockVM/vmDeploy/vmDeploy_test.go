@@ -7,14 +7,18 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/ElrondNetwork/elrond-go/config"
-	"github.com/ElrondNetwork/elrond-go/integrationTests/vm"
-	"github.com/ElrondNetwork/elrond-go/process/factory"
+	"github.com/multiversx/mx-chain-go/config"
+	"github.com/multiversx/mx-chain-go/integrationTests/vm"
+	"github.com/multiversx/mx-chain-go/process/factory"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestVmDeployWithoutTransferShouldDeploySCCode(t *testing.T) {
+	if testing.Short() {
+		t.Skip("this is not a short test")
+	}
+
 	vmOpGas := uint64(1)
 	senderAddressBytes := []byte("12345678901234567890123456789012")
 	senderNonce := uint64(11)
@@ -70,6 +74,10 @@ func TestVmDeployWithoutTransferShouldDeploySCCode(t *testing.T) {
 }
 
 func TestVmDeployWithTransferShouldDeploySCCode(t *testing.T) {
+	if testing.Short() {
+		t.Skip("this is not a short test")
+	}
+
 	vmOpGas := uint64(1)
 	senderAddressBytes := []byte("12345678901234567890123456789012")
 	senderNonce := uint64(11)
@@ -124,6 +132,10 @@ func TestVmDeployWithTransferShouldDeploySCCode(t *testing.T) {
 }
 
 func TestVmDeployWithTransferAndGasShouldDeploySCCode(t *testing.T) {
+	if testing.Short() {
+		t.Skip("this is not a short test")
+	}
+
 	vmOpGas := uint64(1)
 	senderAddressBytes := []byte("12345678901234567890123456789012")
 	senderNonce := uint64(11)
@@ -181,6 +193,10 @@ func TestVmDeployWithTransferAndGasShouldDeploySCCode(t *testing.T) {
 }
 
 func TestVMDeployWithTransferWithInsufficientGasShouldReturnErr(t *testing.T) {
+	if testing.Short() {
+		t.Skip("this is not a short test")
+	}
+
 	vmOpGas := uint64(1000)
 	senderAddressBytes := []byte("12345678901234567890123456789012")
 	senderNonce := uint64(11)

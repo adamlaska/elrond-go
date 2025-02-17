@@ -5,29 +5,31 @@ import (
 	"net/http/httptest"
 	"sync"
 
-	arwenConfig "github.com/ElrondNetwork/arwen-wasm-vm/v1_4/config"
-	dataTransaction "github.com/ElrondNetwork/elrond-go-core/data/transaction"
-	"github.com/ElrondNetwork/elrond-go/api/groups"
-	"github.com/ElrondNetwork/elrond-go/api/shared"
-	"github.com/ElrondNetwork/elrond-go/config"
-	nodeFacade "github.com/ElrondNetwork/elrond-go/facade"
-	"github.com/ElrondNetwork/elrond-go/integrationTests/mock"
-	"github.com/ElrondNetwork/elrond-go/node/external"
-	"github.com/ElrondNetwork/elrond-go/node/external/blockAPI"
-	"github.com/ElrondNetwork/elrond-go/node/external/transactionAPI"
-	"github.com/ElrondNetwork/elrond-go/node/trieIterators"
-	"github.com/ElrondNetwork/elrond-go/node/trieIterators/factory"
-	"github.com/ElrondNetwork/elrond-go/process/coordinator"
-	"github.com/ElrondNetwork/elrond-go/process/smartContract/builtInFunctions"
-	"github.com/ElrondNetwork/elrond-go/process/transaction"
-	"github.com/ElrondNetwork/elrond-go/process/txsimulator"
-	txSimData "github.com/ElrondNetwork/elrond-go/process/txsimulator/data"
-	"github.com/ElrondNetwork/elrond-go/process/txstatus"
-	"github.com/ElrondNetwork/elrond-go/testscommon"
-	"github.com/ElrondNetwork/elrond-go/vm/systemSmartContracts/defaults"
-	"github.com/ElrondNetwork/elrond-vm-common/parsers"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
+	"github.com/multiversx/mx-chain-go/api/groups"
+	"github.com/multiversx/mx-chain-go/api/shared"
+	"github.com/multiversx/mx-chain-go/config"
+	nodeFacade "github.com/multiversx/mx-chain-go/facade"
+	"github.com/multiversx/mx-chain-go/integrationTests/mock"
+	"github.com/multiversx/mx-chain-go/node/external"
+	"github.com/multiversx/mx-chain-go/node/external/blockAPI"
+	"github.com/multiversx/mx-chain-go/node/external/transactionAPI"
+	"github.com/multiversx/mx-chain-go/node/trieIterators"
+	"github.com/multiversx/mx-chain-go/node/trieIterators/factory"
+	"github.com/multiversx/mx-chain-go/process/coordinator"
+	"github.com/multiversx/mx-chain-go/process/smartContract/builtInFunctions"
+	"github.com/multiversx/mx-chain-go/process/transactionEvaluator"
+	"github.com/multiversx/mx-chain-go/process/txstatus"
+	"github.com/multiversx/mx-chain-go/testscommon"
+	"github.com/multiversx/mx-chain-go/testscommon/enableEpochsHandlerMock"
+	"github.com/multiversx/mx-chain-go/testscommon/genesisMocks"
+	"github.com/multiversx/mx-chain-go/testscommon/marshallerMock"
+	"github.com/multiversx/mx-chain-go/testscommon/state"
+	"github.com/multiversx/mx-chain-go/vm/systemSmartContracts/defaults"
+	"github.com/multiversx/mx-chain-vm-common-go/parsers"
+	datafield "github.com/multiversx/mx-chain-vm-common-go/parsers/dataField"
+	wasmConfig "github.com/multiversx/mx-chain-vm-go/config"
 )
 
 // TestProcessorNodeWithTestWebServer represents a TestProcessorNode with a test web server
@@ -45,8 +47,11 @@ func NewTestProcessorNodeWithTestWebServer(
 	txSignPrivKeyShardId uint32,
 ) *TestProcessorNodeWithTestWebServer {
 
-	tpn := newBaseTestProcessorNode(maxShards, nodeShardId, txSignPrivKeyShardId)
-	tpn.initTestNode()
+	tpn := NewTestProcessorNode(ArgTestProcessorNode{
+		MaxShards:            maxShards,
+		NodeShardId:          nodeShardId,
+		TxSignPrivKeyShardId: txSignPrivKeyShardId,
+	})
 
 	argFacade := createFacadeArg(tpn)
 	facade, err := nodeFacade.NewNodeFacade(argFacade)
@@ -74,12 +79,11 @@ func (node *TestProcessorNodeWithTestWebServer) DoRequest(request *http.Request)
 }
 
 func createFacadeArg(tpn *TestProcessorNode) nodeFacade.ArgNodeFacade {
-	apiResolver, txSimulator := createFacadeComponents(tpn)
+	apiResolver := createFacadeComponents(tpn)
 
 	return nodeFacade.ArgNodeFacade{
 		Node:                   tpn.Node,
 		ApiResolver:            apiResolver,
-		TxSimulatorProcessor:   txSimulator,
 		RestAPIServerDebugMode: false,
 		WsAntifloodConfig: config.WebServerAntifloodConfig{
 			SimultaneousRequests:               1000,
@@ -98,14 +102,14 @@ func createFacadeArg(tpn *TestProcessorNode) nodeFacade.ArgNodeFacade {
 
 func createTestApiConfig() config.ApiRoutesConfig {
 	routes := map[string][]string{
-		"node":        {"/status", "/metrics", "/heartbeatstatus", "/statistics", "/p2pstatus", "/debug", "/peerinfo"},
-		"address":     {"/:address", "/:address/balance", "/:address/username", "/:address/key/:key", "/:address/esdt", "/:address/esdt/:tokenIdentifier"},
+		"node":        {"/status", "/metrics", "/heartbeatstatus", "/statistics", "/p2pstatus", "/debug", "/peerinfo", "/bootstrapstatus", "/connected-peers-ratings", "/managed-keys/count", "/managed-keys", "/loaded-keys", "/managed-keys/eligible", "/managed-keys/waiting", "/waiting-epochs-left/:key"},
+		"address":     {"/:address", "/:address/balance", "/:address/username", "/:address/code-hash", "/:address/key/:key", "/:address/esdt", "/:address/esdt/:tokenIdentifier"},
 		"hardfork":    {"/trigger"},
 		"network":     {"/status", "/total-staked", "/economics", "/config"},
 		"log":         {"/log"},
 		"validator":   {"/statistics"},
 		"vm-values":   {"/hex", "/string", "/int", "/query"},
-		"transaction": {"/send", "/simulate", "/send-multiple", "/cost", "/:txhash"},
+		"transaction": {"/send", "/simulate", "/send-multiple", "/cost", "/:txhash", "/pool"},
 		"block":       {"/by-nonce/:nonce", "/by-hash/:hash", "/by-round/:round"},
 	}
 
@@ -129,45 +133,72 @@ func createTestApiConfig() config.ApiRoutesConfig {
 	return routesConfig
 }
 
-func createFacadeComponents(tpn *TestProcessorNode) (nodeFacade.ApiResolver, nodeFacade.TransactionSimulatorProcessor) {
-	gasMap := arwenConfig.MakeGasMapForTests()
+func createFacadeComponents(tpn *TestProcessorNode) nodeFacade.ApiResolver {
+	gasMap := wasmConfig.MakeGasMapForTests()
 	defaults.FillGasMapInternal(gasMap, 1)
 	gasScheduleNotifier := mock.NewGasScheduleNotifierMock(gasMap)
 	argsBuiltIn := builtInFunctions.ArgsCreateBuiltInFunctionContainer{
-		GasSchedule:      gasScheduleNotifier,
-		MapDNSAddresses:  make(map[string]struct{}),
-		Marshalizer:      TestMarshalizer,
-		Accounts:         tpn.AccntState,
-		ShardCoordinator: tpn.ShardCoordinator,
-		EpochNotifier:    tpn.EpochNotifier,
+		GasSchedule:               gasScheduleNotifier,
+		MapDNSAddresses:           make(map[string]struct{}),
+		MapDNSV2Addresses:         make(map[string]struct{}),
+		Marshalizer:               TestMarshalizer,
+		Accounts:                  tpn.AccntState,
+		ShardCoordinator:          tpn.ShardCoordinator,
+		EpochNotifier:             tpn.EpochNotifier,
+		EnableEpochsHandler:       tpn.EnableEpochsHandler,
+		MaxNumNodesInTransferRole: 100,
+		GuardedAccountHandler:     tpn.GuardedAccountHandler,
 	}
-	builtInFuncs, _, _, err := builtInFunctions.CreateBuiltInFuncContainerAndNFTStorageHandler(argsBuiltIn)
+	argsBuiltIn.AutomaticCrawlerAddresses = GenerateOneAddressPerShard(argsBuiltIn.ShardCoordinator)
+	builtInFuncs, err := builtInFunctions.CreateBuiltInFunctionsFactory(argsBuiltIn)
 	log.LogIfError(err)
 	esdtTransferParser, _ := parsers.NewESDTTransferParser(TestMarshalizer)
 	argsTxTypeHandler := coordinator.ArgNewTxTypeHandler{
-		PubkeyConverter:    TestAddressPubkeyConverter,
-		ShardCoordinator:   tpn.ShardCoordinator,
-		BuiltInFunctions:   builtInFuncs,
-		ArgumentParser:     parsers.NewCallArgsParser(),
-		EpochNotifier:      tpn.EpochNotifier,
-		ESDTTransferParser: esdtTransferParser,
+		PubkeyConverter:     TestAddressPubkeyConverter,
+		ShardCoordinator:    tpn.ShardCoordinator,
+		BuiltInFunctions:    builtInFuncs.BuiltInFunctionContainer(),
+		ArgumentParser:      parsers.NewCallArgsParser(),
+		ESDTTransferParser:  esdtTransferParser,
+		EnableEpochsHandler: tpn.EnableEpochsHandler,
 	}
 	txTypeHandler, err := coordinator.NewTxTypeHandler(argsTxTypeHandler)
 	log.LogIfError(err)
 
-	txCostHandler, err := transaction.NewTransactionCostEstimator(
-		txTypeHandler,
-		tpn.EconomicsData,
-		&mock.TransactionSimulatorStub{
-			ProcessTxCalled: func(tx *dataTransaction.Transaction) (*txSimData.SimulationResults, error) {
-				return &txSimData.SimulationResults{}, nil
-			},
-		},
-		tpn.AccntState,
-		tpn.ShardCoordinator,
-		tpn.EpochNotifier,
-		0,
-	)
+	argsDataFieldParser := &datafield.ArgsOperationDataFieldParser{
+		AddressLength: TestAddressPubkeyConverter.Len(),
+		Marshalizer:   TestMarshalizer,
+	}
+	dataFieldParser, err := datafield.NewOperationDataFieldParser(argsDataFieldParser)
+	log.LogIfError(err)
+
+	argSimulator := transactionEvaluator.ArgsTxSimulator{
+		TransactionProcessor:      tpn.TxProcessor,
+		IntermediateProcContainer: tpn.InterimProcContainer,
+		AddressPubKeyConverter:    TestAddressPubkeyConverter,
+		ShardCoordinator:          tpn.ShardCoordinator,
+		Marshalizer:               TestMarshalizer,
+		Hasher:                    TestHasher,
+		VMOutputCacher:            &testscommon.CacherMock{},
+		DataFieldParser:           dataFieldParser,
+		BlockChainHook:            tpn.BlockchainHook,
+	}
+
+	txSimulator, err := transactionEvaluator.NewTransactionSimulator(argSimulator)
+	log.LogIfError(err)
+
+	wrappedAccounts, err := transactionEvaluator.NewSimulationAccountsDB(tpn.AccntState)
+	log.LogIfError(err)
+
+	argsTransactionEvaluator := transactionEvaluator.ArgsApiTransactionEvaluator{
+		TxTypeHandler:       txTypeHandler,
+		FeeHandler:          tpn.EconomicsData,
+		TxSimulator:         txSimulator,
+		Accounts:            wrappedAccounts,
+		ShardCoordinator:    tpn.ShardCoordinator,
+		EnableEpochsHandler: tpn.EnableEpochsHandler,
+		BlockChain:          tpn.BlockChain,
+	}
+	apiTransactionEvaluator, err := transactionEvaluator.NewAPITransactionEvaluator(argsTransactionEvaluator)
 	log.LogIfError(err)
 
 	accountsWrapper := &trieIterators.AccountsWrapper{
@@ -190,6 +221,9 @@ func createFacadeComponents(tpn *TestProcessorNode) (nodeFacade.ApiResolver, nod
 	delegatedListHandler, err := factory.CreateDelegatedListHandler(args)
 	log.LogIfError(err)
 
+	logsFacade := &testscommon.LogsFacadeStub{}
+	receiptsRepository := &testscommon.ReceiptsRepositoryStub{}
+
 	argsApiTransactionProc := &transactionAPI.ArgAPITransactionProcessor{
 		Marshalizer:              TestMarshalizer,
 		AddressPubKeyConverter:   TestAddressPubkeyConverter,
@@ -198,6 +232,12 @@ func createFacadeComponents(tpn *TestProcessorNode) (nodeFacade.ApiResolver, nod
 		StorageService:           tpn.Storage,
 		DataPool:                 tpn.DataPool,
 		Uint64ByteSliceConverter: TestUint64Converter,
+		FeeComputer:              &testscommon.FeeComputerStub{},
+		TxTypeHandler:            txTypeHandler,
+		LogsFacade:               logsFacade,
+		DataFieldParser:          dataFieldParser,
+		TxMarshaller:             &marshallerMock.MarshalizerMock{},
+		EnableEpochsHandler:      tpn.EnableEpochsHandler,
 	}
 	apiTransactionHandler, err := transactionAPI.NewAPITransactionProcessor(argsApiTransactionProc)
 	log.LogIfError(err)
@@ -206,15 +246,21 @@ func createFacadeComponents(tpn *TestProcessorNode) (nodeFacade.ApiResolver, nod
 	log.LogIfError(err)
 
 	argsBlockAPI := &blockAPI.ArgAPIBlockProcessor{
-		SelfShardID:              tpn.ShardCoordinator.SelfId(),
-		Store:                    tpn.Storage,
-		Marshalizer:              TestMarshalizer,
-		Uint64ByteSliceConverter: TestUint64Converter,
-		HistoryRepo:              tpn.HistoryRepository,
-		TxUnmarshaller:           apiTransactionHandler,
-		StatusComputer:           statusCom,
-		Hasher:                   TestHasher,
-		AddressPubkeyConverter:   TestAddressPubkeyConverter,
+		SelfShardID:                  tpn.ShardCoordinator.SelfId(),
+		Store:                        tpn.Storage,
+		Marshalizer:                  TestMarshalizer,
+		Uint64ByteSliceConverter:     TestUint64Converter,
+		HistoryRepo:                  tpn.HistoryRepository,
+		APITransactionHandler:        apiTransactionHandler,
+		StatusComputer:               statusCom,
+		Hasher:                       TestHasher,
+		AddressPubkeyConverter:       TestAddressPubkeyConverter,
+		LogsFacade:                   logsFacade,
+		ReceiptsRepository:           receiptsRepository,
+		AlteredAccountsProvider:      &testscommon.AlteredAccountsProviderStub{},
+		AccountsRepository:           &state.AccountsRepositoryStub{},
+		ScheduledTxsExecutionHandler: &testscommon.ScheduledTxsExecutionStub{},
+		EnableEpochsHandler:          &enableEpochsHandlerMock.EnableEpochsHandlerStub{},
 	}
 	blockAPIHandler, err := blockAPI.CreateAPIBlockProcessor(argsBlockAPI)
 	log.LogIfError(err)
@@ -225,34 +271,25 @@ func createFacadeComponents(tpn *TestProcessorNode) (nodeFacade.ApiResolver, nod
 	argsApiResolver := external.ArgNodeApiResolver{
 		SCQueryService:           tpn.SCQueryService,
 		StatusMetricsHandler:     &testscommon.StatusMetricsStub{},
-		TxCostHandler:            txCostHandler,
+		APITransactionEvaluator:  apiTransactionEvaluator,
 		TotalStakedValueHandler:  totalStakedValueHandler,
 		DirectStakedListHandler:  directStakedListHandler,
 		DelegatedListHandler:     delegatedListHandler,
 		APITransactionHandler:    apiTransactionHandler,
 		APIBlockHandler:          blockAPIHandler,
 		APIInternalBlockHandler:  apiInternalBlockProcessor,
-		GenesisNodesSetupHandler: &mock.NodesSetupStub{},
+		GenesisNodesSetupHandler: &genesisMocks.NodesSetupStub{},
 		ValidatorPubKeyConverter: &testscommon.PubkeyConverterMock{},
+		AccountsParser:           &genesisMocks.AccountsParserStub{},
+		GasScheduleNotifier:      &testscommon.GasScheduleNotifierMock{},
+		ManagedPeersMonitor:      &testscommon.ManagedPeersMonitorStub{},
+		NodesCoordinator:         tpn.NodesCoordinator,
 	}
 
 	apiResolver, err := external.NewNodeApiResolver(argsApiResolver)
 	log.LogIfError(err)
 
-	argSimulator := txsimulator.ArgsTxSimulator{
-		TransactionProcessor:      tpn.TxProcessor,
-		IntermediateProcContainer: tpn.InterimProcContainer,
-		AddressPubKeyConverter:    TestAddressPubkeyConverter,
-		ShardCoordinator:          tpn.ShardCoordinator,
-		Marshalizer:               TestMarshalizer,
-		Hasher:                    TestHasher,
-		VMOutputCacher:            &testscommon.CacherMock{},
-	}
-
-	txSimulator, err := txsimulator.NewTransactionSimulator(argSimulator)
-	log.LogIfError(err)
-
-	return apiResolver, txSimulator
+	return apiResolver
 }
 
 func createGinServer(facade Facade, apiConfig config.ApiRoutesConfig) *gin.Engine {

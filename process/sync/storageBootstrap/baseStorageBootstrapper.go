@@ -3,21 +3,21 @@ package storageBootstrap
 import (
 	"fmt"
 
-	"github.com/ElrondNetwork/elrond-go-core/core"
-	"github.com/ElrondNetwork/elrond-go-core/core/check"
-	"github.com/ElrondNetwork/elrond-go-core/data"
-	"github.com/ElrondNetwork/elrond-go-core/data/block"
-	"github.com/ElrondNetwork/elrond-go-core/data/typeConverters"
-	"github.com/ElrondNetwork/elrond-go-core/marshal"
-	logger "github.com/ElrondNetwork/elrond-go-logger"
-	"github.com/ElrondNetwork/elrond-go/dataRetriever"
-	"github.com/ElrondNetwork/elrond-go/process"
-	"github.com/ElrondNetwork/elrond-go/process/block/bootstrapStorage"
-	"github.com/ElrondNetwork/elrond-go/process/block/processedMb"
-	"github.com/ElrondNetwork/elrond-go/process/sync"
-	"github.com/ElrondNetwork/elrond-go/sharding"
-	"github.com/ElrondNetwork/elrond-go/sharding/nodesCoordinator"
-	"github.com/ElrondNetwork/elrond-go/storage"
+	"github.com/multiversx/mx-chain-core-go/core"
+	"github.com/multiversx/mx-chain-core-go/core/check"
+	"github.com/multiversx/mx-chain-core-go/data"
+	"github.com/multiversx/mx-chain-core-go/data/block"
+	"github.com/multiversx/mx-chain-core-go/data/typeConverters"
+	"github.com/multiversx/mx-chain-core-go/marshal"
+	"github.com/multiversx/mx-chain-go/dataRetriever"
+	"github.com/multiversx/mx-chain-go/process"
+	"github.com/multiversx/mx-chain-go/process/block/bootstrapStorage"
+	"github.com/multiversx/mx-chain-go/process/sync"
+	"github.com/multiversx/mx-chain-go/process/sync/storageBootstrap/metricsLoader"
+	"github.com/multiversx/mx-chain-go/sharding"
+	"github.com/multiversx/mx-chain-go/sharding/nodesCoordinator"
+	"github.com/multiversx/mx-chain-go/storage"
+	logger "github.com/multiversx/mx-chain-logger-go"
 )
 
 var log = logger.GetOrCreate("process/sync")
@@ -42,6 +42,8 @@ type ArgsBaseStorageBootstrapper struct {
 	ScheduledTxsExecutionHandler process.ScheduledTxsExecutionHandler
 	MiniblocksProvider           process.MiniBlockProvider
 	EpochNotifier                process.EpochNotifier
+	ProcessedMiniBlocksTracker   process.ProcessedMiniBlocksTracker
+	AppStatusHandler             core.AppStatusHandler
 }
 
 // ArgsShardStorageBootstrapper is structure used to create a new storage bootstrapper for shard
@@ -75,6 +77,8 @@ type storageBootstrapper struct {
 	scheduledTxsExecutionHandler process.ScheduledTxsExecutionHandler
 	miniBlocksProvider           process.MiniBlockProvider
 	epochNotifier                process.EpochNotifier
+	processedMiniBlocksTracker   process.ProcessedMiniBlocksTracker
+	appStatusHandler             core.AppStatusHandler
 }
 
 func (st *storageBootstrapper) loadBlocks() error {
@@ -119,6 +123,9 @@ func (st *storageBootstrapper) loadBlocks() error {
 			round = headerInfo.LastRound
 			continue
 		}
+
+		_, numHdrs := metricsLoader.UpdateMetricsFromStorage(st.store, st.uint64Converter, st.marshalizer, st.appStatusHandler, headerInfo.LastHeader.Nonce)
+		st.blkExecutor.SetNumProcessedObj(numHdrs)
 
 		err = st.applyHeaderInfo(headerInfo)
 		if err != nil {
@@ -166,11 +173,8 @@ func (st *storageBootstrapper) loadBlocks() error {
 
 	st.bootstrapper.applyNumPendingMiniBlocks(headerInfo.PendingMiniBlocks)
 
-	processedMiniBlocks := processedMb.NewProcessedMiniBlocks()
-	processedMiniBlocks.ConvertSliceToProcessedMiniBlocksMap(headerInfo.ProcessedMiniBlocks)
-	processedMiniBlocks.DisplayProcessedMiniBlocks()
-
-	st.blkExecutor.ApplyProcessedMiniBlocks(processedMiniBlocks)
+	st.processedMiniBlocksTracker.ConvertSliceToProcessedMiniBlocksMap(headerInfo.ProcessedMiniBlocks)
+	st.processedMiniBlocksTracker.DisplayProcessedMiniBlocks()
 
 	st.cleanupStorageForHigherNonceIfExist()
 	st.bootstrapper.cleanupNotarizedStorageForHigherNoncesIfExist(headerInfo.LastCrossNotarizedHeaders)
@@ -502,6 +506,12 @@ func checkBaseStorageBootstrapperArguments(args ArgsBaseStorageBootstrapper) err
 	}
 	if check.IfNil(args.EpochNotifier) {
 		return process.ErrNilEpochNotifier
+	}
+	if check.IfNil(args.ProcessedMiniBlocksTracker) {
+		return process.ErrNilProcessedMiniBlocksTracker
+	}
+	if check.IfNil(args.AppStatusHandler) {
+		return process.ErrNilAppStatusHandler
 	}
 
 	return nil

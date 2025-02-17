@@ -1,8 +1,8 @@
 package disabled
 
 import (
-	nodesCoord "github.com/ElrondNetwork/elrond-go/sharding/nodesCoordinator"
-	"github.com/ElrondNetwork/elrond-go/state"
+	nodesCoord "github.com/multiversx/mx-chain-go/sharding/nodesCoordinator"
+	"github.com/multiversx/mx-chain-go/state"
 )
 
 // nodesCoordinator -
@@ -49,6 +49,16 @@ func (n *nodesCoordinator) GetAllWaitingValidatorsPublicKeys(_ uint32) (map[uint
 	return nil, nil
 }
 
+// GetAllShuffledOutValidatorsPublicKeys -
+func (n *nodesCoordinator) GetAllShuffledOutValidatorsPublicKeys(_ uint32) (map[uint32][][]byte, error) {
+	return nil, nil
+}
+
+// GetShuffledOutToAuctionValidatorsPublicKeys -
+func (n *nodesCoordinator) GetShuffledOutToAuctionValidatorsPublicKeys(_ uint32) (map[uint32][][]byte, error) {
+	return nil, nil
+}
+
 // GetConsensusValidatorsPublicKeys -
 func (n *nodesCoordinator) GetConsensusValidatorsPublicKeys(_ []byte, _ uint64, _ uint32, _ uint32) ([]string, error) {
 	return nil, nil
@@ -85,7 +95,7 @@ func (n *nodesCoordinator) ShardIdForEpoch(_ uint32) (uint32, error) {
 }
 
 // ShuffleOutForEpoch verifies if the shards changed in the new epoch and calls the shuffleOutHandler
-func (ncm *nodesCoordinator) ShuffleOutForEpoch(_ uint32) {
+func (n *nodesCoordinator) ShuffleOutForEpoch(_ uint32) {
 }
 
 // GetConsensusWhitelistedNodes -
@@ -101,6 +111,11 @@ func (n *nodesCoordinator) ConsensusGroupSize(uint32) int {
 // GetNumTotalEligible -
 func (n *nodesCoordinator) GetNumTotalEligible() uint64 {
 	return 0
+}
+
+// GetWaitingEpochsLeftForPublicKey returns 0
+func (n *nodesCoordinator) GetWaitingEpochsLeftForPublicKey(_ []byte) (uint32, error) {
+	return 0, nil
 }
 
 // IsInterfaceNil -

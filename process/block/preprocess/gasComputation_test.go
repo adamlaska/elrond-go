@@ -1,21 +1,27 @@
 package preprocess_test
 
 import (
+	"errors"
 	"testing"
 
-	"github.com/ElrondNetwork/elrond-go-core/core"
-	"github.com/ElrondNetwork/elrond-go-core/data"
-	"github.com/ElrondNetwork/elrond-go-core/data/block"
-	"github.com/ElrondNetwork/elrond-go-core/data/smartContractResult"
-	"github.com/ElrondNetwork/elrond-go-core/data/transaction"
-	"github.com/ElrondNetwork/elrond-go/process"
-	"github.com/ElrondNetwork/elrond-go/process/block/preprocess"
-	"github.com/ElrondNetwork/elrond-go/process/mock"
-	"github.com/ElrondNetwork/elrond-go/testscommon"
-	"github.com/ElrondNetwork/elrond-go/testscommon/epochNotifier"
+	"github.com/multiversx/mx-chain-core-go/core"
+	"github.com/multiversx/mx-chain-core-go/data"
+	"github.com/multiversx/mx-chain-core-go/data/block"
+	"github.com/multiversx/mx-chain-core-go/data/smartContractResult"
+	"github.com/multiversx/mx-chain-core-go/data/transaction"
+	"github.com/multiversx/mx-chain-go/common"
+	"github.com/multiversx/mx-chain-go/process"
+	"github.com/multiversx/mx-chain-go/process/block/preprocess"
+	"github.com/multiversx/mx-chain-go/testscommon"
+	"github.com/multiversx/mx-chain-go/testscommon/economicsmocks"
+	"github.com/multiversx/mx-chain-go/testscommon/enableEpochsHandlerMock"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func createEnableEpochsHandler() common.EnableEpochsHandler {
+	return enableEpochsHandlerMock.NewEnableEpochsHandlerStub(common.SCDeployFlag)
+}
 
 func TestNewGasComputation_NilEconomicsFeeHandlerShouldErr(t *testing.T) {
 	t.Parallel()
@@ -23,22 +29,46 @@ func TestNewGasComputation_NilEconomicsFeeHandlerShouldErr(t *testing.T) {
 	gc, err := preprocess.NewGasComputation(
 		nil,
 		&testscommon.TxTypeHandlerMock{},
-		&epochNotifier.EpochNotifierStub{},
-		0,
+		createEnableEpochsHandler(),
 	)
 
 	assert.Nil(t, gc)
 	assert.Equal(t, process.ErrNilEconomicsFeeHandler, err)
 }
 
+func TestNewGasComputation_NilEnableEpochsHandlerShouldErr(t *testing.T) {
+	t.Parallel()
+
+	gc, err := preprocess.NewGasComputation(
+		&economicsmocks.EconomicsHandlerStub{},
+		&testscommon.TxTypeHandlerMock{},
+		nil,
+	)
+
+	assert.Nil(t, gc)
+	assert.Equal(t, process.ErrNilEnableEpochsHandler, err)
+}
+
+func TestNewGasComputation_InvalidEnableEpochsHandlerShouldErr(t *testing.T) {
+	t.Parallel()
+
+	gc, err := preprocess.NewGasComputation(
+		&economicsmocks.EconomicsHandlerStub{},
+		&testscommon.TxTypeHandlerMock{},
+		enableEpochsHandlerMock.NewEnableEpochsHandlerStubWithNoFlagsDefined(),
+	)
+
+	assert.Nil(t, gc)
+	assert.True(t, errors.Is(err, core.ErrInvalidEnableEpochsHandler))
+}
+
 func TestNewGasComputation_ShouldWork(t *testing.T) {
 	t.Parallel()
 
 	gc, err := preprocess.NewGasComputation(
-		&mock.FeeHandlerStub{},
+		&economicsmocks.EconomicsHandlerStub{},
 		&testscommon.TxTypeHandlerMock{},
-		&epochNotifier.EpochNotifierStub{},
-		0,
+		createEnableEpochsHandler(),
 	)
 
 	assert.NotNil(t, gc)
@@ -49,22 +79,24 @@ func TestGasProvided_ShouldWork(t *testing.T) {
 	t.Parallel()
 
 	gc, _ := preprocess.NewGasComputation(
-		&mock.FeeHandlerStub{},
+		&economicsmocks.EconomicsHandlerStub{},
 		&testscommon.TxTypeHandlerMock{},
-		&epochNotifier.EpochNotifierStub{},
-		0,
+		createEnableEpochsHandler(),
 	)
+
+	key := []byte("key")
+	gc.Reset(key)
 
 	gc.SetGasProvided(2, []byte("hash1"))
 	assert.Equal(t, uint64(2), gc.GasProvided([]byte("hash1")))
-	require.Equal(t, 1, len(gc.GetTxHashesWithGasProvidedSinceLastReset()))
-	assert.Equal(t, []byte("hash1"), gc.GetTxHashesWithGasProvidedSinceLastReset()[0])
+	require.Equal(t, 1, len(gc.GetTxHashesWithGasProvidedSinceLastReset(key)))
+	assert.Equal(t, []byte("hash1"), gc.GetTxHashesWithGasProvidedSinceLastReset(key)[0])
 
 	gc.SetGasProvided(3, []byte("hash2"))
 	assert.Equal(t, uint64(3), gc.GasProvided([]byte("hash2")))
-	require.Equal(t, 2, len(gc.GetTxHashesWithGasProvidedSinceLastReset()))
-	assert.Equal(t, []byte("hash1"), gc.GetTxHashesWithGasProvidedSinceLastReset()[0])
-	assert.Equal(t, []byte("hash2"), gc.GetTxHashesWithGasProvidedSinceLastReset()[1])
+	require.Equal(t, 2, len(gc.GetTxHashesWithGasProvidedSinceLastReset(key)))
+	assert.Equal(t, []byte("hash1"), gc.GetTxHashesWithGasProvidedSinceLastReset(key)[0])
+	assert.Equal(t, []byte("hash2"), gc.GetTxHashesWithGasProvidedSinceLastReset(key)[1])
 
 	assert.Equal(t, uint64(5), gc.TotalGasProvided())
 
@@ -79,22 +111,24 @@ func TestGasRefunded_ShouldWork(t *testing.T) {
 	t.Parallel()
 
 	gc, _ := preprocess.NewGasComputation(
-		&mock.FeeHandlerStub{},
+		&economicsmocks.EconomicsHandlerStub{},
 		&testscommon.TxTypeHandlerMock{},
-		&epochNotifier.EpochNotifierStub{},
-		0,
+		createEnableEpochsHandler(),
 	)
+
+	key := []byte("key")
+	gc.Reset(key)
 
 	gc.SetGasRefunded(2, []byte("hash1"))
 	assert.Equal(t, uint64(2), gc.GasRefunded([]byte("hash1")))
-	require.Equal(t, 1, len(gc.GetTxHashesWithGasRefundedSinceLastReset()))
-	assert.Equal(t, []byte("hash1"), gc.GetTxHashesWithGasRefundedSinceLastReset()[0])
+	require.Equal(t, 1, len(gc.GetTxHashesWithGasRefundedSinceLastReset(key)))
+	assert.Equal(t, []byte("hash1"), gc.GetTxHashesWithGasRefundedSinceLastReset(key)[0])
 
 	gc.SetGasRefunded(3, []byte("hash2"))
 	assert.Equal(t, uint64(3), gc.GasRefunded([]byte("hash2")))
-	require.Equal(t, 2, len(gc.GetTxHashesWithGasRefundedSinceLastReset()))
-	assert.Equal(t, []byte("hash1"), gc.GetTxHashesWithGasRefundedSinceLastReset()[0])
-	assert.Equal(t, []byte("hash2"), gc.GetTxHashesWithGasRefundedSinceLastReset()[1])
+	require.Equal(t, 2, len(gc.GetTxHashesWithGasRefundedSinceLastReset(key)))
+	assert.Equal(t, []byte("hash1"), gc.GetTxHashesWithGasRefundedSinceLastReset(key)[0])
+	assert.Equal(t, []byte("hash2"), gc.GetTxHashesWithGasRefundedSinceLastReset(key)[1])
 
 	assert.Equal(t, uint64(5), gc.TotalGasRefunded())
 
@@ -109,22 +143,24 @@ func TestGasPenalized_ShouldWork(t *testing.T) {
 	t.Parallel()
 
 	gc, _ := preprocess.NewGasComputation(
-		&mock.FeeHandlerStub{},
+		&economicsmocks.EconomicsHandlerStub{},
 		&testscommon.TxTypeHandlerMock{},
-		&epochNotifier.EpochNotifierStub{},
-		0,
+		createEnableEpochsHandler(),
 	)
+
+	key := []byte("key")
+	gc.Reset(key)
 
 	gc.SetGasPenalized(2, []byte("hash1"))
 	assert.Equal(t, uint64(2), gc.GasPenalized([]byte("hash1")))
-	require.Equal(t, 1, len(gc.GetTxHashesWithGasPenalizedSinceLastReset()))
-	assert.Equal(t, []byte("hash1"), gc.GetTxHashesWithGasPenalizedSinceLastReset()[0])
+	require.Equal(t, 1, len(gc.GetTxHashesWithGasPenalizedSinceLastReset(key)))
+	assert.Equal(t, []byte("hash1"), gc.GetTxHashesWithGasPenalizedSinceLastReset(key)[0])
 
 	gc.SetGasPenalized(3, []byte("hash2"))
 	assert.Equal(t, uint64(3), gc.GasPenalized([]byte("hash2")))
-	require.Equal(t, 2, len(gc.GetTxHashesWithGasPenalizedSinceLastReset()))
-	assert.Equal(t, []byte("hash1"), gc.GetTxHashesWithGasPenalizedSinceLastReset()[0])
-	assert.Equal(t, []byte("hash2"), gc.GetTxHashesWithGasPenalizedSinceLastReset()[1])
+	require.Equal(t, 2, len(gc.GetTxHashesWithGasPenalizedSinceLastReset(key)))
+	assert.Equal(t, []byte("hash1"), gc.GetTxHashesWithGasPenalizedSinceLastReset(key)[0])
+	assert.Equal(t, []byte("hash2"), gc.GetTxHashesWithGasPenalizedSinceLastReset(key)[1])
 
 	assert.Equal(t, uint64(5), gc.TotalGasPenalized())
 
@@ -139,10 +175,9 @@ func TestComputeGasProvidedByTx_ShouldErrWrongTypeAssertion(t *testing.T) {
 	t.Parallel()
 
 	gc, _ := preprocess.NewGasComputation(
-		&mock.FeeHandlerStub{},
+		&economicsmocks.EconomicsHandlerStub{},
 		&testscommon.TxTypeHandlerMock{},
-		&epochNotifier.EpochNotifierStub{},
-		0,
+		createEnableEpochsHandler(),
 	)
 
 	_, _, err := gc.ComputeGasProvidedByTx(0, 1, nil)
@@ -153,14 +188,13 @@ func TestComputeGasProvidedByTx_ShouldWorkWhenTxReceiverAddressIsNotASmartContra
 	t.Parallel()
 
 	gc, _ := preprocess.NewGasComputation(
-		&mock.FeeHandlerStub{
+		&economicsmocks.EconomicsHandlerStub{
 			ComputeGasLimitCalled: func(tx data.TransactionWithFeeHandler) uint64 {
 				return 6
 			},
 		},
 		&testscommon.TxTypeHandlerMock{},
-		&epochNotifier.EpochNotifierStub{},
-		0,
+		createEnableEpochsHandler(),
 	)
 
 	tx := transaction.Transaction{GasLimit: 7}
@@ -174,17 +208,16 @@ func TestComputeGasProvidedByTx_ShouldWorkWhenTxReceiverAddressIsASmartContractI
 	t.Parallel()
 
 	gc, _ := preprocess.NewGasComputation(
-		&mock.FeeHandlerStub{
+		&economicsmocks.EconomicsHandlerStub{
 			ComputeGasLimitCalled: func(tx data.TransactionWithFeeHandler) uint64 {
 				return 6
 			},
 		},
 		&testscommon.TxTypeHandlerMock{
-			ComputeTransactionTypeCalled: func(tx data.TransactionHandler) (process.TransactionType, process.TransactionType) {
-				return process.SCInvoking, process.SCInvoking
+			ComputeTransactionTypeCalled: func(tx data.TransactionHandler) (process.TransactionType, process.TransactionType, bool) {
+				return process.SCInvoking, process.SCInvoking, false
 			}},
-		&epochNotifier.EpochNotifierStub{},
-		0,
+		createEnableEpochsHandler(),
 	)
 
 	tx := transaction.Transaction{GasLimit: 7, RcvAddr: make([]byte, core.NumInitCharactersForScAddress+1)}
@@ -198,17 +231,16 @@ func TestComputeGasProvidedByTx_ShouldWorkWhenTxReceiverAddressIsASmartContractC
 	t.Parallel()
 
 	gc, _ := preprocess.NewGasComputation(
-		&mock.FeeHandlerStub{
+		&economicsmocks.EconomicsHandlerStub{
 			ComputeGasLimitCalled: func(tx data.TransactionWithFeeHandler) uint64 {
 				return 6
 			},
 		},
 		&testscommon.TxTypeHandlerMock{
-			ComputeTransactionTypeCalled: func(tx data.TransactionHandler) (process.TransactionType, process.TransactionType) {
-				return process.MoveBalance, process.SCInvoking
+			ComputeTransactionTypeCalled: func(tx data.TransactionHandler) (process.TransactionType, process.TransactionType, bool) {
+				return process.MoveBalance, process.SCInvoking, false
 			}},
-		&epochNotifier.EpochNotifierStub{},
-		0,
+		createEnableEpochsHandler(),
 	)
 
 	tx := transaction.Transaction{GasLimit: 7, RcvAddr: make([]byte, core.NumInitCharactersForScAddress+1)}
@@ -222,17 +254,16 @@ func TestComputeGasProvidedByTx_ShouldReturnZeroIf0GasLimit(t *testing.T) {
 	t.Parallel()
 
 	gc, _ := preprocess.NewGasComputation(
-		&mock.FeeHandlerStub{
+		&economicsmocks.EconomicsHandlerStub{
 			ComputeGasLimitCalled: func(tx data.TransactionWithFeeHandler) uint64 {
 				return 6
 			},
 		},
 		&testscommon.TxTypeHandlerMock{
-			ComputeTransactionTypeCalled: func(tx data.TransactionHandler) (process.TransactionType, process.TransactionType) {
-				return process.MoveBalance, process.SCInvoking
+			ComputeTransactionTypeCalled: func(tx data.TransactionHandler) (process.TransactionType, process.TransactionType, bool) {
+				return process.MoveBalance, process.SCInvoking, false
 			}},
-		&epochNotifier.EpochNotifierStub{},
-		0,
+		createEnableEpochsHandler(),
 	)
 
 	scr := smartContractResult.SmartContractResult{GasLimit: 0, RcvAddr: make([]byte, core.NumInitCharactersForScAddress+1)}
@@ -246,17 +277,16 @@ func TestComputeGasProvidedByTx_ShouldReturnGasLimitIfLessThanMoveBalance(t *tes
 	t.Parallel()
 
 	gc, _ := preprocess.NewGasComputation(
-		&mock.FeeHandlerStub{
+		&economicsmocks.EconomicsHandlerStub{
 			ComputeGasLimitCalled: func(tx data.TransactionWithFeeHandler) uint64 {
 				return 6
 			},
 		},
 		&testscommon.TxTypeHandlerMock{
-			ComputeTransactionTypeCalled: func(tx data.TransactionHandler) (process.TransactionType, process.TransactionType) {
-				return process.MoveBalance, process.SCInvoking
+			ComputeTransactionTypeCalled: func(tx data.TransactionHandler) (process.TransactionType, process.TransactionType, bool) {
+				return process.MoveBalance, process.SCInvoking, false
 			}},
-		&epochNotifier.EpochNotifierStub{},
-		0,
+		createEnableEpochsHandler(),
 	)
 
 	scr := smartContractResult.SmartContractResult{GasLimit: 3, RcvAddr: make([]byte, core.NumInitCharactersForScAddress+1)}
@@ -270,17 +300,16 @@ func TestComputeGasProvidedByTx_ShouldReturnGasLimitWhenRelayed(t *testing.T) {
 	t.Parallel()
 
 	gc, _ := preprocess.NewGasComputation(
-		&mock.FeeHandlerStub{
+		&economicsmocks.EconomicsHandlerStub{
 			ComputeGasLimitCalled: func(tx data.TransactionWithFeeHandler) uint64 {
 				return 0
 			},
 		},
 		&testscommon.TxTypeHandlerMock{
-			ComputeTransactionTypeCalled: func(tx data.TransactionHandler) (process.TransactionType, process.TransactionType) {
-				return process.RelayedTx, process.RelayedTx
+			ComputeTransactionTypeCalled: func(tx data.TransactionHandler) (process.TransactionType, process.TransactionType, bool) {
+				return process.RelayedTx, process.RelayedTx, false
 			}},
-		&epochNotifier.EpochNotifierStub{},
-		0,
+		createEnableEpochsHandler(),
 	)
 
 	scr := smartContractResult.SmartContractResult{GasLimit: 3, RcvAddr: make([]byte, core.NumInitCharactersForScAddress+1)}
@@ -294,17 +323,16 @@ func TestComputeGasProvidedByTx_ShouldReturnGasLimitWhenRelayedV2(t *testing.T) 
 	t.Parallel()
 
 	gc, _ := preprocess.NewGasComputation(
-		&mock.FeeHandlerStub{
+		&economicsmocks.EconomicsHandlerStub{
 			ComputeGasLimitCalled: func(tx data.TransactionWithFeeHandler) uint64 {
 				return 0
 			},
 		},
 		&testscommon.TxTypeHandlerMock{
-			ComputeTransactionTypeCalled: func(tx data.TransactionHandler) (process.TransactionType, process.TransactionType) {
-				return process.RelayedTxV2, process.RelayedTxV2
+			ComputeTransactionTypeCalled: func(tx data.TransactionHandler) (process.TransactionType, process.TransactionType, bool) {
+				return process.RelayedTxV2, process.RelayedTxV2, false
 			}},
-		&epochNotifier.EpochNotifierStub{},
-		0,
+		createEnableEpochsHandler(),
 	)
 
 	scr := smartContractResult.SmartContractResult{GasLimit: 3, RcvAddr: make([]byte, core.NumInitCharactersForScAddress+1)}
@@ -318,14 +346,13 @@ func TestComputeGasProvidedByMiniBlock_ShouldErrMissingTransaction(t *testing.T)
 	t.Parallel()
 
 	gc, _ := preprocess.NewGasComputation(
-		&mock.FeeHandlerStub{
+		&economicsmocks.EconomicsHandlerStub{
 			ComputeGasLimitCalled: func(tx data.TransactionWithFeeHandler) uint64 {
 				return 6
 			},
 		},
 		&testscommon.TxTypeHandlerMock{},
-		&epochNotifier.EpochNotifierStub{},
-		0,
+		createEnableEpochsHandler(),
 	)
 
 	txHashes := make([][]byte, 0)
@@ -348,14 +375,13 @@ func TestComputeGasProvidedByMiniBlock_ShouldReturnZeroWhenOneTxIsMissing(t *tes
 	t.Parallel()
 
 	gc, _ := preprocess.NewGasComputation(
-		&mock.FeeHandlerStub{
+		&economicsmocks.EconomicsHandlerStub{
 			ComputeGasLimitCalled: func(tx data.TransactionWithFeeHandler) uint64 {
 				return 6
 			},
 		},
 		&testscommon.TxTypeHandlerMock{},
-		&epochNotifier.EpochNotifierStub{},
-		0,
+		createEnableEpochsHandler(),
 	)
 
 	txHashes := make([][]byte, 0)
@@ -381,20 +407,19 @@ func TestComputeGasProvidedByMiniBlock_ShouldWork(t *testing.T) {
 	t.Parallel()
 
 	gc, _ := preprocess.NewGasComputation(
-		&mock.FeeHandlerStub{
+		&economicsmocks.EconomicsHandlerStub{
 			ComputeGasLimitCalled: func(tx data.TransactionWithFeeHandler) uint64 {
 				return 6
 			},
 		},
 		&testscommon.TxTypeHandlerMock{
-			ComputeTransactionTypeCalled: func(tx data.TransactionHandler) (process.TransactionType, process.TransactionType) {
+			ComputeTransactionTypeCalled: func(tx data.TransactionHandler) (process.TransactionType, process.TransactionType, bool) {
 				if core.IsSmartContractAddress(tx.GetRcvAddr()) {
-					return process.MoveBalance, process.SCInvoking
+					return process.MoveBalance, process.SCInvoking, false
 				}
-				return process.MoveBalance, process.MoveBalance
+				return process.MoveBalance, process.MoveBalance, false
 			}},
-		&epochNotifier.EpochNotifierStub{},
-		0,
+		createEnableEpochsHandler(),
 	)
 
 	txHashes := make([][]byte, 0)
@@ -422,20 +447,19 @@ func TestComputeGasProvidedByMiniBlock_ShouldWorkV1(t *testing.T) {
 	t.Parallel()
 
 	gc, _ := preprocess.NewGasComputation(
-		&mock.FeeHandlerStub{
+		&economicsmocks.EconomicsHandlerStub{
 			ComputeGasLimitCalled: func(tx data.TransactionWithFeeHandler) uint64 {
 				return 6
 			},
 		},
 		&testscommon.TxTypeHandlerMock{
-			ComputeTransactionTypeCalled: func(tx data.TransactionHandler) (process.TransactionType, process.TransactionType) {
+			ComputeTransactionTypeCalled: func(tx data.TransactionHandler) (process.TransactionType, process.TransactionType, bool) {
 				if core.IsSmartContractAddress(tx.GetRcvAddr()) {
-					return process.SCInvoking, process.SCInvoking
+					return process.SCInvoking, process.SCInvoking, false
 				}
-				return process.MoveBalance, process.MoveBalance
+				return process.MoveBalance, process.MoveBalance, false
 			}},
-		&epochNotifier.EpochNotifierStub{},
-		10,
+		enableEpochsHandlerMock.NewEnableEpochsHandlerStub(),
 	)
 
 	txHashes := make([][]byte, 0)
@@ -463,14 +487,13 @@ func TestComputeGasProvidedByTx_ShouldWorkWhenTxReceiverAddressIsNotASmartContra
 	t.Parallel()
 
 	gc, _ := preprocess.NewGasComputation(
-		&mock.FeeHandlerStub{
+		&economicsmocks.EconomicsHandlerStub{
 			ComputeGasLimitCalled: func(tx data.TransactionWithFeeHandler) uint64 {
 				return 6
 			},
 		},
 		&testscommon.TxTypeHandlerMock{},
-		&epochNotifier.EpochNotifierStub{},
-		10,
+		createEnableEpochsHandler(),
 	)
 
 	tx := transaction.Transaction{GasLimit: 7}
@@ -484,17 +507,16 @@ func TestComputeGasProvidedByTx_ShouldWorkWhenTxReceiverAddressIsASmartContractI
 	t.Parallel()
 
 	gc, _ := preprocess.NewGasComputation(
-		&mock.FeeHandlerStub{
+		&economicsmocks.EconomicsHandlerStub{
 			ComputeGasLimitCalled: func(tx data.TransactionWithFeeHandler) uint64 {
 				return 6
 			},
 		},
 		&testscommon.TxTypeHandlerMock{
-			ComputeTransactionTypeCalled: func(tx data.TransactionHandler) (process.TransactionType, process.TransactionType) {
-				return process.SCInvoking, process.SCInvoking
+			ComputeTransactionTypeCalled: func(tx data.TransactionHandler) (process.TransactionType, process.TransactionType, bool) {
+				return process.SCInvoking, process.SCInvoking, false
 			}},
-		&epochNotifier.EpochNotifierStub{},
-		10,
+		createEnableEpochsHandler(),
 	)
 
 	tx := transaction.Transaction{GasLimit: 7, RcvAddr: make([]byte, core.NumInitCharactersForScAddress+1)}
@@ -508,17 +530,16 @@ func TestComputeGasProvidedByTx_ShouldWorkWhenTxReceiverAddressIsASmartContractC
 	t.Parallel()
 
 	gc, _ := preprocess.NewGasComputation(
-		&mock.FeeHandlerStub{
+		&economicsmocks.EconomicsHandlerStub{
 			ComputeGasLimitCalled: func(tx data.TransactionWithFeeHandler) uint64 {
 				return 6
 			},
 		},
 		&testscommon.TxTypeHandlerMock{
-			ComputeTransactionTypeCalled: func(tx data.TransactionHandler) (process.TransactionType, process.TransactionType) {
-				return process.SCInvoking, process.SCInvoking
+			ComputeTransactionTypeCalled: func(tx data.TransactionHandler) (process.TransactionType, process.TransactionType, bool) {
+				return process.SCInvoking, process.SCInvoking, false
 			}},
-		&epochNotifier.EpochNotifierStub{},
-		10,
+		enableEpochsHandlerMock.NewEnableEpochsHandlerStub(),
 	)
 
 	tx := transaction.Transaction{GasLimit: 7, RcvAddr: make([]byte, core.NumInitCharactersForScAddress+1)}
@@ -532,45 +553,46 @@ func TestReset_ShouldWork(t *testing.T) {
 	t.Parallel()
 
 	gc, _ := preprocess.NewGasComputation(
-		&mock.FeeHandlerStub{},
+		&economicsmocks.EconomicsHandlerStub{},
 		&testscommon.TxTypeHandlerMock{},
-		&epochNotifier.EpochNotifierStub{},
-		0,
+		createEnableEpochsHandler(),
 	)
+
+	key := []byte("key")
+	gc.Reset(key)
 
 	gc.SetGasProvided(5, []byte("hash1"))
 	gc.SetGasProvidedAsScheduled(7, []byte("hash2"))
 	gc.SetGasRefunded(2, []byte("hash1"))
 	gc.SetGasPenalized(1, []byte("hash2"))
 
-	require.Equal(t, 1, len(gc.GetTxHashesWithGasProvidedSinceLastReset()))
-	assert.Equal(t, []byte("hash1"), gc.GetTxHashesWithGasProvidedSinceLastReset()[0])
+	require.Equal(t, 1, len(gc.GetTxHashesWithGasProvidedSinceLastReset(key)))
+	assert.Equal(t, []byte("hash1"), gc.GetTxHashesWithGasProvidedSinceLastReset(key)[0])
 
-	require.Equal(t, 1, len(gc.GetTxHashesWithGasProvidedAsScheduledSinceLastReset()))
-	assert.Equal(t, []byte("hash2"), gc.GetTxHashesWithGasProvidedAsScheduledSinceLastReset()[0])
+	require.Equal(t, 1, len(gc.GetTxHashesWithGasProvidedAsScheduledSinceLastReset(key)))
+	assert.Equal(t, []byte("hash2"), gc.GetTxHashesWithGasProvidedAsScheduledSinceLastReset(key)[0])
 
-	require.Equal(t, 1, len(gc.GetTxHashesWithGasRefundedSinceLastReset()))
-	assert.Equal(t, []byte("hash1"), gc.GetTxHashesWithGasRefundedSinceLastReset()[0])
+	require.Equal(t, 1, len(gc.GetTxHashesWithGasRefundedSinceLastReset(key)))
+	assert.Equal(t, []byte("hash1"), gc.GetTxHashesWithGasRefundedSinceLastReset(key)[0])
 
-	require.Equal(t, 1, len(gc.GetTxHashesWithGasPenalizedSinceLastReset()))
-	assert.Equal(t, []byte("hash2"), gc.GetTxHashesWithGasPenalizedSinceLastReset()[0])
+	require.Equal(t, 1, len(gc.GetTxHashesWithGasPenalizedSinceLastReset(key)))
+	assert.Equal(t, []byte("hash2"), gc.GetTxHashesWithGasPenalizedSinceLastReset(key)[0])
 
-	gc.Reset()
+	gc.Reset(key)
 
-	require.Equal(t, 0, len(gc.GetTxHashesWithGasProvidedSinceLastReset()))
-	require.Equal(t, 0, len(gc.GetTxHashesWithGasProvidedAsScheduledSinceLastReset()))
-	require.Equal(t, 0, len(gc.GetTxHashesWithGasRefundedSinceLastReset()))
-	require.Equal(t, 0, len(gc.GetTxHashesWithGasPenalizedSinceLastReset()))
+	require.Equal(t, 0, len(gc.GetTxHashesWithGasProvidedSinceLastReset(key)))
+	require.Equal(t, 0, len(gc.GetTxHashesWithGasProvidedAsScheduledSinceLastReset(key)))
+	require.Equal(t, 0, len(gc.GetTxHashesWithGasRefundedSinceLastReset(key)))
+	require.Equal(t, 0, len(gc.GetTxHashesWithGasPenalizedSinceLastReset(key)))
 }
 
 func TestRestoreGasSinceLastReset_ShouldWork(t *testing.T) {
 	t.Parallel()
 
 	gc, _ := preprocess.NewGasComputation(
-		&mock.FeeHandlerStub{},
+		&economicsmocks.EconomicsHandlerStub{},
 		&testscommon.TxTypeHandlerMock{},
-		&epochNotifier.EpochNotifierStub{},
-		0,
+		createEnableEpochsHandler(),
 	)
 
 	gc.SetGasProvided(5, []byte("hash1"))
@@ -583,7 +605,7 @@ func TestRestoreGasSinceLastReset_ShouldWork(t *testing.T) {
 	assert.Equal(t, uint64(2), gc.TotalGasRefunded())
 	assert.Equal(t, uint64(1), gc.TotalGasPenalized())
 
-	gc.Reset()
+	gc.Reset([]byte("key"))
 
 	gc.SetGasProvided(5, []byte("hash3"))
 	gc.SetGasProvidedAsScheduled(7, []byte("hash4"))
@@ -595,7 +617,7 @@ func TestRestoreGasSinceLastReset_ShouldWork(t *testing.T) {
 	assert.Equal(t, uint64(4), gc.TotalGasRefunded())
 	assert.Equal(t, uint64(2), gc.TotalGasPenalized())
 
-	gc.RestoreGasSinceLastReset()
+	gc.RestoreGasSinceLastReset([]byte("key"))
 
 	assert.Equal(t, uint64(5), gc.TotalGasProvided())
 	assert.Equal(t, uint64(7), gc.TotalGasProvidedAsScheduled())

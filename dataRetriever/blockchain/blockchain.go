@@ -1,10 +1,10 @@
 package blockchain
 
 import (
-	"github.com/ElrondNetwork/elrond-go-core/core"
-	"github.com/ElrondNetwork/elrond-go-core/core/check"
-	"github.com/ElrondNetwork/elrond-go-core/data"
-	"github.com/ElrondNetwork/elrond-go/common"
+	"github.com/multiversx/mx-chain-core-go/core"
+	"github.com/multiversx/mx-chain-core-go/core/check"
+	"github.com/multiversx/mx-chain-core-go/data"
+	"github.com/multiversx/mx-chain-go/common"
 )
 
 var _ data.ChainHandler = (*blockChain)(nil)
@@ -25,6 +25,7 @@ func NewBlockChain(appStatusHandler core.AppStatusHandler) (*blockChain, error) 
 	return &blockChain{
 		baseBlockChain: &baseBlockChain{
 			appStatusHandler: appStatusHandler,
+			finalBlockInfo:   &blockInfo{},
 		},
 	}, nil
 }
@@ -68,6 +69,7 @@ func (bc *blockChain) SetCurrentBlockHeaderAndRootHash(header data.HeaderHandler
 
 	bc.appStatusHandler.SetUInt64Value(common.MetricNonce, h.GetNonce())
 	bc.appStatusHandler.SetUInt64Value(common.MetricSynchronizedRound, h.GetRound())
+	bc.appStatusHandler.SetUInt64Value(common.MetricBlockTimestamp, h.GetTimeStamp())
 
 	bc.mut.Lock()
 	bc.currentBlockHeader = h.ShallowClone()

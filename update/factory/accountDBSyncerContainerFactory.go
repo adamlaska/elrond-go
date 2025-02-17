@@ -3,19 +3,21 @@ package factory
 import (
 	"time"
 
-	"github.com/ElrondNetwork/elrond-go-core/core"
-	"github.com/ElrondNetwork/elrond-go-core/core/check"
-	"github.com/ElrondNetwork/elrond-go-core/core/throttler"
-	"github.com/ElrondNetwork/elrond-go-core/hashing"
-	"github.com/ElrondNetwork/elrond-go-core/marshal"
-	"github.com/ElrondNetwork/elrond-go/common"
-	"github.com/ElrondNetwork/elrond-go/sharding"
-	"github.com/ElrondNetwork/elrond-go/state/syncer"
-	"github.com/ElrondNetwork/elrond-go/storage"
-	"github.com/ElrondNetwork/elrond-go/trie"
-	"github.com/ElrondNetwork/elrond-go/update"
-	containers "github.com/ElrondNetwork/elrond-go/update/container"
-	"github.com/ElrondNetwork/elrond-go/update/genesis"
+	"github.com/multiversx/mx-chain-core-go/core"
+	"github.com/multiversx/mx-chain-core-go/core/check"
+	"github.com/multiversx/mx-chain-core-go/core/throttler"
+	"github.com/multiversx/mx-chain-core-go/hashing"
+	"github.com/multiversx/mx-chain-core-go/marshal"
+	"github.com/multiversx/mx-chain-go/common"
+	"github.com/multiversx/mx-chain-go/common/disabled"
+	"github.com/multiversx/mx-chain-go/sharding"
+	"github.com/multiversx/mx-chain-go/state/syncer"
+	"github.com/multiversx/mx-chain-go/storage"
+	"github.com/multiversx/mx-chain-go/trie"
+	"github.com/multiversx/mx-chain-go/trie/statistics"
+	"github.com/multiversx/mx-chain-go/update"
+	containers "github.com/multiversx/mx-chain-go/update/container"
+	"github.com/multiversx/mx-chain-go/update/genesis"
 )
 
 // ArgsNewAccountsDBSyncersContainerFactory defines the arguments needed to create accounts DB syncers container
@@ -31,7 +33,9 @@ type ArgsNewAccountsDBSyncersContainerFactory struct {
 	NumConcurrentTrieSyncers  int
 	MaxHardCapForMissingNodes int
 	TrieSyncerVersion         int
+	CheckNodesOnDisk          bool
 	AddressPubKeyConverter    core.PubkeyConverter
+	EnableEpochsHandler       common.EnableEpochsHandler
 }
 
 type accountDBSyncersContainerFactory struct {
@@ -47,7 +51,9 @@ type accountDBSyncersContainerFactory struct {
 	numConcurrentTrieSyncers  int
 	maxHardCapForMissingNodes int
 	trieSyncerVersion         int
+	checkNodesOnDisk          bool
 	addressPubKeyConverter    core.PubkeyConverter
+	enableEpochsHandler       common.EnableEpochsHandler
 }
 
 // NewAccountsDBSContainerFactory creates a factory for trie syncers container
@@ -83,6 +89,9 @@ func NewAccountsDBSContainerFactory(args ArgsNewAccountsDBSyncersContainerFactor
 	if check.IfNil(args.AddressPubKeyConverter) {
 		return nil, update.ErrNilPubKeyConverter
 	}
+	if check.IfNil(args.EnableEpochsHandler) {
+		return nil, update.ErrNilEnableEpochsHandler
+	}
 
 	t := &accountDBSyncersContainerFactory{
 		shardCoordinator:          args.ShardCoordinator,
@@ -96,7 +105,9 @@ func NewAccountsDBSContainerFactory(args ArgsNewAccountsDBSyncersContainerFactor
 		numConcurrentTrieSyncers:  args.NumConcurrentTrieSyncers,
 		maxHardCapForMissingNodes: args.MaxHardCapForMissingNodes,
 		trieSyncerVersion:         args.TrieSyncerVersion,
+		checkNodesOnDisk:          args.CheckNodesOnDisk,
 		addressPubKeyConverter:    args.AddressPubKeyConverter,
+		enableEpochsHandler:       args.EnableEpochsHandler,
 	}
 
 	return t, nil
@@ -134,15 +145,19 @@ func (a *accountDBSyncersContainerFactory) createUserAccountsSyncer(shardId uint
 
 	args := syncer.ArgsNewUserAccountsSyncer{
 		ArgsNewBaseAccountsSyncer: syncer.ArgsNewBaseAccountsSyncer{
-			Hasher:                    a.hasher,
-			Marshalizer:               a.marshalizer,
-			TrieStorageManager:        a.trieStorageManager,
-			RequestHandler:            a.requestHandler,
-			Timeout:                   a.timeoutGettingTrieNode,
-			Cacher:                    a.trieCacher,
-			MaxTrieLevelInMemory:      a.maxTrieLevelinMemory,
-			MaxHardCapForMissingNodes: a.maxHardCapForMissingNodes,
-			TrieSyncerVersion:         a.trieSyncerVersion,
+			Hasher:                            a.hasher,
+			Marshalizer:                       a.marshalizer,
+			TrieStorageManager:                a.trieStorageManager,
+			RequestHandler:                    a.requestHandler,
+			Timeout:                           a.timeoutGettingTrieNode,
+			Cacher:                            a.trieCacher,
+			MaxTrieLevelInMemory:              a.maxTrieLevelinMemory,
+			MaxHardCapForMissingNodes:         a.maxHardCapForMissingNodes,
+			TrieSyncerVersion:                 a.trieSyncerVersion,
+			CheckNodesOnDisk:                  a.checkNodesOnDisk,
+			UserAccountsSyncStatisticsHandler: statistics.NewTrieSyncStatistics(),
+			AppStatusHandler:                  disabled.NewAppStatusHandler(),
+			EnableEpochsHandler:               a.enableEpochsHandler,
 		},
 		ShardId:                shardId,
 		Throttler:              thr,
@@ -160,15 +175,19 @@ func (a *accountDBSyncersContainerFactory) createUserAccountsSyncer(shardId uint
 func (a *accountDBSyncersContainerFactory) createValidatorAccountsSyncer(shardId uint32) error {
 	args := syncer.ArgsNewValidatorAccountsSyncer{
 		ArgsNewBaseAccountsSyncer: syncer.ArgsNewBaseAccountsSyncer{
-			Hasher:                    a.hasher,
-			Marshalizer:               a.marshalizer,
-			TrieStorageManager:        a.trieStorageManager,
-			RequestHandler:            a.requestHandler,
-			Timeout:                   a.timeoutGettingTrieNode,
-			Cacher:                    a.trieCacher,
-			MaxTrieLevelInMemory:      a.maxTrieLevelinMemory,
-			MaxHardCapForMissingNodes: a.maxHardCapForMissingNodes,
-			TrieSyncerVersion:         a.trieSyncerVersion,
+			Hasher:                            a.hasher,
+			Marshalizer:                       a.marshalizer,
+			TrieStorageManager:                a.trieStorageManager,
+			RequestHandler:                    a.requestHandler,
+			Timeout:                           a.timeoutGettingTrieNode,
+			Cacher:                            a.trieCacher,
+			MaxTrieLevelInMemory:              a.maxTrieLevelinMemory,
+			MaxHardCapForMissingNodes:         a.maxHardCapForMissingNodes,
+			TrieSyncerVersion:                 a.trieSyncerVersion,
+			CheckNodesOnDisk:                  a.checkNodesOnDisk,
+			UserAccountsSyncStatisticsHandler: statistics.NewTrieSyncStatistics(),
+			AppStatusHandler:                  disabled.NewAppStatusHandler(),
+			EnableEpochsHandler:               a.enableEpochsHandler,
 		},
 	}
 	accountSyncer, err := syncer.NewValidatorAccountsSyncer(args)

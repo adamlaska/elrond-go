@@ -6,14 +6,15 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"math"
 	"sync"
 
-	"github.com/ElrondNetwork/elrond-go-core/core"
-	"github.com/ElrondNetwork/elrond-go-core/core/check"
-	"github.com/ElrondNetwork/elrond-go-core/hashing"
-	"github.com/ElrondNetwork/elrond-go-core/marshal"
-	"github.com/ElrondNetwork/elrond-go/common"
-	"github.com/ElrondNetwork/elrond-go/errors"
+	"github.com/multiversx/mx-chain-core-go/core"
+	"github.com/multiversx/mx-chain-core-go/core/check"
+	"github.com/multiversx/mx-chain-core-go/hashing"
+	"github.com/multiversx/mx-chain-core-go/marshal"
+	"github.com/multiversx/mx-chain-go/common"
+	vmcommon "github.com/multiversx/mx-chain-vm-common-go"
 )
 
 var _ = node(&extensionNode{})
@@ -25,11 +26,20 @@ func newExtensionNode(key []byte, child node, marshalizer marshal.Marshalizer, h
 	if check.IfNil(hasher) {
 		return nil, ErrNilHasher
 	}
+	if check.IfNil(child) {
+		return nil, ErrNilNode
+	}
+
+	childVersion, err := child.getVersion()
+	if err != nil {
+		return nil, err
+	}
 
 	return &extensionNode{
 		CollapsedEn: CollapsedEn{
 			Key:          key,
 			EncodedChild: nil,
+			ChildVersion: uint32(childVersion),
 		},
 		child: child,
 		baseNode: &baseNode{
@@ -162,7 +172,7 @@ func (en *extensionNode) hashNode() ([]byte, error) {
 	return encodeNodeAndGetHash(en)
 }
 
-func (en *extensionNode) commitDirty(level byte, maxTrieLevelInMemory uint, originDb common.DBWriteCacher, targetDb common.DBWriteCacher) error {
+func (en *extensionNode) commitDirty(level byte, maxTrieLevelInMemory uint, originDb common.TrieStorageInteractor, targetDb common.BaseStorer) error {
 	level++
 	err := en.isEmptyOrNil()
 	if err != nil {
@@ -199,57 +209,17 @@ func (en *extensionNode) commitDirty(level byte, maxTrieLevelInMemory uint, orig
 	return nil
 }
 
-func (en *extensionNode) commitCheckpoint(
-	originDb common.DBWriteCacher,
-	targetDb common.DBWriteCacher,
-	checkpointHashes CheckpointHashesHolder,
-	leavesChan chan core.KeyValueHolder,
-	ctx context.Context,
-	stats common.SnapshotStatisticsHandler,
-	idleProvider IdleNodeProvider,
-) error {
-	if shouldStopIfContextDone(ctx, idleProvider) {
-		return errors.ErrContextClosing
-	}
-
-	err := en.isEmptyOrNil()
-	if err != nil {
-		return fmt.Errorf("commit checkpoint error %w", err)
-	}
-
-	err = resolveIfCollapsed(en, 0, originDb)
-	if err != nil {
-		return err
-	}
-
-	hash, err := computeAndSetNodeHash(en)
-	if err != nil {
-		return err
-	}
-
-	shouldCommit := checkpointHashes.ShouldCommit(hash)
-	if !shouldCommit {
-		return nil
-	}
-
-	err = en.child.commitCheckpoint(originDb, targetDb, checkpointHashes, leavesChan, ctx, stats, idleProvider)
-	if err != nil {
-		return err
-	}
-
-	checkpointHashes.Remove(hash)
-	return en.saveToStorage(targetDb, stats)
-}
-
 func (en *extensionNode) commitSnapshot(
-	db common.DBWriteCacher,
+	db common.TrieStorageInteractor,
 	leavesChan chan core.KeyValueHolder,
+	missingNodesChan chan []byte,
 	ctx context.Context,
-	stats common.SnapshotStatisticsHandler,
+	stats common.TrieStatisticsHandler,
 	idleProvider IdleNodeProvider,
+	depthLevel int,
 ) error {
-	if shouldStopIfContextDone(ctx, idleProvider) {
-		return errors.ErrContextClosing
+	if shouldStopIfContextDoneBlockingIfBusy(ctx, idleProvider) {
+		return core.ErrContextClosing
 	}
 
 	err := en.isEmptyOrNil()
@@ -258,25 +228,28 @@ func (en *extensionNode) commitSnapshot(
 	}
 
 	err = resolveIfCollapsed(en, 0, db)
+	childIsMissing, err := treatCommitSnapshotError(err, en.EncodedChild, missingNodesChan)
 	if err != nil {
 		return err
 	}
 
-	err = en.child.commitSnapshot(db, leavesChan, ctx, stats, idleProvider)
-	if err != nil {
-		return err
+	if !childIsMissing {
+		err = en.child.commitSnapshot(db, leavesChan, missingNodesChan, ctx, stats, idleProvider, depthLevel+1)
+		if err != nil {
+			return err
+		}
 	}
 
-	return en.saveToStorage(db, stats)
+	return en.saveToStorage(db, stats, depthLevel)
 }
 
-func (en *extensionNode) saveToStorage(targetDb common.DBWriteCacher, stats common.SnapshotStatisticsHandler) error {
+func (en *extensionNode) saveToStorage(targetDb common.BaseStorer, stats common.TrieStatisticsHandler, depthLevel int) error {
 	nodeSize, err := encodeNodeAndCommitToDB(en, targetDb)
 	if err != nil {
 		return err
 	}
 
-	stats.AddSize(uint64(nodeSize))
+	stats.AddExtensionNode(depthLevel, uint64(nodeSize))
 
 	en.child = nil
 	return nil
@@ -295,7 +268,7 @@ func (en *extensionNode) getEncodedNode() ([]byte, error) {
 	return marshaledNode, nil
 }
 
-func (en *extensionNode) resolveCollapsed(_ byte, db common.DBWriteCacher) error {
+func (en *extensionNode) resolveCollapsed(_ byte, db common.TrieStorageInteractor) error {
 	err := en.isEmptyOrNil()
 	if err != nil {
 		return fmt.Errorf("resolveCollapsed error %w", err)
@@ -317,29 +290,29 @@ func (en *extensionNode) isPosCollapsed(_ int) bool {
 	return en.isCollapsed()
 }
 
-func (en *extensionNode) tryGet(key []byte, db common.DBWriteCacher) (value []byte, err error) {
+func (en *extensionNode) tryGet(key []byte, currentDepth uint32, db common.TrieStorageInteractor) (value []byte, maxDepth uint32, err error) {
 	err = en.isEmptyOrNil()
 	if err != nil {
-		return nil, fmt.Errorf("tryGet error %w", err)
+		return nil, currentDepth, fmt.Errorf("tryGet error %w", err)
 	}
 	keyTooShort := len(key) < len(en.Key)
 	if keyTooShort {
-		return nil, nil
+		return nil, currentDepth, nil
 	}
 	keysDontMatch := !bytes.Equal(en.Key, key[:len(en.Key)])
 	if keysDontMatch {
-		return nil, nil
+		return nil, currentDepth, nil
 	}
 	key = key[len(en.Key):]
 	err = resolveIfCollapsed(en, 0, db)
 	if err != nil {
-		return nil, err
+		return nil, currentDepth, err
 	}
 
-	return en.child.tryGet(key, db)
+	return en.child.tryGet(key, currentDepth+1, db)
 }
 
-func (en *extensionNode) getNext(key []byte, db common.DBWriteCacher) (node, []byte, error) {
+func (en *extensionNode) getNext(key []byte, db common.TrieStorageInteractor) (node, []byte, error) {
 	err := en.isEmptyOrNil()
 	if err != nil {
 		return nil, nil, fmt.Errorf("getNext error %w", err)
@@ -361,7 +334,7 @@ func (en *extensionNode) getNext(key []byte, db common.DBWriteCacher) (node, []b
 	return en.child, key, nil
 }
 
-func (en *extensionNode) insert(n *leafNode, db common.DBWriteCacher) (node, [][]byte, error) {
+func (en *extensionNode) insert(newData core.TrieData, db common.TrieStorageInteractor) (node, [][]byte, error) {
 	emptyHashes := make([][]byte, 0)
 	err := en.isEmptyOrNil()
 	if err != nil {
@@ -372,21 +345,21 @@ func (en *extensionNode) insert(n *leafNode, db common.DBWriteCacher) (node, [][
 		return nil, emptyHashes, err
 	}
 
-	keyMatchLen := prefixLen(n.Key, en.Key)
+	keyMatchLen := prefixLen(newData.Key, en.Key)
 
 	// If the whole key matches, keep this extension node as is
 	// and only update the value.
 	if keyMatchLen == len(en.Key) {
-		return en.insertInSameEn(n, keyMatchLen, db)
+		return en.insertInSameEn(newData, keyMatchLen, db)
 	}
 
 	// Otherwise branch out at the index where they differ.
-	return en.insertInNewBn(n, keyMatchLen)
+	return en.insertInNewBn(newData, keyMatchLen)
 }
 
-func (en *extensionNode) insertInSameEn(n *leafNode, keyMatchLen int, db common.DBWriteCacher) (node, [][]byte, error) {
-	n.Key = n.Key[keyMatchLen:]
-	newNode, oldHashes, err := en.child.insert(n, db)
+func (en *extensionNode) insertInSameEn(newData core.TrieData, keyMatchLen int, db common.TrieStorageInteractor) (node, [][]byte, error) {
+	newData.Key = newData.Key[keyMatchLen:]
+	newNode, oldHashes, err := en.child.insert(newData, db)
 	if check.IfNil(newNode) || err != nil {
 		return nil, [][]byte{}, err
 	}
@@ -403,7 +376,7 @@ func (en *extensionNode) insertInSameEn(n *leafNode, keyMatchLen int, db common.
 	return newEn, oldHashes, nil
 }
 
-func (en *extensionNode) insertInNewBn(n *leafNode, keyMatchLen int) (node, [][]byte, error) {
+func (en *extensionNode) insertInNewBn(newData core.TrieData, keyMatchLen int) (node, [][]byte, error) {
 	oldHash := make([][]byte, 0)
 	if !en.dirty {
 		oldHash = append(oldHash, en.hash)
@@ -415,23 +388,20 @@ func (en *extensionNode) insertInNewBn(n *leafNode, keyMatchLen int) (node, [][]
 	}
 
 	oldChildPos := en.Key[keyMatchLen]
-	newChildPos := n.Key[keyMatchLen]
+	newChildPos := newData.Key[keyMatchLen]
 	if childPosOutOfRange(oldChildPos) || childPosOutOfRange(newChildPos) {
 		return nil, [][]byte{}, ErrChildPosOutOfRange
 	}
 
-	followingExtensionNode, err := newExtensionNode(en.Key[keyMatchLen+1:], en.child, en.marsh, en.hasher)
+	err = en.insertOldChildInBn(bn, oldChildPos, keyMatchLen)
 	if err != nil {
 		return nil, [][]byte{}, err
 	}
 
-	if len(followingExtensionNode.Key) < 1 {
-		bn.children[oldChildPos] = en.child
-	} else {
-		bn.children[oldChildPos] = followingExtensionNode
+	err = en.insertNewChildInBn(bn, newData, newChildPos, keyMatchLen)
+	if err != nil {
+		return nil, [][]byte{}, err
 	}
-	n.Key = n.Key[keyMatchLen+1:]
-	bn.children[newChildPos] = n
 
 	if keyMatchLen == 0 {
 		return bn, oldHash, nil
@@ -445,7 +415,42 @@ func (en *extensionNode) insertInNewBn(n *leafNode, keyMatchLen int) (node, [][]
 	return newEn, oldHash, nil
 }
 
-func (en *extensionNode) delete(key []byte, db common.DBWriteCacher) (bool, node, [][]byte, error) {
+func (en *extensionNode) insertOldChildInBn(bn *branchNode, oldChildPos byte, keyMatchLen int) error {
+	keyReminder := en.Key[keyMatchLen+1:]
+	childVersion, err := en.child.getVersion()
+	if err != nil {
+		return err
+	}
+	bn.setVersionForChild(childVersion, oldChildPos)
+
+	if len(keyReminder) < 1 {
+		bn.children[oldChildPos] = en.child
+		return nil
+	}
+
+	followingExtensionNode, err := newExtensionNode(en.Key[keyMatchLen+1:], en.child, en.marsh, en.hasher)
+	if err != nil {
+		return err
+	}
+
+	bn.children[oldChildPos] = followingExtensionNode
+	return nil
+}
+
+func (en *extensionNode) insertNewChildInBn(bn *branchNode, newData core.TrieData, newChildPos byte, keyMatchLen int) error {
+	newData.Key = newData.Key[keyMatchLen+1:]
+
+	newLeaf, err := newLeafNode(newData, en.marsh, en.hasher)
+	if err != nil {
+		return err
+	}
+
+	bn.children[newChildPos] = newLeaf
+	bn.setVersionForChild(newData.Version, newChildPos)
+	return nil
+}
+
+func (en *extensionNode) delete(key []byte, db common.TrieStorageInteractor) (bool, node, [][]byte, error) {
 	emptyHashes := make([][]byte, 0)
 	err := en.isEmptyOrNil()
 	if err != nil {
@@ -472,29 +477,38 @@ func (en *extensionNode) delete(key []byte, db common.DBWriteCacher) (bool, node
 		oldHashes = append(oldHashes, en.hash)
 	}
 
-	var n node
 	switch newNode := newNode.(type) {
 	case *leafNode:
-		n, err = newLeafNode(concat(en.Key, newNode.Key...), newNode.Value, en.marsh, en.hasher)
+		newLeafData := core.TrieData{
+			Key:     concat(en.Key, newNode.Key...),
+			Value:   newNode.Value,
+			Version: core.TrieNodeVersion(newNode.Version),
+		}
+		n, err := newLeafNode(newLeafData, en.marsh, en.hasher)
 		if err != nil {
 			return false, nil, emptyHashes, err
 		}
 
 		return true, n, oldHashes, nil
 	case *extensionNode:
-		n, err = newExtensionNode(concat(en.Key, newNode.Key...), newNode.child, en.marsh, en.hasher)
+		n, err := newExtensionNode(concat(en.Key, newNode.Key...), newNode.child, en.marsh, en.hasher)
 		if err != nil {
 			return false, nil, emptyHashes, err
 		}
 
 		return true, n, oldHashes, nil
+	case *branchNode:
+		n, err := newExtensionNode(en.Key, newNode, en.marsh, en.hasher)
+		if err != nil {
+			return false, nil, emptyHashes, err
+		}
+
+		return true, n, oldHashes, nil
+	case nil:
+		log.Warn("nil child after deleting from extension node")
+		return true, nil, oldHashes, nil
 	default:
-		n, err = newExtensionNode(en.Key, newNode, en.marsh, en.hasher)
-		if err != nil {
-			return false, nil, emptyHashes, err
-		}
-
-		return true, n, oldHashes, nil
+		return false, nil, oldHashes, ErrInvalidNode
 	}
 }
 
@@ -524,7 +538,7 @@ func (en *extensionNode) isEmptyOrNil() error {
 	return nil
 }
 
-func (en *extensionNode) print(writer io.Writer, index int, db common.DBWriteCacher) {
+func (en *extensionNode) print(writer io.Writer, index int, db common.TrieStorageInteractor) {
 	if en == nil {
 		return
 	}
@@ -571,7 +585,7 @@ func (en *extensionNode) getDirtyHashes(hashes common.ModifiedHashes) error {
 	return nil
 }
 
-func (en *extensionNode) getChildren(db common.DBWriteCacher) ([]node, error) {
+func (en *extensionNode) getChildren(db common.TrieStorageInteractor) ([]node, error) {
 	err := en.isEmptyOrNil()
 	if err != nil {
 		return nil, fmt.Errorf("getChildren error %w", err)
@@ -587,18 +601,6 @@ func (en *extensionNode) getChildren(db common.DBWriteCacher) ([]node, error) {
 	nextNodes = append(nextNodes, en.child)
 
 	return nextNodes, nil
-}
-
-func (en *extensionNode) getNumNodes() common.NumNodesDTO {
-	if check.IfNil(en) {
-		return common.NumNodesDTO{}
-	}
-
-	childNumNodes := en.child.getNumNodes()
-	childNumNodes.Extensions++
-	childNumNodes.MaxLevel++
-
-	return childNumNodes
 }
 
 func (en *extensionNode) isValid() bool {
@@ -639,7 +641,9 @@ func (en *extensionNode) loadChildren(getNode func([]byte) (node, error)) ([][]b
 
 func (en *extensionNode) getAllLeavesOnChannel(
 	leavesChannel chan core.KeyValueHolder,
-	key []byte, db common.DBWriteCacher,
+	keyBuilder common.KeyBuilder,
+	trieLeafParser common.TrieLeafParser,
+	db common.TrieStorageInteractor,
 	marshalizer marshal.Marshalizer,
 	chanClose chan struct{},
 	ctx context.Context,
@@ -662,8 +666,8 @@ func (en *extensionNode) getAllLeavesOnChannel(
 			return err
 		}
 
-		childKey := append(key, en.Key...)
-		err = en.child.getAllLeavesOnChannel(leavesChannel, childKey, db, marshalizer, chanClose, ctx)
+		keyBuilder.BuildKey(en.Key)
+		err = en.child.getAllLeavesOnChannel(leavesChannel, keyBuilder.Clone(), trieLeafParser, db, marshalizer, chanClose, ctx)
 		if err != nil {
 			return err
 		}
@@ -674,7 +678,7 @@ func (en *extensionNode) getAllLeavesOnChannel(
 	return nil
 }
 
-func (en *extensionNode) getAllHashes(db common.DBWriteCacher) ([][]byte, error) {
+func (en *extensionNode) getAllHashes(db common.TrieStorageInteractor) ([][]byte, error) {
 	err := en.isEmptyOrNil()
 	if err != nil {
 		return nil, fmt.Errorf("getAllHashes error: %w", err)
@@ -720,6 +724,67 @@ func (en *extensionNode) sizeInBytes() int {
 
 func (en *extensionNode) getValue() []byte {
 	return []byte{}
+}
+
+func (en *extensionNode) collectStats(ts common.TrieStatisticsHandler, depthLevel int, db common.TrieStorageInteractor) error {
+	err := en.isEmptyOrNil()
+	if err != nil {
+		return fmt.Errorf("collectStats error %w", err)
+	}
+
+	err = resolveIfCollapsed(en, 0, db)
+	if err != nil {
+		return err
+	}
+
+	err = en.child.collectStats(ts, depthLevel+1, db)
+	if err != nil {
+		return err
+	}
+
+	val, err := collapseAndEncodeNode(en)
+	if err != nil {
+		return err
+	}
+
+	ts.AddExtensionNode(depthLevel, uint64(len(val)))
+	return nil
+}
+
+func (en *extensionNode) getVersion() (core.TrieNodeVersion, error) {
+	if en.ChildVersion > math.MaxUint8 {
+		log.Warn("invalid trie node version for extension node", "child version", en.ChildVersion, "max version", math.MaxUint8)
+		return core.NotSpecified, ErrInvalidNodeVersion
+	}
+
+	return core.TrieNodeVersion(en.ChildVersion), nil
+}
+
+func (en *extensionNode) collectLeavesForMigration(
+	migrationArgs vmcommon.ArgsMigrateDataTrieLeaves,
+	db common.TrieStorageInteractor,
+	keyBuilder common.KeyBuilder,
+) (bool, error) {
+	hasEnoughGasToContinueMigration := migrationArgs.TrieMigrator.ConsumeStorageLoadGas()
+	if !hasEnoughGasToContinueMigration {
+		return false, nil
+	}
+
+	shouldMigrateNode, err := shouldMigrateCurrentNode(en, migrationArgs)
+	if err != nil {
+		return false, err
+	}
+	if !shouldMigrateNode {
+		return true, nil
+	}
+
+	err = resolveIfCollapsed(en, 0, db)
+	if err != nil {
+		return false, err
+	}
+
+	keyBuilder.BuildKey(en.Key)
+	return en.child.collectLeavesForMigration(migrationArgs, db, keyBuilder.Clone())
 }
 
 // IsInterfaceNil returns true if there is no value under the interface

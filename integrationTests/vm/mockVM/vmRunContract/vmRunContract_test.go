@@ -7,11 +7,11 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/ElrondNetwork/elrond-go/config"
-	"github.com/ElrondNetwork/elrond-go/integrationTests/vm"
-	"github.com/ElrondNetwork/elrond-go/process"
-	"github.com/ElrondNetwork/elrond-go/process/factory"
-	"github.com/ElrondNetwork/elrond-go/state"
+	"github.com/multiversx/mx-chain-go/config"
+	"github.com/multiversx/mx-chain-go/integrationTests/vm"
+	"github.com/multiversx/mx-chain-go/process"
+	"github.com/multiversx/mx-chain-go/process/factory"
+	"github.com/multiversx/mx-chain-go/state"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -19,6 +19,10 @@ import (
 // TODO add integration and unit tests with generating and broadcasting transaction with empty recv address
 
 func TestRunSCWithoutTransferShouldRunSCCode(t *testing.T) {
+	if testing.Short() {
+		t.Skip("this is not a short test")
+	}
+
 	vmOpGas := uint64(1)
 	senderAddressBytes := []byte("12345678901234567890123456789012")
 	senderNonce := uint64(11)
@@ -89,6 +93,10 @@ func TestRunSCWithoutTransferShouldRunSCCode(t *testing.T) {
 }
 
 func TestRunSCWithTransferShouldRunSCCode(t *testing.T) {
+	if testing.Short() {
+		t.Skip("this is not a short test")
+	}
+
 	vmOpGas := uint64(1)
 	senderAddressBytes := []byte("12345678901234567890123456789012")
 	senderNonce := uint64(11)
@@ -160,6 +168,10 @@ func TestRunSCWithTransferShouldRunSCCode(t *testing.T) {
 }
 
 func TestRunWithTransferAndGasShouldRunSCCode(t *testing.T) {
+	if testing.Short() {
+		t.Skip("this is not a short test")
+	}
+
 	vmOpGas := uint64(1)
 	senderAddressBytes := []byte("12345678901234567890123456789012")
 	senderNonce := uint64(11)
@@ -231,6 +243,10 @@ func TestRunWithTransferAndGasShouldRunSCCode(t *testing.T) {
 }
 
 func TestRunWithTransferWithInsufficientGasShouldReturnErr(t *testing.T) {
+	if testing.Short() {
+		t.Skip("this is not a short test")
+	}
+
 	vmOpGas := uint64(1)
 	senderAddressBytes := []byte("12345678901234567890123456789012")
 	senderNonce := uint64(11)
@@ -298,7 +314,7 @@ func TestRunWithTransferWithInsufficientGasShouldReturnErr(t *testing.T) {
 		t,
 		destinationAddressBytes,
 		accnts,
-		// transfer did not happened
+		// transfer did not happen
 		big.NewInt(0),
 		scCode,
 		map[string]*big.Int{"a": expectedValueForVariable})

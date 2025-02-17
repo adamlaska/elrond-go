@@ -4,11 +4,14 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/ElrondNetwork/elrond-go-core/core"
-	"github.com/ElrondNetwork/elrond-go-core/marshal"
-	"github.com/ElrondNetwork/elrond-go/consensus"
-	"github.com/ElrondNetwork/elrond-go/process"
+	"github.com/multiversx/mx-chain-core-go/core"
+	"github.com/multiversx/mx-chain-core-go/marshal"
+	"github.com/multiversx/mx-chain-go/consensus"
+	"github.com/multiversx/mx-chain-go/process"
 )
+
+// RedundancySingleKeySteppedIn exposes the redundancySingleKeySteppedIn constant
+const RedundancySingleKeySteppedIn = redundancySingleKeySteppedIn
 
 type RoundConsensus struct {
 	*roundConsensus
@@ -171,6 +174,16 @@ func (wrk *Worker) SetConsensusStateChangedChannel(consensusStateChangedChannel 
 // CheckSelfState -
 func (wrk *Worker) CheckSelfState(cnsDta *consensus.Message) error {
 	return wrk.checkSelfState(cnsDta)
+}
+
+// SetRedundancyHandler -
+func (wrk *Worker) SetRedundancyHandler(redundancyHandler consensus.NodeRedundancyHandler) {
+	wrk.nodeRedundancyHandler = redundancyHandler
+}
+
+// SetKeysHandler -
+func (wrk *Worker) SetKeysHandler(keysHandler consensus.KeysHandler) {
+	wrk.consensusState.keysHandler = keysHandler
 }
 
 // EligibleList -

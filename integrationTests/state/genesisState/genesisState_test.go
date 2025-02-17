@@ -10,14 +10,14 @@ import (
 	"math/big"
 	"testing"
 
-	"github.com/ElrondNetwork/elrond-go/common"
-	"github.com/ElrondNetwork/elrond-go/genesis"
-	"github.com/ElrondNetwork/elrond-go/genesis/parsing"
-	"github.com/ElrondNetwork/elrond-go/integrationTests"
-	"github.com/ElrondNetwork/elrond-go/integrationTests/mock"
-	"github.com/ElrondNetwork/elrond-go/state"
-	"github.com/ElrondNetwork/elrond-go/testscommon"
-	"github.com/ElrondNetwork/elrond-go/testscommon/hashingMocks"
+	"github.com/multiversx/mx-chain-go/common"
+	"github.com/multiversx/mx-chain-go/genesis"
+	"github.com/multiversx/mx-chain-go/genesis/parsing"
+	"github.com/multiversx/mx-chain-go/integrationTests"
+	"github.com/multiversx/mx-chain-go/integrationTests/mock"
+	"github.com/multiversx/mx-chain-go/state"
+	"github.com/multiversx/mx-chain-go/testscommon/hashingMocks"
+	"github.com/multiversx/mx-chain-go/testscommon/marshallerMock"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -44,7 +44,7 @@ func TestCreationOfTheGenesisState(t *testing.T) {
 		PubkeyConverter: integrationTests.TestAddressPubkeyConverter,
 		KeyGenerator:    &mock.KeyGenMock{},
 		Hasher:          &hashingMocks.HasherMock{},
-		Marshalizer:     &testscommon.MarshalizerMock{},
+		Marshalizer:     &marshallerMock.MarshalizerMock{},
 	}
 
 	accountsParser, err := parsing.NewAccountsParser(args)
@@ -70,7 +70,9 @@ func TestCreationOfTheGenesisState(t *testing.T) {
 }
 
 func TestExtensionNodeToBranchEdgeCaseSet1(t *testing.T) {
-	t.Parallel()
+	if testing.Short() {
+		t.Skip("this is not a short test")
+	}
 
 	tr1 := integrationTests.CreateNewDefaultTrie()
 	tr2 := integrationTests.CreateNewDefaultTrie()
@@ -105,7 +107,9 @@ func TestExtensionNodeToBranchEdgeCaseSet1(t *testing.T) {
 }
 
 func TestExtensionNodeToBranchEdgeCaseSet2(t *testing.T) {
-	t.Parallel()
+	if testing.Short() {
+		t.Skip("this is not a short test")
+	}
 
 	tr1 := integrationTests.CreateNewDefaultTrie()
 	tr2 := integrationTests.CreateNewDefaultTrie()

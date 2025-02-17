@@ -4,15 +4,16 @@ import (
 	"bytes"
 	"sort"
 
-	"github.com/ElrondNetwork/elrond-go-core/core"
-	"github.com/ElrondNetwork/elrond-go-core/core/check"
-	"github.com/ElrondNetwork/elrond-go-core/data"
-	"github.com/ElrondNetwork/elrond-go-core/data/block"
-	"github.com/ElrondNetwork/elrond-go-core/hashing"
-	"github.com/ElrondNetwork/elrond-go-core/marshal"
-	"github.com/ElrondNetwork/elrond-go/dataRetriever"
-	"github.com/ElrondNetwork/elrond-go/process"
-	"github.com/ElrondNetwork/elrond-go/sharding"
+	"github.com/multiversx/mx-chain-core-go/core"
+	"github.com/multiversx/mx-chain-core-go/core/check"
+	"github.com/multiversx/mx-chain-core-go/data"
+	"github.com/multiversx/mx-chain-core-go/data/block"
+	"github.com/multiversx/mx-chain-core-go/hashing"
+	"github.com/multiversx/mx-chain-core-go/marshal"
+
+	"github.com/multiversx/mx-chain-go/dataRetriever"
+	"github.com/multiversx/mx-chain-go/process"
+	"github.com/multiversx/mx-chain-go/sharding"
 )
 
 var _ process.IntermediateTransactionHandler = (*oneMBPostProcessor)(nil)
@@ -54,7 +55,7 @@ func NewOneMiniBlockPostProcessor(
 		shardCoordinator:   coordinator,
 		store:              store,
 		storageType:        storageType,
-		mapProcessedResult: make(map[string]struct{}),
+		mapProcessedResult: make(map[string]*processedResult),
 		economicsFee:       economicsFee,
 	}
 
@@ -143,7 +144,7 @@ func (opp *oneMBPostProcessor) VerifyInterMiniBlocks(body *block.Body) error {
 }
 
 // AddIntermediateTransactions adds receipts/bad transactions resulting from transaction processor
-func (opp *oneMBPostProcessor) AddIntermediateTransactions(txs []data.TransactionHandler) error {
+func (opp *oneMBPostProcessor) AddIntermediateTransactions(txs []data.TransactionHandler, key []byte) error {
 	opp.mutInterResultsForBlock.Lock()
 	defer opp.mutInterResultsForBlock.Unlock()
 
@@ -155,10 +156,7 @@ func (opp *oneMBPostProcessor) AddIntermediateTransactions(txs []data.Transactio
 			return err
 		}
 
-		addReceiptShardInfo := &txShardInfo{receiverShardID: selfId, senderShardID: selfId}
-		scrInfo := &txInfo{tx: txs[i], txShardInfo: addReceiptShardInfo}
-		opp.interResultsForBlock[string(txHash)] = scrInfo
-		opp.mapProcessedResult[string(txHash)] = struct{}{}
+		opp.addIntermediateTxToResultsForBlock(txs[i], txHash, selfId, selfId, key)
 	}
 
 	return nil

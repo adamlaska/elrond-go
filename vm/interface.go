@@ -3,8 +3,8 @@ package vm
 import (
 	"math/big"
 
-	"github.com/ElrondNetwork/elrond-go-core/data"
-	vmcommon "github.com/ElrondNetwork/elrond-vm-common"
+	"github.com/multiversx/mx-chain-core-go/data"
+	vmcommon "github.com/multiversx/mx-chain-vm-common-go"
 )
 
 // SystemSmartContract interface defines the function a system smart contract should have
@@ -37,7 +37,7 @@ type SystemSCContainer interface {
 type SystemEI interface {
 	ExecuteOnDestContext(destination []byte, sender []byte, value *big.Int, input []byte) (*vmcommon.VMOutput, error)
 	DeploySystemSC(baseContract []byte, newAddress []byte, ownerAddress []byte, initFunction string, value *big.Int, input [][]byte) (vmcommon.ReturnCode, error)
-	Transfer(destination []byte, sender []byte, value *big.Int, input []byte, gasLimit uint64) error
+	Transfer(destination []byte, sender []byte, value *big.Int, input []byte, gasLimit uint64)
 	SendGlobalSettingToAll(sender []byte, input []byte)
 	GetBalance(addr []byte) *big.Int
 	SetStorage(key []byte, value []byte)
@@ -56,6 +56,11 @@ type SystemEI interface {
 	CanUnJail(blsKey []byte) bool
 	IsBadRating(blsKey []byte) bool
 	CleanStorageUpdates()
+	GetTotalSentToUser(dest []byte) *big.Int
+	GetLogs() []*vmcommon.LogEntry
+	SetOwnerOperatingOnAccount(newOwner []byte) error
+	UpdateCodeDeployerAddress(scAddress string, newOwner []byte) error
+	ProcessBuiltInFunction(sender, destination []byte, function string, arguments [][]byte) (*vmcommon.VMOutput, error)
 
 	IsInterfaceNil() bool
 }
@@ -63,6 +68,12 @@ type SystemEI interface {
 // EconomicsHandler defines the methods to get data from the economics component
 type EconomicsHandler interface {
 	GenesisTotalSupply() *big.Int
+	IsInterfaceNil() bool
+}
+
+// NodesCoordinator defines the methods needed about nodes in system SCs from nodes coordinator
+type NodesCoordinator interface {
+	GetNumTotalEligible() uint64
 	IsInterfaceNil() bool
 }
 
@@ -110,7 +121,7 @@ type EpochNotifier interface {
 
 // BlockchainHook is the interface for VM blockchain callbacks
 type BlockchainHook interface {
-	GetStorageData(accountAddress []byte, index []byte) ([]byte, error)
+	GetStorageData(accountAddress []byte, index []byte) ([]byte, uint32, error)
 	CurrentNonce() uint64
 	CurrentRound() uint64
 	CurrentEpoch() uint32
@@ -124,4 +135,6 @@ type BlockchainHook interface {
 	Close() error
 	GetSnapshot() int
 	RevertToSnapshot(snapshot int) error
+	IsBuiltinFunctionName(functionName string) bool
+	ProcessBuiltInFunction(input *vmcommon.ContractCallInput) (*vmcommon.VMOutput, error)
 }

@@ -6,29 +6,32 @@ import (
 	"fmt"
 	"math/big"
 	"path"
+	"reflect"
 	"sync"
 	"time"
 
-	"github.com/ElrondNetwork/elrond-go-core/core"
-	"github.com/ElrondNetwork/elrond-go-core/core/atomic"
-	"github.com/ElrondNetwork/elrond-go-core/core/check"
-	"github.com/ElrondNetwork/elrond-go-core/data"
-	"github.com/ElrondNetwork/elrond-go-core/data/block"
-	"github.com/ElrondNetwork/elrond-go-core/data/esdt"
-	"github.com/ElrondNetwork/elrond-go-core/data/typeConverters"
-	"github.com/ElrondNetwork/elrond-go-core/hashing/keccak"
-	"github.com/ElrondNetwork/elrond-go-core/marshal"
-	logger "github.com/ElrondNetwork/elrond-go-logger"
-	"github.com/ElrondNetwork/elrond-go/config"
-	"github.com/ElrondNetwork/elrond-go/dataRetriever"
-	"github.com/ElrondNetwork/elrond-go/process"
-	"github.com/ElrondNetwork/elrond-go/sharding"
-	"github.com/ElrondNetwork/elrond-go/state"
-	"github.com/ElrondNetwork/elrond-go/storage"
-	"github.com/ElrondNetwork/elrond-go/storage/factory"
-	"github.com/ElrondNetwork/elrond-go/storage/storageUnit"
-	vmcommon "github.com/ElrondNetwork/elrond-vm-common"
-	"github.com/ElrondNetwork/elrond-vm-common/parsers"
+	"github.com/multiversx/mx-chain-core-go/core"
+	"github.com/multiversx/mx-chain-core-go/core/check"
+	"github.com/multiversx/mx-chain-core-go/data"
+	"github.com/multiversx/mx-chain-core-go/data/block"
+	"github.com/multiversx/mx-chain-core-go/data/esdt"
+	"github.com/multiversx/mx-chain-core-go/data/typeConverters"
+	"github.com/multiversx/mx-chain-core-go/hashing/keccak"
+	"github.com/multiversx/mx-chain-core-go/marshal"
+	"github.com/multiversx/mx-chain-go/common"
+	"github.com/multiversx/mx-chain-go/config"
+	"github.com/multiversx/mx-chain-go/dataRetriever"
+	"github.com/multiversx/mx-chain-go/process"
+	"github.com/multiversx/mx-chain-go/process/factory/containers"
+	"github.com/multiversx/mx-chain-go/process/smartContract/scrCommon"
+	"github.com/multiversx/mx-chain-go/sharding"
+	"github.com/multiversx/mx-chain-go/state"
+	"github.com/multiversx/mx-chain-go/storage"
+	"github.com/multiversx/mx-chain-go/storage/factory"
+	"github.com/multiversx/mx-chain-go/storage/storageunit"
+	logger "github.com/multiversx/mx-chain-logger-go"
+	vmcommon "github.com/multiversx/mx-chain-vm-common-go"
+	"github.com/multiversx/mx-chain-vm-common-go/parsers"
 )
 
 var _ process.BlockChainHookHandler = (*BlockChainHookImpl)(nil)
@@ -40,23 +43,27 @@ const executeDurationAlarmThreshold = time.Duration(50) * time.Millisecond
 
 // ArgBlockChainHook represents the arguments structure for the blockchain hook
 type ArgBlockChainHook struct {
-	Accounts              state.AccountsAdapter
-	PubkeyConv            core.PubkeyConverter
-	StorageService        dataRetriever.StorageService
-	DataPool              dataRetriever.PoolsHolder
-	BlockChain            data.ChainHandler
-	ShardCoordinator      sharding.Coordinator
-	Marshalizer           marshal.Marshalizer
-	Uint64Converter       typeConverters.Uint64ByteSliceConverter
-	BuiltInFunctions      vmcommon.BuiltInFunctionContainer
-	NFTStorageHandler     vmcommon.SimpleESDTNFTStorageHandler
-	GlobalSettingsHandler vmcommon.ESDTGlobalSettingsHandler
-	CompiledSCPool        storage.Cacher
-	ConfigSCStorage       config.StorageConfig
-	EnableEpochs          config.EnableEpochs
-	EpochNotifier         vmcommon.EpochNotifier
-	WorkingDir            string
-	NilCompiledSCStore    bool
+	Accounts                 state.AccountsAdapter
+	PubkeyConv               core.PubkeyConverter
+	StorageService           dataRetriever.StorageService
+	DataPool                 dataRetriever.PoolsHolder
+	BlockChain               data.ChainHandler
+	ShardCoordinator         sharding.Coordinator
+	Marshalizer              marshal.Marshalizer
+	Uint64Converter          typeConverters.Uint64ByteSliceConverter
+	BuiltInFunctions         vmcommon.BuiltInFunctionContainer
+	NFTStorageHandler        vmcommon.SimpleESDTNFTStorageHandler
+	GlobalSettingsHandler    vmcommon.ESDTGlobalSettingsHandler
+	CompiledSCPool           storage.Cacher
+	ConfigSCStorage          config.StorageConfig
+	EnableEpochs             config.EnableEpochs
+	EpochNotifier            vmcommon.EpochNotifier
+	EnableEpochsHandler      common.EnableEpochsHandler
+	WorkingDir               string
+	NilCompiledSCStore       bool
+	GasSchedule              core.GasScheduleNotifier
+	Counter                  BlockChainHookCounter
+	MissingTrieNodesNotifier common.MissingTrieNodesNotifier
 }
 
 // BlockChainHookImpl is a wrapper over AccountsAdapter that satisfy vmcommon.BlockchainHook interface
@@ -69,8 +76,11 @@ type BlockChainHookImpl struct {
 	marshalizer           marshal.Marshalizer
 	uint64Converter       typeConverters.Uint64ByteSliceConverter
 	builtInFunctions      vmcommon.BuiltInFunctionContainer
+	vmContainer           process.VirtualMachinesContainer
 	nftStorageHandler     vmcommon.SimpleESDTNFTStorageHandler
 	globalSettingsHandler vmcommon.ESDTGlobalSettingsHandler
+	enableEpochsHandler   common.EnableEpochsHandler
+	counter               BlockChainHookCounter
 
 	mutCurrentHdr sync.RWMutex
 	currentHdr    data.HeaderHandler
@@ -81,14 +91,11 @@ type BlockChainHookImpl struct {
 	workingDir         string
 	nilCompiledSCStore bool
 
-	isPayableBySCEnableEpoch          uint32
-	flagIsPayableBySC                 atomic.Flag
-	optimizeNFTStoreEnableEpoch       uint32
-	flagOptimizeNFTStore              atomic.Flag
-	doNotReturnOldBlockEnableEpoch    uint32
-	flagDoNotReturnOldBlock           atomic.Flag
-	filterCodeMetadataEnableEpoch     uint32
-	flagFilterCodeMetadataEnableEpoch atomic.Flag
+	mapActivationEpochs map[uint32]struct{}
+
+	mutGasLock               sync.RWMutex
+	gasSchedule              core.GasScheduleNotifier
+	missingTrieNodesNotifier common.MissingTrieNodesNotifier
 }
 
 // NewBlockChainHookImpl creates a new BlockChainHookImpl instance
@@ -101,30 +108,25 @@ func NewBlockChainHookImpl(
 	}
 
 	blockChainHookImpl := &BlockChainHookImpl{
-		accounts:                       args.Accounts,
-		pubkeyConv:                     args.PubkeyConv,
-		storageService:                 args.StorageService,
-		blockChain:                     args.BlockChain,
-		shardCoordinator:               args.ShardCoordinator,
-		marshalizer:                    args.Marshalizer,
-		uint64Converter:                args.Uint64Converter,
-		builtInFunctions:               args.BuiltInFunctions,
-		compiledScPool:                 args.CompiledSCPool,
-		configSCStorage:                args.ConfigSCStorage,
-		workingDir:                     args.WorkingDir,
-		nilCompiledSCStore:             args.NilCompiledSCStore,
-		nftStorageHandler:              args.NFTStorageHandler,
-		globalSettingsHandler:          args.GlobalSettingsHandler,
-		isPayableBySCEnableEpoch:       args.EnableEpochs.IsPayableBySCEnableEpoch,
-		optimizeNFTStoreEnableEpoch:    args.EnableEpochs.OptimizeNFTStoreEnableEpoch,
-		doNotReturnOldBlockEnableEpoch: args.EnableEpochs.DoNotReturnOldBlockInBlockchainHookEnableEpoch,
-		filterCodeMetadataEnableEpoch:  args.EnableEpochs.IsPayableBySCEnableEpoch,
+		accounts:                 args.Accounts,
+		pubkeyConv:               args.PubkeyConv,
+		storageService:           args.StorageService,
+		blockChain:               args.BlockChain,
+		shardCoordinator:         args.ShardCoordinator,
+		marshalizer:              args.Marshalizer,
+		uint64Converter:          args.Uint64Converter,
+		builtInFunctions:         args.BuiltInFunctions,
+		compiledScPool:           args.CompiledSCPool,
+		configSCStorage:          args.ConfigSCStorage,
+		workingDir:               args.WorkingDir,
+		nilCompiledSCStore:       args.NilCompiledSCStore,
+		nftStorageHandler:        args.NFTStorageHandler,
+		globalSettingsHandler:    args.GlobalSettingsHandler,
+		enableEpochsHandler:      args.EnableEpochsHandler,
+		gasSchedule:              args.GasSchedule,
+		counter:                  args.Counter,
+		missingTrieNodesNotifier: args.MissingTrieNodesNotifier,
 	}
-
-	log.Debug("blockchainHook: payable by SC", "epoch", blockChainHookImpl.isPayableBySCEnableEpoch)
-	log.Debug("blockchainHook: optimize nft metadata store", "epoch", blockChainHookImpl.optimizeNFTStoreEnableEpoch)
-	log.Debug("blockchainHook: do not return old block", "epoch", blockChainHookImpl.doNotReturnOldBlockEnableEpoch)
-	log.Debug("blockchainHook: filter code metadata", "epoch", blockChainHookImpl.filterCodeMetadataEnableEpoch)
 
 	err = blockChainHookImpl.makeCompiledSCStorage()
 	if err != nil {
@@ -133,10 +135,28 @@ func NewBlockChainHookImpl(
 
 	blockChainHookImpl.ClearCompiledCodes()
 	blockChainHookImpl.currentHdr = &block.Header{}
+	blockChainHookImpl.mapActivationEpochs = createMapActivationEpochs(&args.EnableEpochs)
+	blockChainHookImpl.vmContainer = containers.NewVirtualMachinesContainer()
 
 	args.EpochNotifier.RegisterNotifyHandler(blockChainHookImpl)
+	args.GasSchedule.RegisterNotifyHandler(blockChainHookImpl)
 
 	return blockChainHookImpl, nil
+}
+
+func createMapActivationEpochs(enableEpochs *config.EnableEpochs) map[uint32]struct{} {
+	mapActivationEpoch := make(map[uint32]struct{})
+
+	reflectVal := reflect.ValueOf(enableEpochs).Elem()
+	for i := 0; i < reflectVal.NumField(); i++ {
+		f := reflectVal.Field(i)
+		epoch, ok := f.Interface().(uint32)
+		if !ok {
+			continue
+		}
+		mapActivationEpoch[epoch] = struct{}{}
+	}
+	return mapActivationEpoch
 }
 
 func checkForNil(args ArgBlockChainHook) error {
@@ -176,7 +196,27 @@ func checkForNil(args ArgBlockChainHook) error {
 	if check.IfNil(args.GlobalSettingsHandler) {
 		return process.ErrNilESDTGlobalSettingsHandler
 	}
-
+	if check.IfNil(args.EnableEpochsHandler) {
+		return process.ErrNilEnableEpochsHandler
+	}
+	err := core.CheckHandlerCompatibility(args.EnableEpochsHandler, []core.EnableEpochFlag{
+		common.PayableBySCFlag,
+		common.DoNotReturnOldBlockInBlockchainHookFlag,
+		common.OptimizeNFTStoreFlag,
+		common.MaxBlockchainHookCountersFlag,
+	})
+	if err != nil {
+		return err
+	}
+	if check.IfNil(args.GasSchedule) || args.GasSchedule.LatestGasSchedule() == nil {
+		return process.ErrNilGasSchedule
+	}
+	if check.IfNil(args.Counter) {
+		return ErrNilBlockchainHookCounter
+	}
+	if check.IfNil(args.MissingTrieNodesNotifier) {
+		return ErrNilMissingTrieNodesNotifier
+	}
 	return nil
 }
 
@@ -216,18 +256,23 @@ func (bh *BlockChainHookImpl) GetUserAccount(address []byte) (vmcommon.UserAccou
 }
 
 // GetStorageData returns the storage value of a variable held in account's data trie
-func (bh *BlockChainHookImpl) GetStorageData(accountAddress []byte, index []byte) ([]byte, error) {
+func (bh *BlockChainHookImpl) GetStorageData(accountAddress []byte, index []byte) ([]byte, uint32, error) {
 	defer stopMeasure(startMeasure("GetStorageData"))
+
+	err := bh.processMaxReadsCounters()
+	if err != nil {
+		return nil, 0, err
+	}
 
 	userAcc, err := bh.GetUserAccount(accountAddress)
 	if err == state.ErrAccNotFound {
-		return make([]byte, 0), nil
+		return make([]byte, 0), 0, nil
 	}
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
-	value, err := userAcc.AccountDataHandler().RetrieveValue(index)
+	value, trieDepth, err := userAcc.AccountDataHandler().RetrieveValue(index)
 	messages := []interface{}{
 		"address", accountAddress,
 		"rootHash", userAcc.GetRootHash(),
@@ -237,9 +282,38 @@ func (bh *BlockChainHookImpl) GetStorageData(accountAddress []byte, index []byte
 	if err != nil {
 		messages = append(messages, "error")
 		messages = append(messages, err)
+
+		bh.syncIfMissingDataTrieNode(err)
 	}
 	log.Trace("GetStorageData ", messages...)
-	return value, err
+
+	// returning nil here ensures backwards compatibility as the error wasn't taken into account by the previous versions
+	// of the vm. Now, the VM take into account this error so the processMaxReadsCounters call can stop the execution of the contract
+	return value, trieDepth, nil
+}
+
+func (bh *BlockChainHookImpl) syncIfMissingDataTrieNode(err error) {
+	if !core.IsGetNodeFromDBError(err) {
+		return
+	}
+
+	getNodeErr := core.UnwrapGetNodeFromDBErr(err)
+	if check.IfNil(getNodeErr) {
+		return
+	}
+
+	bh.missingTrieNodesNotifier.AsyncNotifyMissingTrieNode(getNodeErr.GetKey())
+}
+
+func (bh *BlockChainHookImpl) processMaxReadsCounters() error {
+	if !bh.enableEpochsHandler.IsFlagEnabled(common.MaxBlockchainHookCountersFlag) {
+		return nil
+	}
+	if bh.shardCoordinator.SelfId() == core.MetachainShardId {
+		return nil
+	}
+
+	return bh.counter.ProcessCrtNumberOfTrieReadsCounter()
 }
 
 // GetBlockhash returns the header hash for a requested nonce delta
@@ -257,7 +331,7 @@ func (bh *BlockChainHookImpl) GetBlockhash(nonce uint64) ([]byte, error) {
 	if nonce == hdr.GetNonce() {
 		return bh.blockChain.GetCurrentBlockHeaderHash(), nil
 	}
-	if bh.flagDoNotReturnOldBlock.IsSet() {
+	if bh.enableEpochsHandler.IsFlagEnabled(common.DoNotReturnOldBlockInBlockchainHookFlag) {
 		return nil, process.ErrInvalidNonceRequest
 	}
 
@@ -393,7 +467,7 @@ func (bh *BlockChainHookImpl) NewAddress(creatorAddress []byte, creatorNonce uin
 	return base, nil
 }
 
-// ProcessBuiltInFunction is the hook through which a smart contract can execute a built in function
+// ProcessBuiltInFunction is the hook through which a smart contract can execute a built-in function
 func (bh *BlockChainHookImpl) ProcessBuiltInFunction(input *vmcommon.ContractCallInput) (*vmcommon.VMOutput, error) {
 	defer stopMeasure(startMeasure("ProcessBuiltInFunction"))
 
@@ -407,6 +481,11 @@ func (bh *BlockChainHookImpl) ProcessBuiltInFunction(input *vmcommon.ContractCal
 	}
 
 	sndAccount, dstAccount, err := bh.getUserAccounts(input)
+	if err != nil {
+		return nil, err
+	}
+
+	err = bh.processMaxBuiltInCounters(input)
 	if err != nil {
 		return nil, err
 	}
@@ -433,9 +512,20 @@ func (bh *BlockChainHookImpl) ProcessBuiltInFunction(input *vmcommon.ContractCal
 	return vmOutput, nil
 }
 
-// SaveNFTMetaDataToSystemAccount will save NFT meta data to system account for the given transaction
+func (bh *BlockChainHookImpl) processMaxBuiltInCounters(input *vmcommon.ContractCallInput) error {
+	if !bh.enableEpochsHandler.IsFlagEnabled(common.MaxBlockchainHookCountersFlag) {
+		return nil
+	}
+	if bh.shardCoordinator.SelfId() == core.MetachainShardId {
+		return nil
+	}
+
+	return bh.counter.ProcessMaxBuiltInCounters(input)
+}
+
+// SaveNFTMetaDataToSystemAccount will save NFT meta-data to system account for the given transaction
 func (bh *BlockChainHookImpl) SaveNFTMetaDataToSystemAccount(tx data.TransactionHandler) error {
-	return bh.nftStorageHandler.SaveNFTMetaDataToSystemAccount(tx)
+	return bh.nftStorageHandler.SaveNFTMetaData(tx)
 }
 
 // GetShardOfAddress is the hook that returns the shard of a given address
@@ -471,7 +561,7 @@ func (bh *BlockChainHookImpl) IsPayable(sndAddress []byte, recvAddress []byte) (
 	}
 
 	metadata := vmcommon.CodeMetadataFromBytes(userAcc.GetCodeMetadata())
-	if bh.flagIsPayableBySC.IsSet() && bh.IsSmartContract(sndAddress) {
+	if bh.enableEpochsHandler.IsFlagEnabled(common.PayableBySCFlag) && bh.IsSmartContract(sndAddress) {
 		return metadata.Payable || metadata.PayableBySC, nil
 	}
 
@@ -481,13 +571,14 @@ func (bh *BlockChainHookImpl) IsPayable(sndAddress []byte, recvAddress []byte) (
 // FilterCodeMetadataForUpgrade will filter the provided input bytes as a correctly constructed vmcommon.CodeMetadata bytes
 // taking into account the activation flags for the future flags. This should be used in the upgrade SC process
 func (bh *BlockChainHookImpl) FilterCodeMetadataForUpgrade(input []byte) ([]byte, error) {
-	if !bh.flagFilterCodeMetadataEnableEpoch.IsSet() {
+	isFilterCodeMetadataFlagSet := bh.enableEpochsHandler.IsFlagEnabled(common.PayableBySCFlag)
+	if !isFilterCodeMetadataFlagSet {
 		// return the raw bytes unconditioned here for backwards compatibility reasons
 		return input, nil
 	}
 
 	raw := vmcommon.CodeMetadataFromBytes(input)
-	filtered := bh.ApplyFiltersOnCodeMetadata(raw)
+	filtered := bh.ApplyFiltersOnSCCodeMetadata(raw)
 	if bytes.Equal(input, filtered.ToBytes()) {
 		return filtered.ToBytes(), nil
 	}
@@ -495,9 +586,10 @@ func (bh *BlockChainHookImpl) FilterCodeMetadataForUpgrade(input []byte) ([]byte
 	return nil, parsers.ErrInvalidCodeMetadata
 }
 
-// ApplyFiltersOnCodeMetadata will apply all known filters on the provided code metadata value
-func (bh *BlockChainHookImpl) ApplyFiltersOnCodeMetadata(codeMetadata vmcommon.CodeMetadata) vmcommon.CodeMetadata {
-	codeMetadata.PayableBySC = codeMetadata.PayableBySC && bh.flagIsPayableBySC.IsSet()
+// ApplyFiltersOnSCCodeMetadata will apply all known filters on the provided code metadata value
+func (bh *BlockChainHookImpl) ApplyFiltersOnSCCodeMetadata(codeMetadata vmcommon.CodeMetadata) vmcommon.CodeMetadata {
+	codeMetadata.PayableBySC = codeMetadata.PayableBySC && bh.enableEpochsHandler.IsFlagEnabled(common.PayableBySCFlag)
+	codeMetadata.Guarded = false
 
 	return codeMetadata
 }
@@ -542,14 +634,23 @@ func (bh *BlockChainHookImpl) getUserAccounts(
 	return sndAccount, dstAccount, nil
 }
 
-// GetBuiltinFunctionNames returns the built in function names
+// GetBuiltinFunctionNames returns the built-in function names
 func (bh *BlockChainHookImpl) GetBuiltinFunctionNames() vmcommon.FunctionNames {
 	return bh.builtInFunctions.Keys()
 }
 
-// GetBuiltinFunctionsContainer returns the built in functions container
+// GetBuiltinFunctionsContainer returns the built-in functions container
 func (bh *BlockChainHookImpl) GetBuiltinFunctionsContainer() vmcommon.BuiltInFunctionContainer {
 	return bh.builtInFunctions
+}
+
+func (bh *BlockChainHookImpl) IsBuiltinFunctionName(functionName string) bool {
+	function, err := bh.builtInFunctions.Get(functionName)
+	if err != nil {
+		return false
+	}
+
+	return function.IsActive()
 }
 
 // GetAllState returns the underlying state of a given account
@@ -569,8 +670,8 @@ func (bh *BlockChainHookImpl) GetESDTToken(address []byte, tokenID []byte, nonce
 		return nil, err
 	}
 
-	esdtTokenKey := []byte(core.ElrondProtectedKeyPrefix + core.ESDTKeyIdentifier + string(tokenID))
-	if !bh.flagOptimizeNFTStore.IsSet() {
+	esdtTokenKey := []byte(core.ProtectedKeyPrefix + core.ESDTKeyIdentifier + string(tokenID))
+	if !bh.enableEpochsHandler.IsFlagEnabled(common.OptimizeNFTStoreFlag) {
 		return bh.returnESDTTokenByLegacyMethod(userAcc, esdtData, esdtTokenKey, nonce)
 	}
 
@@ -584,13 +685,13 @@ func (bh *BlockChainHookImpl) GetESDTToken(address []byte, tokenID []byte, nonce
 
 // IsPaused returns true if the transfers for the given token ID are paused
 func (bh *BlockChainHookImpl) IsPaused(tokenID []byte) bool {
-	esdtTokenKey := []byte(core.ElrondProtectedKeyPrefix + core.ESDTKeyIdentifier + string(tokenID))
+	esdtTokenKey := []byte(core.ProtectedKeyPrefix + core.ESDTKeyIdentifier + string(tokenID))
 	return bh.globalSettingsHandler.IsPaused(esdtTokenKey)
 }
 
 // IsLimitedTransfer returns true if the transfers
 func (bh *BlockChainHookImpl) IsLimitedTransfer(tokenID []byte) bool {
-	esdtTokenKey := []byte(core.ElrondProtectedKeyPrefix + core.ESDTKeyIdentifier + string(tokenID))
+	esdtTokenKey := []byte(core.ProtectedKeyPrefix + core.ESDTKeyIdentifier + string(tokenID))
 	return bh.globalSettingsHandler.IsLimitedTransfer(esdtTokenKey)
 }
 
@@ -604,7 +705,7 @@ func (bh *BlockChainHookImpl) returnESDTTokenByLegacyMethod(
 		esdtTokenKey = append(esdtTokenKey, big.NewInt(0).SetUint64(nonce).Bytes()...)
 	}
 
-	value, err := userAcc.AccountDataHandler().RetrieveValue(esdtTokenKey)
+	value, _, err := userAcc.AccountDataHandler().RetrieveValue(esdtTokenKey)
 	if err != nil {
 		return nil, err
 	}
@@ -718,15 +819,22 @@ func (bh *BlockChainHookImpl) ClearCompiledCodes() {
 
 func (bh *BlockChainHookImpl) makeCompiledSCStorage() error {
 	if bh.nilCompiledSCStore {
-		bh.compiledScStorage = storageUnit.NewNilStorer()
+		bh.compiledScStorage = storageunit.NewNilStorer()
 		return nil
 	}
 
 	dbConfig := factory.GetDBFromConfig(bh.configSCStorage.DB)
 	dbConfig.FilePath = path.Join(bh.workingDir, defaultCompiledSCPath, bh.configSCStorage.DB.FilePath)
-	store, err := storageUnit.NewStorageUnitFromConf(
+
+	persisterFactory, err := factory.NewPersisterFactory(bh.configSCStorage.DB)
+	if err != nil {
+		return err
+	}
+
+	store, err := storageunit.NewStorageUnitFromConf(
 		factory.GetCacherFromConfig(bh.configSCStorage.Cache),
 		dbConfig,
+		persisterFactory,
 	)
 	if err != nil {
 		return err
@@ -748,17 +856,71 @@ func (bh *BlockChainHookImpl) RevertToSnapshot(snapshot int) error {
 
 // EpochConfirmed is called whenever a new epoch is confirmed
 func (bh *BlockChainHookImpl) EpochConfirmed(epoch uint32, _ uint64) {
-	bh.flagIsPayableBySC.SetValue(epoch >= bh.isPayableBySCEnableEpoch)
-	log.Debug("blockchainHookImpl is payable by SC", "enabled", bh.flagIsPayableBySC.IsSet())
+	_, ok := bh.mapActivationEpochs[epoch]
+	if ok {
+		bh.ClearCompiledCodes()
+	}
+}
 
-	bh.flagOptimizeNFTStore.SetValue(epoch >= bh.optimizeNFTStoreEnableEpoch)
-	log.Debug("blockchainHookImpl optimize nft metadata store", "enabled", bh.flagOptimizeNFTStore.IsSet())
+// ExecuteSmartContractCallOnOtherVM on another VM
+func (bh *BlockChainHookImpl) ExecuteSmartContractCallOnOtherVM(input *vmcommon.ContractCallInput) (*vmcommon.VMOutput, error) {
+	vmExec, _, err := scrCommon.FindVMByScAddress(bh.vmContainer, input.RecipientAddr)
+	if err != nil {
+		return nil, err
+	}
+	return vmExec.RunSmartContractCall(input)
+}
 
-	bh.flagDoNotReturnOldBlock.SetValue(epoch >= bh.doNotReturnOldBlockEnableEpoch)
-	log.Debug("blockchainHookImpl: do not return old block", "enabled", bh.flagDoNotReturnOldBlock.IsSet())
+// SetVMContainer sets the vm container in order to be used for sc execution via blockchain
+func (bh *BlockChainHookImpl) SetVMContainer(vmContainer process.VirtualMachinesContainer) error {
+	if check.IfNil(vmContainer) {
+		return process.ErrNilVMContainer
+	}
+	bh.vmContainer = vmContainer
+	return nil
+}
 
-	bh.flagFilterCodeMetadataEnableEpoch.SetValue(epoch >= bh.filterCodeMetadataEnableEpoch)
-	log.Debug("blockchainHookImpl: filter code metadata", "enabled", bh.flagFilterCodeMetadataEnableEpoch.IsSet())
+// GasScheduleChange sets the new gas schedule where it is needed
+func (bh *BlockChainHookImpl) GasScheduleChange(gasSchedule map[string]map[string]uint64) {
+	maxPerTransaction := bh.getMaxPerTransactionValues(gasSchedule)
+	if maxPerTransaction == nil {
+		log.Error("maxPerTransaction definition is missing in the current gas schedule, using old values")
+		return
+	}
+
+	bh.counter.SetMaximumValues(maxPerTransaction)
+}
+
+func (bh *BlockChainHookImpl) getMaxPerTransactionValues(gasSchedule map[string]map[string]uint64) map[string]uint64 {
+	bh.mutGasLock.Lock()
+	defer bh.mutGasLock.Unlock()
+
+	maxPerTransaction := gasSchedule[common.MaxPerTransaction]
+	if maxPerTransaction == nil {
+		return nil
+	}
+
+	result := make(map[string]uint64)
+	for key, value := range maxPerTransaction {
+		result[key] = value
+	}
+
+	return result
+}
+
+// ResetCounters resets the state counters for the blockchain hook
+func (bh *BlockChainHookImpl) ResetCounters() {
+	bh.counter.ResetCounters()
+}
+
+// GetCounterValues returns the current counter values
+func (bh *BlockChainHookImpl) GetCounterValues() map[string]uint64 {
+	return bh.counter.GetCounterValues()
+}
+
+// GetAccountsAdapter returns the managed accounts adapter
+func (bh *BlockChainHookImpl) GetAccountsAdapter() state.AccountsAdapter {
+	return bh.accounts
 }
 
 // IsInterfaceNil returns true if there is no value under the interface

@@ -3,43 +3,55 @@ package economicsmocks
 import (
 	"math/big"
 
-	"github.com/ElrondNetwork/elrond-go-core/data"
+	"github.com/multiversx/mx-chain-core-go/core"
+	"github.com/multiversx/mx-chain-core-go/data"
 )
 
 // EconomicsHandlerMock -
 type EconomicsHandlerMock struct {
-	MaxInflationRateCalled                         func(year uint32) float64
-	MinInflationRateCalled                         func() float64
-	LeaderPercentageCalled                         func() float64
-	ProtocolSustainabilityPercentageCalled         func() float64
-	ProtocolSustainabilityAddressCalled            func() string
-	SetMaxGasLimitPerBlockCalled                   func(maxGasLimitPerBlock uint64)
-	SetMinGasPriceCalled                           func(minGasPrice uint64)
-	SetMinGasLimitCalled                           func(minGasLimit uint64)
-	MaxGasLimitPerBlockCalled                      func(shardID uint32) uint64
-	MaxGasLimitPerMiniBlockCalled                  func(shardID uint32) uint64
-	MaxGasLimitPerBlockForSafeCrossShardCalled     func() uint64
-	MaxGasLimitPerMiniBlockForSafeCrossShardCalled func() uint64
-	MaxGasLimitPerTxCalled                         func() uint64
-	ComputeGasLimitCalled                          func(tx data.TransactionWithFeeHandler) uint64
-	ComputeFeeCalled                               func(tx data.TransactionWithFeeHandler) *big.Int
-	CheckValidityTxValuesCalled                    func(tx data.TransactionWithFeeHandler) error
-	ComputeMoveBalanceFeeCalled                    func(tx data.TransactionWithFeeHandler) *big.Int
-	ComputeTxFeeCalled                             func(tx data.TransactionWithFeeHandler) *big.Int
-	DeveloperPercentageCalled                      func() float64
-	MinGasPriceCalled                              func() uint64
-	GasPerDataByteCalled                           func() uint64
-	RewardsTopUpGradientPointCalled                func() *big.Int
-	RewardsTopUpFactorCalled                       func() float64
-	ComputeFeeForProcessingCalled                  func(tx data.TransactionWithFeeHandler, gasToUse uint64) *big.Int
-	GasPriceModifierCalled                         func() float64
-	SplitTxGasInCategoriesCalled                   func(tx data.TransactionWithFeeHandler) (uint64, uint64)
-	GasPriceForProcessingCalled                    func(tx data.TransactionWithFeeHandler) uint64
-	GasPriceForMoveCalled                          func(tx data.TransactionWithFeeHandler) uint64
-	MinGasPriceForProcessingCalled                 func() uint64
-	ComputeGasUsedAndFeeBasedOnRefundValueCalled   func(tx data.TransactionWithFeeHandler, refundValue *big.Int) (uint64, *big.Int)
-	ComputeTxFeeBasedOnGasUsedCalled               func(tx data.TransactionWithFeeHandler, gasUsed uint64) *big.Int
-	ComputeGasLimitBasedOnBalanceCalled            func(tx data.TransactionWithFeeHandler, balance *big.Int) (uint64, error)
+	MaxInflationRateCalled                              func(year uint32) float64
+	MinInflationRateCalled                              func() float64
+	LeaderPercentageCalled                              func() float64
+	ProtocolSustainabilityPercentageCalled              func() float64
+	ProtocolSustainabilityAddressCalled                 func() string
+	SetMaxGasLimitPerBlockCalled                        func(maxGasLimitPerBlock uint64)
+	SetMinGasPriceCalled                                func(minGasPrice uint64)
+	SetMinGasLimitCalled                                func(minGasLimit uint64)
+	MaxGasLimitPerBlockCalled                           func(shardID uint32) uint64
+	MaxGasLimitPerMiniBlockCalled                       func(shardID uint32) uint64
+	MaxGasLimitPerBlockForSafeCrossShardCalled          func() uint64
+	MaxGasLimitPerMiniBlockForSafeCrossShardCalled      func() uint64
+	MaxGasLimitPerTxCalled                              func() uint64
+	ComputeGasLimitCalled                               func(tx data.TransactionWithFeeHandler) uint64
+	ComputeFeeCalled                                    func(tx data.TransactionWithFeeHandler) *big.Int
+	CheckValidityTxValuesCalled                         func(tx data.TransactionWithFeeHandler) error
+	ComputeMoveBalanceFeeCalled                         func(tx data.TransactionWithFeeHandler) *big.Int
+	ComputeMoveBalanceFeeInEpochCalled                  func(tx data.TransactionWithFeeHandler, epoch uint32) *big.Int
+	ComputeTxFeeCalled                                  func(tx data.TransactionWithFeeHandler) *big.Int
+	DeveloperPercentageCalled                           func() float64
+	MinGasPriceCalled                                   func() uint64
+	GasPerDataByteCalled                                func() uint64
+	RewardsTopUpGradientPointCalled                     func() *big.Int
+	RewardsTopUpFactorCalled                            func() float64
+	ComputeFeeForProcessingCalled                       func(tx data.TransactionWithFeeHandler, gasToUse uint64) *big.Int
+	GasPriceModifierCalled                              func() float64
+	SplitTxGasInCategoriesCalled                        func(tx data.TransactionWithFeeHandler) (uint64, uint64)
+	GasPriceForProcessingCalled                         func(tx data.TransactionWithFeeHandler) uint64
+	GasPriceForMoveCalled                               func(tx data.TransactionWithFeeHandler) uint64
+	MinGasPriceForProcessingCalled                      func() uint64
+	ComputeGasUsedAndFeeBasedOnRefundValueCalled        func(tx data.TransactionWithFeeHandler, refundValue *big.Int) (uint64, *big.Int)
+	ComputeTxFeeBasedOnGasUsedCalled                    func(tx data.TransactionWithFeeHandler, gasUsed uint64) *big.Int
+	ComputeGasLimitBasedOnBalanceCalled                 func(tx data.TransactionWithFeeHandler, balance *big.Int) (uint64, error)
+	SetStatusHandlerCalled                              func(statusHandler core.AppStatusHandler) error
+	ComputeTxFeeInEpochCalled                           func(tx data.TransactionWithFeeHandler, epoch uint32) *big.Int
+	ComputeGasLimitInEpochCalled                        func(tx data.TransactionWithFeeHandler, epoch uint32) uint64
+	ComputeGasUsedAndFeeBasedOnRefundValueInEpochCalled func(tx data.TransactionWithFeeHandler, refundValue *big.Int, epoch uint32) (uint64, *big.Int)
+	ComputeTxFeeBasedOnGasUsedInEpochCalled             func(tx data.TransactionWithFeeHandler, gasUsed uint64, epoch uint32) *big.Int
+}
+
+// ComputeGasUnitsFromRefundValue -
+func (ehm *EconomicsHandlerMock) ComputeGasUnitsFromRefundValue(_ data.TransactionWithFeeHandler, _ *big.Int, _ uint32) uint64 {
+	return 0
 }
 
 // LeaderPercentage -
@@ -77,6 +89,16 @@ func (ehm *EconomicsHandlerMock) MinGasPrice() uint64 {
 
 // MinGasLimit will return min gas limit
 func (ehm *EconomicsHandlerMock) MinGasLimit() uint64 {
+	return 0
+}
+
+// ExtraGasLimitGuardedTx -
+func (ehm *EconomicsHandlerMock) ExtraGasLimitGuardedTx() uint64 {
+	return 0
+}
+
+// MaxGasPriceSetGuardian -
+func (ehm *EconomicsHandlerMock) MaxGasPriceSetGuardian() uint64 {
 	return 0
 }
 
@@ -180,7 +202,14 @@ func (ehm *EconomicsHandlerMock) ComputeMoveBalanceFee(tx data.TransactionWithFe
 		return ehm.ComputeMoveBalanceFeeCalled(tx)
 	}
 	return big.NewInt(0)
+}
 
+// ComputeMoveBalanceFeeInEpoch -
+func (ehm *EconomicsHandlerMock) ComputeMoveBalanceFeeInEpoch(tx data.TransactionWithFeeHandler, epoch uint32) *big.Int {
+	if ehm.ComputeMoveBalanceFeeInEpochCalled != nil {
+		return ehm.ComputeMoveBalanceFeeInEpochCalled(tx, epoch)
+	}
+	return big.NewInt(0)
 }
 
 // ComputeGasLimitBasedOnBalance -
@@ -277,6 +306,46 @@ func (ehm *EconomicsHandlerMock) ComputeTxFeeBasedOnGasUsed(tx data.TransactionW
 		return ehm.ComputeTxFeeBasedOnGasUsedCalled(tx, gasUsed)
 	}
 	return big.NewInt(0)
+}
+
+// SetStatusHandler -
+func (ehm *EconomicsHandlerMock) SetStatusHandler(statusHandler core.AppStatusHandler) error {
+	if ehm.SetStatusHandlerCalled != nil {
+		return ehm.SetStatusHandlerCalled(statusHandler)
+	}
+	return nil
+}
+
+// ComputeTxFeeInEpoch -
+func (ehm *EconomicsHandlerMock) ComputeTxFeeInEpoch(tx data.TransactionWithFeeHandler, epoch uint32) *big.Int {
+	if ehm.ComputeTxFeeInEpochCalled != nil {
+		return ehm.ComputeTxFeeInEpochCalled(tx, epoch)
+	}
+	return nil
+}
+
+// ComputeGasLimitInEpoch -
+func (ehm *EconomicsHandlerMock) ComputeGasLimitInEpoch(tx data.TransactionWithFeeHandler, epoch uint32) uint64 {
+	if ehm.ComputeGasLimitInEpochCalled != nil {
+		return ehm.ComputeGasLimitInEpochCalled(tx, epoch)
+	}
+	return 0
+}
+
+// ComputeGasUsedAndFeeBasedOnRefundValueInEpoch -
+func (ehm *EconomicsHandlerMock) ComputeGasUsedAndFeeBasedOnRefundValueInEpoch(tx data.TransactionWithFeeHandler, refundValue *big.Int, epoch uint32) (uint64, *big.Int) {
+	if ehm.ComputeGasUsedAndFeeBasedOnRefundValueInEpochCalled != nil {
+		return ehm.ComputeGasUsedAndFeeBasedOnRefundValueInEpochCalled(tx, refundValue, epoch)
+	}
+	return 0, big.NewInt(0)
+}
+
+// ComputeTxFeeBasedOnGasUsedInEpoch -
+func (ehm *EconomicsHandlerMock) ComputeTxFeeBasedOnGasUsedInEpoch(tx data.TransactionWithFeeHandler, gasUsed uint64, epoch uint32) *big.Int {
+	if ehm.ComputeTxFeeBasedOnGasUsedInEpochCalled != nil {
+		return ehm.ComputeTxFeeBasedOnGasUsedInEpochCalled(tx, gasUsed, epoch)
+	}
+	return nil
 }
 
 // IsInterfaceNil returns true if there is no value under the interface

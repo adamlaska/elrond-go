@@ -4,11 +4,12 @@ import (
 	"math/big"
 	"sync"
 
-	"github.com/ElrondNetwork/elrond-go-core/core"
-	"github.com/ElrondNetwork/elrond-go-core/core/check"
-	"github.com/ElrondNetwork/elrond-go/common"
-	"github.com/ElrondNetwork/elrond-go/vm"
-	vmcommon "github.com/ElrondNetwork/elrond-vm-common"
+	"github.com/multiversx/mx-chain-core-go/core"
+	"github.com/multiversx/mx-chain-core-go/core/check"
+	vmcommon "github.com/multiversx/mx-chain-vm-common-go"
+
+	"github.com/multiversx/mx-chain-go/common"
+	"github.com/multiversx/mx-chain-go/vm"
 )
 
 type systemVM struct {
@@ -18,6 +19,7 @@ type systemVM struct {
 	asyncCallbackGasLock uint64
 	asyncCallStepCost    uint64
 	mutGasLock           sync.RWMutex
+	criticalSection      sync.Mutex
 }
 
 // ArgsNewSystemVM defines the needed arguments to create a new system vm
@@ -43,7 +45,7 @@ func NewSystemVM(args ArgsNewSystemVM) (*systemVM, error) {
 		return nil, vm.ErrNilGasSchedule
 	}
 
-	apiCosts := args.GasSchedule.LatestGasSchedule()[common.ElrondAPICost]
+	apiCosts := args.GasSchedule.LatestGasSchedule()[common.BaseOpsAPICost]
 	if apiCosts == nil {
 		return nil, vm.ErrNilGasSchedule
 	}
@@ -68,6 +70,9 @@ func NewSystemVM(args ArgsNewSystemVM) (*systemVM, error) {
 
 // RunSmartContractCreate creates and saves a new smart contract to the trie
 func (s *systemVM) RunSmartContractCreate(input *vmcommon.ContractCreateInput) (*vmcommon.VMOutput, error) {
+	s.criticalSection.Lock()
+	defer s.criticalSection.Unlock()
+
 	if input == nil {
 		return nil, vm.ErrInputArgsIsNil
 	}
@@ -101,6 +106,9 @@ func (s *systemVM) RunSmartContractCreate(input *vmcommon.ContractCreateInput) (
 
 // RunSmartContractCall executes a smart contract according to the input
 func (s *systemVM) RunSmartContractCall(input *vmcommon.ContractCallInput) (*vmcommon.VMOutput, error) {
+	s.criticalSection.Lock()
+	defer s.criticalSection.Unlock()
+
 	s.systemEI.CleanCache()
 	s.systemEI.SetSCAddress(input.RecipientAddr)
 	s.systemEI.AddTxValueToSmartContract(input.CallValue, input.RecipientAddr)
@@ -145,7 +153,7 @@ func (s *systemVM) GasScheduleChange(gasSchedule map[string]map[string]uint64) {
 	s.mutGasLock.Lock()
 	defer s.mutGasLock.Unlock()
 
-	apiCosts := gasSchedule[common.ElrondAPICost]
+	apiCosts := gasSchedule[common.BaseOpsAPICost]
 	if apiCosts == nil {
 		return
 	}

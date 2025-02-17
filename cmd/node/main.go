@@ -6,21 +6,23 @@ import (
 	"runtime"
 	"time"
 
-	"github.com/ElrondNetwork/elrond-go-core/core"
-	"github.com/ElrondNetwork/elrond-go-core/core/check"
-	logger "github.com/ElrondNetwork/elrond-go-logger"
-	"github.com/ElrondNetwork/elrond-go/cmd/node/factory"
-	"github.com/ElrondNetwork/elrond-go/common"
-	"github.com/ElrondNetwork/elrond-go/common/logging"
-	"github.com/ElrondNetwork/elrond-go/config"
-	"github.com/ElrondNetwork/elrond-go/node"
+	"github.com/klauspost/cpuid/v2"
+	"github.com/multiversx/mx-chain-core-go/core"
+	"github.com/multiversx/mx-chain-core-go/core/check"
+	"github.com/multiversx/mx-chain-go/cmd/node/factory"
+	"github.com/multiversx/mx-chain-go/common"
+	"github.com/multiversx/mx-chain-go/config"
+	"github.com/multiversx/mx-chain-go/config/overridableConfig"
+	"github.com/multiversx/mx-chain-go/node"
+	logger "github.com/multiversx/mx-chain-logger-go"
+	"github.com/multiversx/mx-chain-logger-go/file"
 	"github.com/urfave/cli"
 	// test point 1 for custom profiler
 )
 
 const (
 	defaultLogsPath = "logs"
-	logFilePrefix   = "elrond-go"
+	logFilePrefix   = "mx-chain-go"
 )
 
 var (
@@ -45,10 +47,13 @@ VERSION:
 // appVersion should be populated at build time using ldflags
 // Usage examples:
 // linux/mac:
-//            go build -i -v -ldflags="-X main.appVersion=$(git describe --tags --long --dirty)"
+//
+//	go build -v -ldflags="-X main.appVersion=$(git describe --tags --long --dirty)"
+//
 // windows:
-//            for /f %i in ('git describe --tags --long --dirty') do set VERS=%i
-//            go build -i -v -ldflags="-X main.appVersion=%VERS%"
+//
+//	for /f %i in ('git describe --tags --long --dirty') do set VERS=%i
+//	go build -v -ldflags="-X main.appVersion=%VERS%"
 var appVersion = common.UnVersionedAppString
 
 func main() {
@@ -59,21 +64,22 @@ func main() {
 
 	app := cli.NewApp()
 	cli.AppHelpTemplate = nodeHelpTemplate
-	app.Name = "Elrond Node CLI App"
+	app.Name = "MultiversX Node CLI App"
 	machineID := core.GetAnonymizedMachineID(app.Name)
 
-	app.Version = fmt.Sprintf("%s/%s/%s-%s/%s", appVersion, runtime.Version(), runtime.GOOS, runtime.GOARCH, machineID)
-	app.Usage = "This is the entry point for starting a new Elrond node - the app will start after the genesis timestamp"
+	baseVersion := fmt.Sprintf("%s/%s/%s-%s", appVersion, runtime.Version(), runtime.GOOS, runtime.GOARCH)
+	app.Version = fmt.Sprintf("%s/%s", baseVersion, machineID)
+	app.Usage = "This is the entry point for starting a new MultiversX node - the app will start after the genesis timestamp"
 	app.Flags = getFlags()
 	app.Authors = []cli.Author{
 		{
-			Name:  "The Elrond Team",
-			Email: "contact@elrond.com",
+			Name:  "The MultiversX Team",
+			Email: "contact@multiversx.com",
 		},
 	}
 
 	app.Action = func(c *cli.Context) error {
-		return startNodeRunner(c, log, app.Version)
+		return startNodeRunner(c, log, baseVersion, app.Version)
 	}
 
 	err := app.Run(os.Args)
@@ -83,7 +89,7 @@ func main() {
 	}
 }
 
-func startNodeRunner(c *cli.Context, log logger.Logger, version string) error {
+func startNodeRunner(c *cli.Context, log logger.Logger, baseVersion string, version string) error {
 	flagsConfig := getFlagsConfig(c, log)
 
 	fileLogging, errLogger := attachFileLogger(log, flagsConfig)
@@ -94,6 +100,11 @@ func startNodeRunner(c *cli.Context, log logger.Logger, version string) error {
 	cfgs, errCfg := readConfigs(c, log)
 	if errCfg != nil {
 		return errCfg
+	}
+
+	errCfgOverride := overridableConfig.OverrideConfigValues(cfgs.PreferencesConfig.Preferences.OverridableConfigTomlValues, cfgs)
+	if errCfgOverride != nil {
+		return errCfgOverride
 	}
 
 	if !check.IfNil(fileLogging) {
@@ -119,7 +130,13 @@ func startNodeRunner(c *cli.Context, log logger.Logger, version string) error {
 		log.Debug("initialized memory ballast object", "size", core.ConvertBytes(uint64(len(memoryBallastObject))))
 	}
 
+	cfgs.FlagsConfig.BaseVersion = baseVersion
 	cfgs.FlagsConfig.Version = version
+
+	err = checkHardwareRequirements(cfgs.GeneralConfig.HardwareRequirements)
+	if err != nil {
+		return fmt.Errorf("Hardware Requirements checks failed: %s", err.Error())
+	}
 
 	nodeRunner, errRunner := node.NewNodeRunner(cfgs)
 	if errRunner != nil {
@@ -193,12 +210,19 @@ func readConfigs(ctx *cli.Context, log logger.Logger) (*config.Configs, error) {
 	}
 	log.Debug("config", "file", configurationPaths.External)
 
-	configurationPaths.P2p = ctx.GlobalString(p2pConfigurationFile.Name)
-	p2pConfig, err := common.LoadP2PConfig(configurationPaths.P2p)
+	configurationPaths.MainP2p = ctx.GlobalString(p2pConfigurationFile.Name)
+	mainP2PConfig, err := common.LoadP2PConfig(configurationPaths.MainP2p)
 	if err != nil {
 		return nil, err
 	}
-	log.Debug("config", "file", configurationPaths.P2p)
+	log.Debug("config", "file", configurationPaths.MainP2p)
+
+	configurationPaths.FullArchiveP2p = ctx.GlobalString(fullArchiveP2PConfigurationFile.Name)
+	fullArchiveP2PConfig, err := common.LoadP2PConfig(configurationPaths.FullArchiveP2p)
+	if err != nil {
+		return nil, err
+	}
+	log.Debug("config", "file", configurationPaths.FullArchiveP2p)
 
 	configurationPaths.Epoch = ctx.GlobalString(epochConfigurationFile.Name)
 	epochConfig, err := common.LoadEpochConfig(configurationPaths.Epoch)
@@ -215,7 +239,10 @@ func readConfigs(ctx *cli.Context, log logger.Logger) (*config.Configs, error) {
 	log.Debug("config", "file", configurationPaths.RoundActivation)
 
 	if ctx.IsSet(port.Name) {
-		p2pConfig.Node.Port = ctx.GlobalString(port.Name)
+		mainP2PConfig.Node.Port = ctx.GlobalString(port.Name)
+	}
+	if ctx.IsSet(fullArchivePort.Name) {
+		fullArchiveP2PConfig.Node.Port = ctx.GlobalString(fullArchivePort.Name)
 	}
 	if ctx.IsSet(destinationShardAsObserver.Name) {
 		preferencesConfig.Preferences.DestinationShardAsObserver = ctx.GlobalString(destinationShardAsObserver.Name)
@@ -235,7 +262,8 @@ func readConfigs(ctx *cli.Context, log logger.Logger) (*config.Configs, error) {
 		RatingsConfig:            ratingsConfig,
 		PreferencesConfig:        preferencesConfig,
 		ExternalConfig:           externalConfig,
-		P2pConfig:                p2pConfig,
+		MainP2pConfig:            mainP2PConfig,
+		FullArchiveP2pConfig:     fullArchiveP2PConfig,
 		ConfigurationPathsHolder: configurationPaths,
 		EpochConfig:              epochConfig,
 		RoundConfig:              roundConfig,
@@ -246,12 +274,12 @@ func attachFileLogger(log logger.Logger, flagsConfig *config.ContextFlagsConfig)
 	var fileLogging factory.FileLoggingHandler
 	var err error
 	if flagsConfig.SaveLogFile {
-		args := logging.ArgsFileLogging{
-			WorkingDir:      flagsConfig.WorkingDir,
+		args := file.ArgsFileLogging{
+			WorkingDir:      flagsConfig.LogsDir,
 			DefaultLogsPath: defaultLogsPath,
 			LogFilePrefix:   logFilePrefix,
 		}
-		fileLogging, err = logging.NewFileLogging(args)
+		fileLogging, err = file.NewFileLogging(args)
 		if err != nil {
 			return nil, fmt.Errorf("%w creating a log file", err)
 		}
@@ -262,6 +290,7 @@ func attachFileLogger(log logger.Logger, flagsConfig *config.ContextFlagsConfig)
 	logger.ToggleCorrelation(flagsConfig.EnableLogCorrelation)
 	logger.ToggleLoggerName(flagsConfig.EnableLogName)
 	logLevelFlagValue := flagsConfig.LogLevel
+
 	err = logger.SetLogLevel(logLevelFlagValue)
 	if err != nil {
 		return nil, err
@@ -281,4 +310,30 @@ func attachFileLogger(log logger.Logger, flagsConfig *config.ContextFlagsConfig)
 	log.Trace("logger updated", "level", logLevelFlagValue, "disable ANSI color", flagsConfig.DisableAnsiColor)
 
 	return fileLogging, nil
+}
+
+func checkHardwareRequirements(cfg config.HardwareRequirementsConfig) error {
+	cpuFlags, err := parseFeatures(cfg.CPUFlags)
+	if err != nil {
+		return err
+	}
+
+	if !cpuid.CPU.Supports(cpuFlags...) {
+		return fmt.Errorf("CPU Flags: Streaming SIMD Extensions 4 required")
+	}
+
+	return nil
+}
+
+func parseFeatures(features []string) ([]cpuid.FeatureID, error) {
+	flags := make([]cpuid.FeatureID, 0)
+
+	for _, cpuFlag := range features {
+		featureID := cpuid.ParseFeature(cpuFlag)
+		if featureID == cpuid.UNKNOWN {
+			return nil, fmt.Errorf("CPU Flags: cpu flag %s not found", cpuFlag)
+		}
+	}
+
+	return flags, nil
 }

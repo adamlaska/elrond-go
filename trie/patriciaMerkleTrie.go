@@ -5,17 +5,20 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
-	"strings"
 	"sync"
 
-	"github.com/ElrondNetwork/elrond-go-core/core"
-	"github.com/ElrondNetwork/elrond-go-core/core/check"
-	"github.com/ElrondNetwork/elrond-go-core/hashing"
-	"github.com/ElrondNetwork/elrond-go-core/marshal"
-	logger "github.com/ElrondNetwork/elrond-go-logger"
-	"github.com/ElrondNetwork/elrond-go/common"
-	"github.com/ElrondNetwork/elrond-go/dataRetriever"
-	"github.com/ElrondNetwork/elrond-go/storage"
+	"github.com/multiversx/mx-chain-core-go/core"
+	"github.com/multiversx/mx-chain-core-go/core/check"
+	"github.com/multiversx/mx-chain-core-go/hashing"
+	"github.com/multiversx/mx-chain-core-go/marshal"
+	logger "github.com/multiversx/mx-chain-logger-go"
+	vmcommon "github.com/multiversx/mx-chain-vm-common-go"
+
+	"github.com/multiversx/mx-chain-go/common"
+	"github.com/multiversx/mx-chain-go/dataRetriever"
+	"github.com/multiversx/mx-chain-go/errors"
+	"github.com/multiversx/mx-chain-go/trie/keyBuilder"
+	"github.com/multiversx/mx-chain-go/trie/statistics"
 )
 
 var log = logger.GetOrCreate("trie")
@@ -28,16 +31,17 @@ const (
 	branch
 )
 
-// EmptyTrieHash returns the value with empty trie hash
-var EmptyTrieHash = make([]byte, 32)
+const rootDepthLevel = 0
 
 type patriciaMerkleTrie struct {
 	root node
 
-	trieStorage  common.StorageManager
-	marshalizer  marshal.Marshalizer
-	hasher       hashing.Hasher
-	mutOperation sync.RWMutex
+	trieStorage             common.StorageManager
+	marshalizer             marshal.Marshalizer
+	hasher                  hashing.Hasher
+	enableEpochsHandler     common.EnableEpochsHandler
+	trieNodeVersionVerifier core.TrieNodeVersionVerifier
+	mutOperation            sync.RWMutex
 
 	oldHashes            [][]byte
 	oldRoot              []byte
@@ -50,6 +54,7 @@ func NewTrie(
 	trieStorage common.StorageManager,
 	msh marshal.Marshalizer,
 	hsh hashing.Hasher,
+	enableEpochsHandler common.EnableEpochsHandler,
 	maxTrieLevelInMemory uint,
 ) (*patriciaMerkleTrie, error) {
 	if check.IfNil(trieStorage) {
@@ -61,40 +66,50 @@ func NewTrie(
 	if check.IfNil(hsh) {
 		return nil, ErrNilHasher
 	}
+	if check.IfNil(enableEpochsHandler) {
+		return nil, errors.ErrNilEnableEpochsHandler
+	}
 	if maxTrieLevelInMemory == 0 {
 		return nil, ErrInvalidLevelValue
 	}
 	log.Trace("created new trie", "max trie level in memory", maxTrieLevelInMemory)
 
+	tnvv, err := core.NewTrieNodeVersionVerifier(enableEpochsHandler)
+	if err != nil {
+		return nil, err
+	}
+
 	return &patriciaMerkleTrie{
-		trieStorage:          trieStorage,
-		marshalizer:          msh,
-		hasher:               hsh,
-		oldHashes:            make([][]byte, 0),
-		oldRoot:              make([]byte, 0),
-		maxTrieLevelInMemory: maxTrieLevelInMemory,
-		chanClose:            make(chan struct{}),
+		trieStorage:             trieStorage,
+		marshalizer:             msh,
+		hasher:                  hsh,
+		oldHashes:               make([][]byte, 0),
+		oldRoot:                 make([]byte, 0),
+		maxTrieLevelInMemory:    maxTrieLevelInMemory,
+		chanClose:               make(chan struct{}),
+		enableEpochsHandler:     enableEpochsHandler,
+		trieNodeVersionVerifier: tnvv,
 	}, nil
 }
 
 // Get starts at the root and searches for the given key.
 // If the key is present in the tree, it returns the corresponding value
-func (tr *patriciaMerkleTrie) Get(key []byte) ([]byte, error) {
+func (tr *patriciaMerkleTrie) Get(key []byte) ([]byte, uint32, error) {
 	tr.mutOperation.Lock()
 	defer tr.mutOperation.Unlock()
 
 	if tr.root == nil {
-		return nil, nil
+		return nil, 0, nil
 	}
 	hexKey := keyBytesToHex(key)
 
-	val, err := tr.root.tryGet(hexKey, tr.trieStorage)
+	val, depth, err := tr.root.tryGet(hexKey, rootDepthLevel, tr.trieStorage)
 	if err != nil {
 		err = fmt.Errorf("trie get error: %w, for key %v", err, hex.EncodeToString(key))
-		return nil, err
+		return nil, depth, err
 	}
 
-	return val, nil
+	return val, depth, nil
 }
 
 // Update updates the value at the given key.
@@ -104,19 +119,32 @@ func (tr *patriciaMerkleTrie) Update(key, value []byte) error {
 	tr.mutOperation.Lock()
 	defer tr.mutOperation.Unlock()
 
-	log.Trace("update trie", "key", hex.EncodeToString(key), "val", hex.EncodeToString(value))
+	log.Trace("update trie", "key", key, "val", value)
 
+	return tr.update(key, value, core.NotSpecified)
+}
+
+// UpdateWithVersion does the same thing as Update, but the new leaf that is created will be of the specified version
+func (tr *patriciaMerkleTrie) UpdateWithVersion(key []byte, value []byte, version core.TrieNodeVersion) error {
+	tr.mutOperation.Lock()
+	defer tr.mutOperation.Unlock()
+
+	log.Trace("update trie with version", "key", key, "val", value, "version", version)
+
+	return tr.update(key, value, version)
+}
+
+func (tr *patriciaMerkleTrie) update(key []byte, value []byte, version core.TrieNodeVersion) error {
 	hexKey := keyBytesToHex(key)
-	newLn, err := newLeafNode(hexKey, value, tr.marshalizer, tr.hasher)
-	if err != nil {
-		return err
-	}
-
-	var newRoot node
-	var oldHashes [][]byte
 	if len(value) != 0 {
+		newData := core.TrieData{
+			Key:     hexKey,
+			Value:   value,
+			Version: version,
+		}
+
 		if tr.root == nil {
-			newRoot, err = newLeafNode(hexKey, value, tr.marshalizer, tr.hasher)
+			newRoot, err := newLeafNode(newData, tr.marshalizer, tr.hasher)
 			if err != nil {
 				return err
 			}
@@ -129,7 +157,7 @@ func (tr *patriciaMerkleTrie) Update(key, value []byte) error {
 			tr.oldRoot = tr.root.getHash()
 		}
 
-		newRoot, oldHashes, err = tr.root.insert(newLn, tr.trieStorage)
+		newRoot, oldHashes, err := tr.root.insert(newData, tr.trieStorage)
 		if err != nil {
 			return err
 		}
@@ -143,22 +171,7 @@ func (tr *patriciaMerkleTrie) Update(key, value []byte) error {
 
 		logArrayWithTrace("oldHashes after insert", "hash", oldHashes)
 	} else {
-		if tr.root == nil {
-			return nil
-		}
-
-		if !tr.root.isDirty() {
-			tr.oldRoot = tr.root.getHash()
-		}
-
-		_, newRoot, oldHashes, err = tr.root.delete(hexKey, tr.trieStorage)
-		if err != nil {
-			return err
-		}
-		tr.root = newRoot
-		tr.oldHashes = append(tr.oldHashes, oldHashes...)
-
-		logArrayWithTrace("oldHashes after delete", "hash", oldHashes)
+		return tr.delete(hexKey)
 	}
 
 	return nil
@@ -170,6 +183,10 @@ func (tr *patriciaMerkleTrie) Delete(key []byte) error {
 	defer tr.mutOperation.Unlock()
 
 	hexKey := keyBytesToHex(key)
+	return tr.delete(hexKey)
+}
+
+func (tr *patriciaMerkleTrie) delete(hexKey []byte) error {
 	if tr.root == nil {
 		return nil
 	}
@@ -184,6 +201,7 @@ func (tr *patriciaMerkleTrie) Delete(key []byte) error {
 	}
 	tr.root = newRoot
 	tr.oldHashes = append(tr.oldHashes, oldHashes...)
+	logArrayWithTrace("oldHashes after delete", "hash", oldHashes)
 
 	return nil
 }
@@ -198,7 +216,7 @@ func (tr *patriciaMerkleTrie) RootHash() ([]byte, error) {
 
 func (tr *patriciaMerkleTrie) getRootHash() ([]byte, error) {
 	if tr.root == nil {
-		return EmptyTrieHash, nil
+		return common.EmptyTrieHash, nil
 	}
 
 	hash := tr.root.getHash()
@@ -218,9 +236,11 @@ func (tr *patriciaMerkleTrie) Commit() error {
 	defer tr.mutOperation.Unlock()
 
 	if tr.root == nil {
+		log.Trace("trying to commit empty trie")
 		return nil
 	}
 	if !tr.root.isDirty() {
+		log.Trace("trying to commit clean trie", "root", tr.root.getHash())
 		return nil
 	}
 	err := tr.root.setRootHash()
@@ -243,32 +263,38 @@ func (tr *patriciaMerkleTrie) Commit() error {
 	return nil
 }
 
-// Recreate returns a new trie that has the given root hash and database
-func (tr *patriciaMerkleTrie) Recreate(root []byte) (common.Trie, error) {
-	tr.mutOperation.Lock()
-	defer tr.mutOperation.Unlock()
-
-	return tr.recreate(root)
-}
-
-func (tr *patriciaMerkleTrie) recreate(root []byte) (*patriciaMerkleTrie, error) {
-	if emptyTrie(root) {
-		return NewTrie(
-			tr.trieStorage,
-			tr.marshalizer,
-			tr.hasher,
-			tr.maxTrieLevelInMemory,
-		)
+// Recreate returns a new trie, given the options
+func (tr *patriciaMerkleTrie) Recreate(options common.RootHashHolder) (common.Trie, error) {
+	if check.IfNil(options) {
+		return nil, ErrNilRootHashHolder
 	}
 
-	_, err := tr.trieStorage.Get(root)
+	if !options.GetEpoch().HasValue {
+		return tr.recreate(options.GetRootHash(), tr.trieStorage)
+	}
+
+	tsmie, err := newTrieStorageManagerInEpoch(tr.trieStorage, options.GetEpoch().Value)
 	if err != nil {
 		return nil, err
 	}
 
-	newTr, _, err := tr.recreateFromDb(root, tr.trieStorage)
+	return tr.recreate(options.GetRootHash(), tsmie)
+}
+
+func (tr *patriciaMerkleTrie) recreate(root []byte, tsm common.StorageManager) (*patriciaMerkleTrie, error) {
+	if common.IsEmptyTrie(root) {
+		return NewTrie(
+			tr.trieStorage,
+			tr.marshalizer,
+			tr.hasher,
+			tr.enableEpochsHandler,
+			tr.maxTrieLevelInMemory,
+		)
+	}
+
+	newTr, _, err := tr.recreateFromDb(root, tsm)
 	if err != nil {
-		if err == storage.ErrDBIsClosed || strings.Contains(err.Error(), storage.ErrDBIsClosed.Error()) {
+		if core.IsClosingError(err) {
 			log.Debug("could not recreate", "rootHash", root, "error", err)
 			return nil, err
 		}
@@ -282,6 +308,9 @@ func (tr *patriciaMerkleTrie) recreate(root []byte) (*patriciaMerkleTrie, error)
 
 // String outputs a graphical view of the trie. Mainly used in tests/debugging
 func (tr *patriciaMerkleTrie) String() string {
+	tr.mutOperation.Lock()
+	defer tr.mutOperation.Unlock()
+
 	writer := bytes.NewBuffer(make([]byte, 0))
 
 	if tr.root == nil {
@@ -296,16 +325,6 @@ func (tr *patriciaMerkleTrie) String() string {
 // IsInterfaceNil returns true if there is no value under the interface
 func (tr *patriciaMerkleTrie) IsInterfaceNil() bool {
 	return tr == nil
-}
-
-func emptyTrie(root []byte) bool {
-	if len(root) == 0 {
-		return true
-	}
-	if bytes.Equal(root, EmptyTrieHash) {
-		return true
-	}
-	return false
 }
 
 // GetObsoleteHashes resets the oldHashes and oldRoot variables and returns the old hashes
@@ -349,6 +368,7 @@ func (tr *patriciaMerkleTrie) recreateFromDb(rootHash []byte, tsm common.Storage
 		tsm,
 		tr.marshalizer,
 		tr.hasher,
+		tr.enableEpochsHandler,
 		tr.maxTrieLevelInMemory,
 	)
 	if err != nil {
@@ -368,6 +388,9 @@ func (tr *patriciaMerkleTrie) recreateFromDb(rootHash []byte, tsm common.Storage
 
 // GetSerializedNode returns the serialized node (if existing) provided the node's hash
 func (tr *patriciaMerkleTrie) GetSerializedNode(hash []byte) ([]byte, error) {
+	// TODO: investigate if we can move the critical section behavior in the trie node resolver as this call will compete with a normal trie.Get operation
+	//  which might occur during processing.
+	//  warning: A critical section here or on the trie node resolver must be kept as to not overwhelm the node with requests that affects the block processing flow
 	tr.mutOperation.Lock()
 	defer tr.mutOperation.Unlock()
 
@@ -378,6 +401,9 @@ func (tr *patriciaMerkleTrie) GetSerializedNode(hash []byte) ([]byte, error) {
 
 // GetSerializedNodes returns a batch of serialized nodes from the trie, starting from the given hash
 func (tr *patriciaMerkleTrie) GetSerializedNodes(rootHash []byte, maxBuffToSend uint64) ([][]byte, uint64, error) {
+	// TODO: investigate if we can move the critical section behavior in the trie node resolver as this call will compete with a normal trie.Get operation
+	//  which might occur during processing.
+	//  warning: A critical section here or on the trie node resolver must be kept as to not overwhelm the node with requests that affects the block processing flow
 	tr.mutOperation.Lock()
 	defer tr.mutOperation.Unlock()
 
@@ -389,7 +415,7 @@ func (tr *patriciaMerkleTrie) GetSerializedNodes(rootHash []byte, maxBuffToSend 
 		return nil, 0, err
 	}
 
-	it, err := NewIterator(newTr)
+	it, err := NewDFSIterator(newTr)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -428,45 +454,62 @@ func (tr *patriciaMerkleTrie) GetSerializedNodes(rootHash []byte, maxBuffToSend 
 
 // GetAllLeavesOnChannel adds all the trie leaves to the given channel
 func (tr *patriciaMerkleTrie) GetAllLeavesOnChannel(
-	leavesChannel chan core.KeyValueHolder,
+	leavesChannels *common.TrieIteratorChannels,
 	ctx context.Context,
 	rootHash []byte,
+	keyBuilder common.KeyBuilder,
+	trieLeafParser common.TrieLeafParser,
 ) error {
-	tr.mutOperation.RLock()
-	newTrie, err := tr.recreate(rootHash)
+	if leavesChannels == nil {
+		return ErrNilTrieIteratorChannels
+	}
+	if leavesChannels.LeavesChan == nil {
+		return ErrNilTrieIteratorLeavesChannel
+	}
+	if leavesChannels.ErrChan == nil {
+		return ErrNilTrieIteratorErrChannel
+	}
+	if check.IfNil(keyBuilder) {
+		return ErrNilKeyBuilder
+	}
+	if check.IfNil(trieLeafParser) {
+		return ErrNilTrieLeafParser
+	}
+
+	newTrie, err := tr.recreate(rootHash, tr.trieStorage)
 	if err != nil {
-		tr.mutOperation.RUnlock()
-		close(leavesChannel)
+		close(leavesChannels.LeavesChan)
+		leavesChannels.ErrChan.Close()
 		return err
 	}
 
 	if check.IfNil(newTrie) || newTrie.root == nil {
-		tr.mutOperation.RUnlock()
-		close(leavesChannel)
+		close(leavesChannels.LeavesChan)
+		leavesChannels.ErrChan.Close()
 		return nil
 	}
 
 	tr.trieStorage.EnterPruningBufferingMode()
-	tr.mutOperation.RUnlock()
 
 	go func() {
 		err = newTrie.root.getAllLeavesOnChannel(
-			leavesChannel,
-			[]byte{},
+			leavesChannels.LeavesChan,
+			keyBuilder,
+			trieLeafParser,
 			tr.trieStorage,
 			tr.marshalizer,
 			tr.chanClose,
 			ctx,
 		)
 		if err != nil {
+			leavesChannels.ErrChan.WriteInChanNonBlocking(err)
 			log.Error("could not get all trie leaves: ", "error", err)
 		}
 
-		tr.mutOperation.Lock()
 		tr.trieStorage.ExitPruningBufferingMode()
-		tr.mutOperation.Unlock()
 
-		close(leavesChannel)
+		close(leavesChannels.LeavesChan)
+		leavesChannels.ErrChan.Close()
 	}()
 
 	return nil
@@ -550,9 +593,21 @@ func (tr *patriciaMerkleTrie) GetProof(key []byte) ([][]byte, []byte, error) {
 
 // VerifyProof verifies the given Merkle proof
 func (tr *patriciaMerkleTrie) VerifyProof(rootHash []byte, key []byte, proof [][]byte) (bool, error) {
-	tr.mutOperation.Lock()
-	defer tr.mutOperation.Unlock()
+	tr.mutOperation.RLock()
+	defer tr.mutOperation.RUnlock()
 
+	ok, err := tr.verifyProof(rootHash, tr.hasher.Compute(string(key)), proof)
+	if err != nil {
+		return false, err
+	}
+	if ok {
+		return true, nil
+	}
+
+	return tr.verifyProof(rootHash, key, proof)
+}
+
+func (tr *patriciaMerkleTrie) verifyProof(rootHash []byte, key []byte, proof [][]byte) (bool, error) {
 	wantHash := rootHash
 	key = keyBytesToHex(key)
 	for _, encodedNode := range proof {
@@ -580,24 +635,8 @@ func (tr *patriciaMerkleTrie) VerifyProof(rootHash []byte, key []byte, proof [][
 	return false, nil
 }
 
-// GetNumNodes will return the trie nodes statistics DTO
-func (tr *patriciaMerkleTrie) GetNumNodes() common.NumNodesDTO {
-	tr.mutOperation.Lock()
-	defer tr.mutOperation.Unlock()
-
-	n := tr.root
-	if check.IfNil(n) {
-		return common.NumNodesDTO{}
-	}
-
-	return n.getNumNodes()
-}
-
 // GetStorageManager returns the storage manager for the trie
 func (tr *patriciaMerkleTrie) GetStorageManager() common.StorageManager {
-	tr.mutOperation.Lock()
-	defer tr.mutOperation.Unlock()
-
 	return tr.trieStorage
 }
 
@@ -607,6 +646,83 @@ func (tr *patriciaMerkleTrie) GetOldRoot() []byte {
 	defer tr.mutOperation.Unlock()
 
 	return tr.oldRoot
+}
+
+// GetTrieStats will collect and return the statistics for the given rootHash
+func (tr *patriciaMerkleTrie) GetTrieStats(address string, rootHash []byte) (common.TrieStatisticsHandler, error) {
+	newTrie, err := tr.recreate(rootHash, tr.trieStorage)
+	if err != nil {
+		return nil, err
+	}
+
+	ts := statistics.NewTrieStatistics()
+	err = newTrie.root.collectStats(ts, rootDepthLevel, newTrie.trieStorage)
+	if err != nil {
+		return nil, err
+	}
+	ts.AddAccountInfo(address, rootHash)
+
+	return ts, nil
+}
+
+// CollectLeavesForMigration will collect trie leaves that need to be migrated. The leaves are collected in the trieMigrator.
+// The traversing of the trie is done in a DFS manner, and it will stop when the gas runs out (this will be signaled by the trieMigrator).
+func (tr *patriciaMerkleTrie) CollectLeavesForMigration(args vmcommon.ArgsMigrateDataTrieLeaves) error {
+	tr.mutOperation.Lock()
+	defer tr.mutOperation.Unlock()
+
+	if check.IfNil(tr.root) {
+		return nil
+	}
+	if check.IfNil(args.TrieMigrator) {
+		return errors.ErrNilTrieMigrator
+	}
+
+	err := tr.checkIfMigrationPossible(args)
+	if err != nil {
+		return err
+	}
+
+	_, err = tr.root.collectLeavesForMigration(args, tr.trieStorage, keyBuilder.NewKeyBuilder())
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (tr *patriciaMerkleTrie) checkIfMigrationPossible(args vmcommon.ArgsMigrateDataTrieLeaves) error {
+	if !tr.trieNodeVersionVerifier.IsValidVersion(args.NewVersion) {
+		return fmt.Errorf("%w: newVersion %v", errors.ErrInvalidTrieNodeVersion, args.NewVersion)
+	}
+
+	if !tr.trieNodeVersionVerifier.IsValidVersion(args.OldVersion) {
+		return fmt.Errorf("%w: oldVersion %v", errors.ErrInvalidTrieNodeVersion, args.OldVersion)
+	}
+
+	if args.NewVersion == core.NotSpecified && args.OldVersion == core.AutoBalanceEnabled {
+		return fmt.Errorf("%w: cannot migrate from %v to %v", errors.ErrInvalidTrieNodeVersion, core.AutoBalanceEnabled, core.NotSpecified)
+	}
+
+	return nil
+}
+
+// IsMigratedToLatestVersion returns true if the trie is migrated to the latest version
+func (tr *patriciaMerkleTrie) IsMigratedToLatestVersion() (bool, error) {
+	tr.mutOperation.Lock()
+	defer tr.mutOperation.Unlock()
+
+	if check.IfNil(tr.root) {
+		return true, nil
+	}
+
+	version, err := tr.root.getVersion()
+	if err != nil {
+		return false, err
+	}
+
+	versionForNewlyAddedData := core.GetVersionForNewData(tr.enableEpochsHandler)
+	return version == versionForNewlyAddedData, nil
 }
 
 // Close stops all the active goroutines started by the trie

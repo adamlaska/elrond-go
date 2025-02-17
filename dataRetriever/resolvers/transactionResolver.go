@@ -3,18 +3,15 @@ package resolvers
 import (
 	"fmt"
 
-	"github.com/ElrondNetwork/elrond-go-core/core"
-	"github.com/ElrondNetwork/elrond-go-core/core/check"
-	"github.com/ElrondNetwork/elrond-go-core/data/batch"
-	"github.com/ElrondNetwork/elrond-go-core/marshal"
-	logger "github.com/ElrondNetwork/elrond-go-logger"
-	"github.com/ElrondNetwork/elrond-go/dataRetriever"
-	"github.com/ElrondNetwork/elrond-go/dataRetriever/requestHandlers"
-	"github.com/ElrondNetwork/elrond-go/p2p"
-	"github.com/ElrondNetwork/elrond-go/storage"
+	"github.com/multiversx/mx-chain-core-go/core"
+	"github.com/multiversx/mx-chain-core-go/core/check"
+	"github.com/multiversx/mx-chain-core-go/data/batch"
+	"github.com/multiversx/mx-chain-go/dataRetriever"
+	"github.com/multiversx/mx-chain-go/p2p"
+	"github.com/multiversx/mx-chain-go/storage"
+	logger "github.com/multiversx/mx-chain-logger-go"
 )
 
-var _ requestHandlers.HashSliceResolver = (*TxResolver)(nil)
 var _ dataRetriever.Resolver = (*TxResolver)(nil)
 
 // maxBuffToSendBulkTransactions represents max buffer size to send in bytes
@@ -25,19 +22,16 @@ const maxBuffToSendBulkMiniblocks = 1 << 18 // 256KB
 
 // ArgTxResolver is the argument structure used to create new TxResolver instance
 type ArgTxResolver struct {
-	SenderResolver    dataRetriever.TopicResolverSender
+	ArgBaseResolver
 	TxPool            dataRetriever.ShardedDataCacherNotifier
 	TxStorage         storage.Storer
-	Marshalizer       marshal.Marshalizer
 	DataPacker        dataRetriever.DataPacker
-	AntifloodHandler  dataRetriever.P2PAntifloodHandler
-	Throttler         dataRetriever.ResolverThrottler
 	IsFullHistoryNode bool
 }
 
 // TxResolver is a wrapper over Resolver that is specialized in resolving transaction requests
 type TxResolver struct {
-	dataRetriever.TopicResolverSender
+	*baseResolver
 	messageProcessor
 	baseStorageResolver
 	txPool     dataRetriever.ShardedDataCacherNotifier
@@ -46,35 +40,20 @@ type TxResolver struct {
 
 // NewTxResolver creates a new transaction resolver
 func NewTxResolver(arg ArgTxResolver) (*TxResolver, error) {
-	if check.IfNil(arg.SenderResolver) {
-		return nil, dataRetriever.ErrNilResolverSender
-	}
-	if check.IfNil(arg.TxPool) {
-		return nil, dataRetriever.ErrNilTxDataPool
-	}
-	if check.IfNil(arg.TxStorage) {
-		return nil, dataRetriever.ErrNilTxStorage
-	}
-	if check.IfNil(arg.Marshalizer) {
-		return nil, dataRetriever.ErrNilMarshalizer
-	}
-	if check.IfNil(arg.DataPacker) {
-		return nil, dataRetriever.ErrNilDataPacker
-	}
-	if check.IfNil(arg.AntifloodHandler) {
-		return nil, dataRetriever.ErrNilAntifloodHandler
-	}
-	if check.IfNil(arg.Throttler) {
-		return nil, dataRetriever.ErrNilThrottler
+	err := checkArgTxResolver(arg)
+	if err != nil {
+		return nil, err
 	}
 
 	txResolver := &TxResolver{
-		TopicResolverSender: arg.SenderResolver,
+		baseResolver: &baseResolver{
+			TopicResolverSender: arg.SenderResolver,
+		},
 		txPool:              arg.TxPool,
 		baseStorageResolver: createBaseStorageResolver(arg.TxStorage, arg.IsFullHistoryNode),
 		dataPacker:          arg.DataPacker,
 		messageProcessor: messageProcessor{
-			marshalizer:      arg.Marshalizer,
+			marshalizer:      arg.Marshaller,
 			antifloodHandler: arg.AntifloodHandler,
 			topic:            arg.SenderResolver.RequestTopic(),
 			throttler:        arg.Throttler,
@@ -84,9 +63,26 @@ func NewTxResolver(arg ArgTxResolver) (*TxResolver, error) {
 	return txResolver, nil
 }
 
+func checkArgTxResolver(arg ArgTxResolver) error {
+	err := checkArgBase(arg.ArgBaseResolver)
+	if err != nil {
+		return err
+	}
+	if check.IfNil(arg.TxPool) {
+		return dataRetriever.ErrNilTxDataPool
+	}
+	if check.IfNil(arg.TxStorage) {
+		return dataRetriever.ErrNilTxStorage
+	}
+	if check.IfNil(arg.DataPacker) {
+		return dataRetriever.ErrNilDataPacker
+	}
+	return nil
+}
+
 // ProcessReceivedMessage will be the callback func from the p2p.Messenger and will be called each time a new message was received
 // (for the topic this validator was registered to, usually a request topic)
-func (txRes *TxResolver) ProcessReceivedMessage(message p2p.MessageP2P, fromConnectedPeer core.PeerID) error {
+func (txRes *TxResolver) ProcessReceivedMessage(message p2p.MessageP2P, fromConnectedPeer core.PeerID, source p2p.MessageHandler) error {
 	err := txRes.canProcessMessage(message, fromConnectedPeer)
 	if err != nil {
 		return err
@@ -102,9 +98,9 @@ func (txRes *TxResolver) ProcessReceivedMessage(message p2p.MessageP2P, fromConn
 
 	switch rd.Type {
 	case dataRetriever.HashType:
-		err = txRes.resolveTxRequestByHash(rd.Value, message.Peer(), rd.Epoch)
+		err = txRes.resolveTxRequestByHash(rd.Value, message.Peer(), rd.Epoch, source)
 	case dataRetriever.HashArrayType:
-		err = txRes.resolveTxRequestByHashArray(rd.Value, message.Peer(), rd.Epoch)
+		err = txRes.resolveTxRequestByHashArray(rd.Value, message.Peer(), rd.Epoch, source)
 	default:
 		err = dataRetriever.ErrRequestTypeNotImplemented
 	}
@@ -116,7 +112,7 @@ func (txRes *TxResolver) ProcessReceivedMessage(message p2p.MessageP2P, fromConn
 	return err
 }
 
-func (txRes *TxResolver) resolveTxRequestByHash(hash []byte, pid core.PeerID, epoch uint32) error {
+func (txRes *TxResolver) resolveTxRequestByHash(hash []byte, pid core.PeerID, epoch uint32, source p2p.MessageHandler) error {
 	// TODO this can be optimized by searching in corresponding datapool (taken by topic name)
 	tx, err := txRes.fetchTxAsByteSlice(hash, epoch)
 	if err != nil {
@@ -131,7 +127,7 @@ func (txRes *TxResolver) resolveTxRequestByHash(hash []byte, pid core.PeerID, ep
 		return err
 	}
 
-	return txRes.Send(buff, pid)
+	return txRes.Send(buff, pid, source)
 }
 
 func (txRes *TxResolver) fetchTxAsByteSlice(hash []byte, epoch uint32) ([]byte, error) {
@@ -142,7 +138,7 @@ func (txRes *TxResolver) fetchTxAsByteSlice(hash []byte, epoch uint32) ([]byte, 
 
 	buff, err := txRes.getFromStorage(hash, epoch)
 	if err != nil {
-		txRes.ResolverDebugHandler().LogFailedToResolveData(
+		txRes.DebugHandler().LogFailedToResolveData(
 			txRes.topic,
 			hash,
 			err,
@@ -151,12 +147,12 @@ func (txRes *TxResolver) fetchTxAsByteSlice(hash []byte, epoch uint32) ([]byte, 
 		return nil, err
 	}
 
-	txRes.ResolverDebugHandler().LogSucceededToResolveData(txRes.topic, hash)
+	txRes.DebugHandler().LogSucceededToResolveData(txRes.topic, hash)
 
 	return buff, nil
 }
 
-func (txRes *TxResolver) resolveTxRequestByHashArray(hashesBuff []byte, pid core.PeerID, epoch uint32) error {
+func (txRes *TxResolver) resolveTxRequestByHashArray(hashesBuff []byte, pid core.PeerID, epoch uint32, source p2p.MessageHandler) error {
 	// TODO this can be optimized by searching in corresponding datapool (taken by topic name)
 	b := batch.Batch{}
 	err := txRes.marshalizer.Unmarshal(&b, hashesBuff)
@@ -190,7 +186,7 @@ func (txRes *TxResolver) resolveTxRequestByHashArray(hashesBuff []byte, pid core
 	}
 
 	for _, buff := range buffsToSend {
-		errSend := txRes.Send(buff, pid)
+		errSend := txRes.Send(buff, pid, source)
 		if errSend != nil {
 			return errSend
 		}
@@ -201,72 +197,6 @@ func (txRes *TxResolver) resolveTxRequestByHashArray(hashesBuff []byte, pid core
 	}
 
 	return errFetch
-}
-
-// RequestDataFromHash requests a transaction from other peers having input the tx hash
-func (txRes *TxResolver) RequestDataFromHash(hash []byte, epoch uint32) error {
-	log.Trace("TxResolver.RequestDataFromHash", "hash", hash, "topic", txRes.RequestTopic())
-
-	return txRes.SendOnRequestTopic(
-		&dataRetriever.RequestData{
-			Type:  dataRetriever.HashType,
-			Value: hash,
-			Epoch: epoch,
-		},
-		[][]byte{hash},
-	)
-}
-
-// RequestDataFromHashArray requests a list of tx hashes from other peers
-func (txRes *TxResolver) RequestDataFromHashArray(hashes [][]byte, epoch uint32) error {
-	txRes.printHashArray(hashes)
-
-	b := &batch.Batch{
-		Data: hashes,
-	}
-	buffHashes, err := txRes.marshalizer.Marshal(b)
-	if err != nil {
-		return err
-	}
-
-	return txRes.SendOnRequestTopic(
-		&dataRetriever.RequestData{
-			Type:  dataRetriever.HashArrayType,
-			Value: buffHashes,
-			Epoch: epoch,
-		},
-		hashes,
-	)
-}
-
-func (txRes *TxResolver) printHashArray(hashes [][]byte) {
-	if log.GetLevel() > logger.LogTrace {
-		return
-	}
-
-	for _, hash := range hashes {
-		log.Trace("TxResolver.RequestDataFromHashArray", "hash", hash, "topic", txRes.RequestTopic())
-	}
-}
-
-// SetNumPeersToQuery will set the number of intra shard and cross shard number of peer to query
-func (txRes *TxResolver) SetNumPeersToQuery(intra int, cross int) {
-	txRes.TopicResolverSender.SetNumPeersToQuery(intra, cross)
-}
-
-// NumPeersToQuery will return the number of intra shard and cross shard number of peer to query
-func (txRes *TxResolver) NumPeersToQuery() (int, int) {
-	return txRes.TopicResolverSender.NumPeersToQuery()
-}
-
-// SetResolverDebugHandler will set a resolver debug handler
-func (txRes *TxResolver) SetResolverDebugHandler(handler dataRetriever.ResolverDebugHandler) error {
-	return txRes.TopicResolverSender.SetResolverDebugHandler(handler)
-}
-
-// Close returns nil
-func (txRes *TxResolver) Close() error {
-	return nil
 }
 
 // IsInterfaceNil returns true if there is no value under the interface

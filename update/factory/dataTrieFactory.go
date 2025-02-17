@@ -3,19 +3,23 @@ package factory
 import (
 	"path"
 
-	"github.com/ElrondNetwork/elrond-go-core/core"
-	"github.com/ElrondNetwork/elrond-go-core/core/check"
-	"github.com/ElrondNetwork/elrond-go-core/hashing"
-	"github.com/ElrondNetwork/elrond-go-core/marshal"
-	"github.com/ElrondNetwork/elrond-go/common"
-	"github.com/ElrondNetwork/elrond-go/config"
-	"github.com/ElrondNetwork/elrond-go/sharding"
-	"github.com/ElrondNetwork/elrond-go/state"
-	storageFactory "github.com/ElrondNetwork/elrond-go/storage/factory"
-	"github.com/ElrondNetwork/elrond-go/storage/storageUnit"
-	"github.com/ElrondNetwork/elrond-go/trie"
-	"github.com/ElrondNetwork/elrond-go/update"
-	"github.com/ElrondNetwork/elrond-go/update/genesis"
+	"github.com/multiversx/mx-chain-core-go/core"
+	"github.com/multiversx/mx-chain-core-go/core/check"
+	"github.com/multiversx/mx-chain-core-go/hashing"
+	"github.com/multiversx/mx-chain-core-go/marshal"
+	"github.com/multiversx/mx-chain-go/common"
+	commonDisabled "github.com/multiversx/mx-chain-go/common/disabled"
+	"github.com/multiversx/mx-chain-go/common/statistics"
+	"github.com/multiversx/mx-chain-go/config"
+	"github.com/multiversx/mx-chain-go/dataRetriever"
+	"github.com/multiversx/mx-chain-go/sharding"
+	"github.com/multiversx/mx-chain-go/state"
+	"github.com/multiversx/mx-chain-go/storage/factory"
+	storageFactory "github.com/multiversx/mx-chain-go/storage/factory"
+	"github.com/multiversx/mx-chain-go/storage/storageunit"
+	"github.com/multiversx/mx-chain-go/trie"
+	"github.com/multiversx/mx-chain-go/update"
+	"github.com/multiversx/mx-chain-go/update/genesis"
 )
 
 // ArgsNewDataTrieFactory is the argument structure for the new data trie factory
@@ -25,6 +29,8 @@ type ArgsNewDataTrieFactory struct {
 	Marshalizer          marshal.Marshalizer
 	Hasher               hashing.Hasher
 	ShardCoordinator     sharding.Coordinator
+	EnableEpochsHandler  common.EnableEpochsHandler
+	StateStatsCollector  common.StateStatisticsHandler
 	MaxTrieLevelInMemory uint
 }
 
@@ -33,6 +39,7 @@ type dataTrieFactory struct {
 	trieStorage          common.StorageManager
 	marshalizer          marshal.Marshalizer
 	hasher               hashing.Hasher
+	enableEpochsHandler  common.EnableEpochsHandler
 	maxTrieLevelInMemory uint
 }
 
@@ -50,18 +57,45 @@ func NewDataTrieFactory(args ArgsNewDataTrieFactory) (*dataTrieFactory, error) {
 	if check.IfNil(args.Hasher) {
 		return nil, update.ErrNilHasher
 	}
+	if check.IfNil(args.EnableEpochsHandler) {
+		return nil, update.ErrNilEnableEpochsHandler
+	}
+	if check.IfNil(args.StateStatsCollector) {
+		return nil, statistics.ErrNilStateStatsHandler
+	}
 
 	dbConfig := storageFactory.GetDBFromConfig(args.StorageConfig.DB)
 	dbConfig.FilePath = path.Join(args.SyncFolder, args.StorageConfig.DB.FilePath)
-	accountsTrieStorage, err := storageUnit.NewStorageUnitFromConf(
-		storageFactory.GetCacherFromConfig(args.StorageConfig.Cache),
-		dbConfig,
-	)
+
+	persisterFactory, err := factory.NewPersisterFactory(args.StorageConfig.DB)
 	if err != nil {
 		return nil, err
 	}
 
-	trieStorage, err := trie.NewTrieStorageManagerWithoutPruning(accountsTrieStorage)
+	accountsTrieStorage, err := storageunit.NewStorageUnitFromConf(
+		storageFactory.GetCacherFromConfig(args.StorageConfig.Cache),
+		dbConfig,
+		persisterFactory,
+	)
+	if err != nil {
+		return nil, err
+	}
+	tsmArgs := trie.NewTrieStorageManagerArgs{
+		MainStorer:  accountsTrieStorage,
+		Marshalizer: args.Marshalizer,
+		Hasher:      args.Hasher,
+		GeneralConfig: config.TrieStorageManagerConfig{
+			SnapshotsGoroutineNum: 2,
+		},
+		IdleProvider:   commonDisabled.NewProcessStatusHandler(),
+		Identifier:     dataRetriever.UserAccountsUnit.String(),
+		StatsCollector: args.StateStatsCollector,
+	}
+	options := trie.StorageManagerOptions{
+		PruningEnabled:   false,
+		SnapshotsEnabled: false,
+	}
+	trieStorage, err := trie.CreateTrieStorageManager(tsmArgs, options)
 	if err != nil {
 		return nil, err
 	}
@@ -72,6 +106,7 @@ func NewDataTrieFactory(args ArgsNewDataTrieFactory) (*dataTrieFactory, error) {
 		marshalizer:          args.Marshalizer,
 		hasher:               args.Hasher,
 		maxTrieLevelInMemory: args.MaxTrieLevelInMemory,
+		enableEpochsHandler:  args.EnableEpochsHandler,
 	}
 
 	return d, nil
@@ -107,7 +142,7 @@ func (d *dataTrieFactory) Create() (common.TriesHolder, error) {
 }
 
 func (d *dataTrieFactory) createAndAddOneTrie(shId uint32, accType genesis.Type, container common.TriesHolder) error {
-	dataTrie, err := trie.NewTrie(d.trieStorage, d.marshalizer, d.hasher, d.maxTrieLevelInMemory)
+	dataTrie, err := trie.NewTrie(d.trieStorage, d.marshalizer, d.hasher, d.enableEpochsHandler, d.maxTrieLevelInMemory)
 	if err != nil {
 		return err
 	}

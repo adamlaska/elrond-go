@@ -8,12 +8,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ElrondNetwork/elrond-go-core/data/transaction"
-	"github.com/ElrondNetwork/elrond-go-crypto"
-	"github.com/ElrondNetwork/elrond-go/dataRetriever/resolvers"
-	"github.com/ElrondNetwork/elrond-go/integrationTests"
-	"github.com/ElrondNetwork/elrond-go/process/factory"
-	"github.com/ElrondNetwork/elrond-go/sharding"
+	"github.com/multiversx/mx-chain-core-go/data/transaction"
+	"github.com/multiversx/mx-chain-crypto-go"
+	"github.com/multiversx/mx-chain-go/dataRetriever/requestHandlers"
+	"github.com/multiversx/mx-chain-go/integrationTests"
+	"github.com/multiversx/mx-chain-go/process/factory"
+	"github.com/multiversx/mx-chain-go/sharding"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -51,7 +51,8 @@ func TestNode_InterceptorBulkTxsSentFromSameShardShouldRemainInSenderShard(t *te
 	fmt.Println("Generating and broadcasting transactions...")
 	_, pkInShardFive, _ := integrationTests.GenerateSkAndPkInShard(generateCoordinator, shardId)
 	pkBytes, _ := pkInShardFive.ToByteArray()
-	addrInShardFive := integrationTests.TestAddressPubkeyConverter.Encode(pkBytes)
+	addrInShardFive, err := integrationTests.TestAddressPubkeyConverter.Encode(pkBytes)
+	assert.Nil(t, err)
 
 	idxSender := 0
 	shardId = nodes[idxSender].ShardCoordinator.SelfId()
@@ -116,7 +117,11 @@ func TestNode_InterceptorBulkTxsSentFromOtherShardShouldBeRoutedInSenderShard(t 
 		nodesPerShard,
 		numMetachainNodes,
 	)
-	nodes[0] = integrationTests.NewTestProcessorNode(uint32(numOfShards), 0, firstSkInShard)
+	nodes[0] = integrationTests.NewTestProcessorNode(integrationTests.ArgTestProcessorNode{
+		MaxShards:            uint32(numOfShards),
+		NodeShardId:          0,
+		TxSignPrivKeyShardId: firstSkInShard,
+	})
 	integrationTests.CreateAccountForNodes(nodes)
 	integrationTests.DisplayAndStartNodes(nodes)
 
@@ -132,7 +137,8 @@ func TestNode_InterceptorBulkTxsSentFromOtherShardShouldBeRoutedInSenderShard(t 
 
 	_, pkInShardFive, _ := integrationTests.GenerateSkAndPkInShard(generateCoordinator, shardId)
 	pkBytes, _ := pkInShardFive.ToByteArray()
-	addrInShardFive := integrationTests.TestAddressPubkeyConverter.Encode(pkBytes)
+	addrInShardFive, err := integrationTests.TestAddressPubkeyConverter.Encode(pkBytes)
+	assert.Nil(t, err)
 
 	idxSender := 0
 	shardId = uint32(4)
@@ -214,7 +220,11 @@ func TestNode_InterceptorBulkTxsSentFromOtherShardShouldBeRoutedInSenderShardAnd
 		nodesPerShard,
 		numMetachainNodes,
 	)
-	nodes[0] = integrationTests.NewTestProcessorNode(uint32(numOfShards), 0, firstSkInShard)
+	nodes[0] = integrationTests.NewTestProcessorNode(integrationTests.ArgTestProcessorNode{
+		MaxShards:            uint32(numOfShards),
+		NodeShardId:          0,
+		TxSignPrivKeyShardId: firstSkInShard,
+	})
 	integrationTests.CreateAccountForNodes(nodes)
 	integrationTests.DisplayAndStartNodes(nodes)
 
@@ -233,7 +243,8 @@ func TestNode_InterceptorBulkTxsSentFromOtherShardShouldBeRoutedInSenderShardAnd
 
 	_, pkInShardFive, _ := integrationTests.GenerateSkAndPkInShard(generateCoordinator, 5)
 	pkBytes, _ := pkInShardFive.ToByteArray()
-	addrInShardFive := integrationTests.TestAddressPubkeyConverter.Encode(pkBytes)
+	addrInShardFive, err := integrationTests.TestAddressPubkeyConverter.Encode(pkBytes)
+	assert.Nil(t, err)
 
 	mutGeneratedTxHashes := sync.Mutex{}
 	generatedTxHashes := make([][]byte, 0)
@@ -338,12 +349,12 @@ func TestNode_InMultiShardEnvRequestTxsShouldRequireFromTheOtherShardAndSameShar
 	for i := 0; i < nodesPerShard; i++ {
 		dPool := integrationTests.CreateRequesterDataPool(recvTxs, &mutRecvTxs, i, 0)
 
-		tn := integrationTests.NewTestProcessorNodeWithCustomDataPool(
-			uint32(maxShards),
-			0,
-			0,
-			dPool,
-		)
+		tn := integrationTests.NewTestProcessorNode(integrationTests.ArgTestProcessorNode{
+			MaxShards:            uint32(maxShards),
+			NodeShardId:          0,
+			TxSignPrivKeyShardId: 0,
+			DataPool:             dPool,
+		})
 
 		nodes = append(nodes, tn)
 		connectableNodes = append(connectableNodes, tn)
@@ -359,12 +370,12 @@ func TestNode_InMultiShardEnvRequestTxsShouldRequireFromTheOtherShardAndSameShar
 
 	//shard 1, resolvers, same data pool, does not matter
 	for i := 0; i < nodesPerShard; i++ {
-		tn := integrationTests.NewTestProcessorNodeWithCustomDataPool(
-			uint32(maxShards),
-			1,
-			1,
-			dPool,
-		)
+		tn := integrationTests.NewTestProcessorNode(integrationTests.ArgTestProcessorNode{
+			MaxShards:            uint32(maxShards),
+			NodeShardId:          1,
+			TxSignPrivKeyShardId: 1,
+			DataPool:             dPool,
+		})
 
 		atomic.StoreInt32(&tn.CounterTxRecv, int32(txGenerated))
 
@@ -382,11 +393,11 @@ func TestNode_InMultiShardEnvRequestTxsShouldRequireFromTheOtherShardAndSameShar
 	fmt.Println("Request nodes start asking the data...")
 	reqShardCoordinator, _ := sharding.NewMultiShardCoordinator(uint32(maxShards), 0)
 	for i := 0; i < nodesPerShard; i++ {
-		resolver, _ := nodes[i].ResolverFinder.Get(factory.TransactionTopic + reqShardCoordinator.CommunicationIdentifier(1))
-		txResolver, ok := resolver.(*resolvers.TxResolver)
+		requester, _ := nodes[i].RequestersFinder.Get(factory.TransactionTopic + reqShardCoordinator.CommunicationIdentifier(1))
+		txRequester, ok := requester.(requestHandlers.HashSliceRequester)
 		assert.True(t, ok)
 
-		_ = txResolver.RequestDataFromHashArray(txHashesGenerated, 0)
+		_ = txRequester.RequestDataFromHashArray(txHashesGenerated, 0)
 	}
 
 	time.Sleep(time.Second * 5)

@@ -1,24 +1,23 @@
 package factory
 
 import (
-	"github.com/ElrondNetwork/elrond-go-core/core"
-	"github.com/ElrondNetwork/elrond-go-core/core/check"
-	"github.com/ElrondNetwork/elrond-go-core/hashing"
-	"github.com/ElrondNetwork/elrond-go-core/marshal"
-	"github.com/ElrondNetwork/elrond-go/outport"
-	"github.com/ElrondNetwork/elrond-go/outport/notifier"
+	"github.com/multiversx/mx-chain-core-go/core"
+	"github.com/multiversx/mx-chain-core-go/core/check"
+	"github.com/multiversx/mx-chain-core-go/data/block"
+	"github.com/multiversx/mx-chain-core-go/marshal"
+	"github.com/multiversx/mx-chain-go/outport"
+	"github.com/multiversx/mx-chain-go/outport/notifier"
 )
 
 // EventNotifierFactoryArgs defines the args needed for event notifier creation
 type EventNotifierFactoryArgs struct {
-	Enabled          bool
-	UseAuthorization bool
-	ProxyUrl         string
-	Username         string
-	Password         string
-	Marshaller       marshal.Marshalizer
-	Hasher           hashing.Hasher
-	PubKeyConverter  core.PubkeyConverter
+	Enabled           bool
+	UseAuthorization  bool
+	ProxyUrl          string
+	Username          string
+	Password          string
+	RequestTimeoutSec int
+	Marshaller        marshal.Marshalizer
 }
 
 // CreateEventNotifier will create a new event notifier client instance
@@ -27,18 +26,27 @@ func CreateEventNotifier(args *EventNotifierFactoryArgs) (outport.Driver, error)
 		return nil, err
 	}
 
-	httpClient := notifier.NewHttpClient(notifier.HttpClientArgs{
-		UseAuthorization: args.UseAuthorization,
-		Username:         args.Username,
-		Password:         args.Password,
-		BaseUrl:          args.ProxyUrl,
-	})
+	httpClientArgs := notifier.HTTPClientWrapperArgs{
+		UseAuthorization:  args.UseAuthorization,
+		Username:          args.Username,
+		Password:          args.Password,
+		BaseUrl:           args.ProxyUrl,
+		RequestTimeoutSec: args.RequestTimeoutSec,
+	}
+	httpClient, err := notifier.NewHTTPWrapperClient(httpClientArgs)
+	if err != nil {
+		return nil, err
+	}
+
+	blockContainer, err := createBlockCreatorsContainer()
+	if err != nil {
+		return nil, err
+	}
 
 	notifierArgs := notifier.ArgsEventNotifier{
-		HttpClient:      httpClient,
-		Marshalizer:     args.Marshaller,
-		Hasher:          args.Hasher,
-		PubKeyConverter: args.PubKeyConverter,
+		HttpClient:     httpClient,
+		Marshaller:     args.Marshaller,
+		BlockContainer: blockContainer,
 	}
 
 	return notifier.NewEventNotifier(notifierArgs)
@@ -48,12 +56,24 @@ func checkInputArgs(args *EventNotifierFactoryArgs) error {
 	if check.IfNil(args.Marshaller) {
 		return core.ErrNilMarshalizer
 	}
-	if check.IfNil(args.Hasher) {
-		return core.ErrNilHasher
-	}
-	if check.IfNil(args.PubKeyConverter) {
-		return outport.ErrNilPubKeyConverter
-	}
 
 	return nil
+}
+
+func createBlockCreatorsContainer() (notifier.BlockContainerHandler, error) {
+	container := block.NewEmptyBlockCreatorsContainer()
+	err := container.Add(core.ShardHeaderV1, block.NewEmptyHeaderCreator())
+	if err != nil {
+		return nil, err
+	}
+	err = container.Add(core.ShardHeaderV2, block.NewEmptyHeaderV2Creator())
+	if err != nil {
+		return nil, err
+	}
+	err = container.Add(core.MetaHeader, block.NewEmptyMetaBlockCreator())
+	if err != nil {
+		return nil, err
+	}
+
+	return container, nil
 }

@@ -9,27 +9,33 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/ElrondNetwork/elrond-go-core/core"
-	"github.com/ElrondNetwork/elrond-go-core/core/check"
-	"github.com/ElrondNetwork/elrond-go-core/display"
-	"github.com/ElrondNetwork/elrond-go-core/marshal"
-	factoryMarshalizer "github.com/ElrondNetwork/elrond-go-core/marshal/factory"
-	logger "github.com/ElrondNetwork/elrond-go-logger"
-	"github.com/ElrondNetwork/elrond-go/cmd/node/factory"
-	"github.com/ElrondNetwork/elrond-go/cmd/seednode/api"
-	"github.com/ElrondNetwork/elrond-go/common"
-	"github.com/ElrondNetwork/elrond-go/common/logging"
-	"github.com/ElrondNetwork/elrond-go/config"
-	"github.com/ElrondNetwork/elrond-go/epochStart/bootstrap/disabled"
-	"github.com/ElrondNetwork/elrond-go/facade"
-	"github.com/ElrondNetwork/elrond-go/p2p"
-	"github.com/ElrondNetwork/elrond-go/p2p/libp2p"
+	"github.com/multiversx/mx-chain-core-go/core"
+	"github.com/multiversx/mx-chain-core-go/core/check"
+	"github.com/multiversx/mx-chain-core-go/display"
+	"github.com/multiversx/mx-chain-core-go/marshal"
+	factoryMarshalizer "github.com/multiversx/mx-chain-core-go/marshal/factory"
+	"github.com/multiversx/mx-chain-crypto-go/signing"
+	"github.com/multiversx/mx-chain-crypto-go/signing/secp256k1"
+	secp256k1SinglerSig "github.com/multiversx/mx-chain-crypto-go/signing/secp256k1/singlesig"
+	"github.com/multiversx/mx-chain-go/cmd/node/factory"
+	"github.com/multiversx/mx-chain-go/cmd/seednode/api"
+	"github.com/multiversx/mx-chain-go/common"
+	"github.com/multiversx/mx-chain-go/config"
+	p2pDebug "github.com/multiversx/mx-chain-go/debug/p2p"
+	"github.com/multiversx/mx-chain-go/epochStart/bootstrap/disabled"
+	"github.com/multiversx/mx-chain-go/facade"
+	cryptoFactory "github.com/multiversx/mx-chain-go/factory/crypto"
+	"github.com/multiversx/mx-chain-go/p2p"
+	p2pConfig "github.com/multiversx/mx-chain-go/p2p/config"
+	p2pFactory "github.com/multiversx/mx-chain-go/p2p/factory"
+	logger "github.com/multiversx/mx-chain-logger-go"
+	"github.com/multiversx/mx-chain-logger-go/file"
 	"github.com/urfave/cli"
 )
 
 const (
 	defaultLogsPath     = "logs"
-	logFilePrefix       = "elrond-seed"
+	logFilePrefix       = "multiversx-seed"
 	filePathPlaceholder = "[path]"
 )
 
@@ -63,12 +69,6 @@ VERSION:
 			"To bind to all available interfaces, set this flag to :8080. If set to `off` then the API won't be available",
 		Value: facade.DefaultRestInterface,
 	}
-	// p2pSeed defines a flag to be used as a seed when generating P2P credentials. Useful for seed nodes.
-	p2pSeed = cli.StringFlag{
-		Name:  "p2p-seed",
-		Usage: "P2P seed will be used when generating credentials for p2p component. Can be any string.",
-		Value: "seed",
-	}
 	// logLevel defines the logger level
 	logLevel = cli.StringFlag{
 		Name: "log-level",
@@ -90,7 +90,21 @@ VERSION:
 			"configurations such as the marshalizer type",
 		Value: "./config/config.toml",
 	}
+	// p2pKeyPemFile defines the flag for the path to the key pem file used for p2p signing
+	p2pKeyPemFile = cli.StringFlag{
+		Name:  "p2p-key-pem-file",
+		Usage: "The `filepath` for the PEM file which contains the secret keys for the p2p key. If this is not specified a new key will be generated (internally) by default.",
+		Value: "./config/p2pKey.pem",
+	}
+
 	p2pConfigurationFile = "./config/p2p.toml"
+
+	// p2pPrometheusMetrics defines a flag for p2p prometheus metrics
+	// If enabled, it will open a new route, /debug/metrics/prometheus, where p2p prometheus metrics will be available
+	p2pPrometheusMetrics = cli.BoolFlag{
+		Name:  "p2p-prometheus-metrics",
+		Usage: "Boolean option for enabling the /debug/metrics/prometheus route for p2p prometheus metrics",
+	}
 )
 
 var log = logger.GetOrCreate("main")
@@ -103,16 +117,17 @@ func main() {
 	app.Flags = []cli.Flag{
 		port,
 		restApiInterfaceFlag,
-		p2pSeed,
 		logLevel,
 		logSaveFile,
 		configurationFile,
+		p2pKeyPemFile,
+		p2pPrometheusMetrics,
 	}
 	app.Version = "v0.0.1"
 	app.Authors = []cli.Author{
 		{
-			Name:  "The Elrond Team",
-			Email: "contact@elrond.com",
+			Name:  "The MultiversX Team",
+			Email: "contact@multiversx.com",
 		},
 	}
 
@@ -151,12 +166,12 @@ func startNode(ctx *cli.Context) error {
 	var fileLogging factory.FileLoggingHandler
 	if withLogFile {
 		workingDir := getWorkingDir(log)
-		args := logging.ArgsFileLogging{
+		args := file.ArgsFileLogging{
 			WorkingDir:      workingDir,
 			DefaultLogsPath: defaultLogsPath,
 			LogFilePrefix:   logFilePrefix,
 		}
-		fileLogging, err = logging.NewFileLogging(args)
+		fileLogging, err = file.NewFileLogging(args)
 		if err != nil {
 			return fmt.Errorf("%w creating a log file", err)
 		}
@@ -176,7 +191,7 @@ func startNode(ctx *cli.Context) error {
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
 
-	p2pConfig, err := common.LoadP2PConfig(p2pConfigurationFile)
+	p2pCfg, err := common.LoadP2PConfig(p2pConfigurationFile)
 	if err != nil {
 		return err
 	}
@@ -184,18 +199,16 @@ func startNode(ctx *cli.Context) error {
 		"filename", p2pConfigurationFile,
 	)
 	if ctx.IsSet(port.Name) {
-		p2pConfig.Node.Port = ctx.GlobalString(port.Name)
-	}
-	if ctx.IsSet(p2pSeed.Name) {
-		p2pConfig.Node.Seed = ctx.GlobalString(p2pSeed.Name)
+		p2pCfg.Node.Port = ctx.GlobalString(port.Name)
 	}
 
-	err = checkExpectedPeerCount(*p2pConfig)
+	err = checkExpectedPeerCount(*p2pCfg)
 	if err != nil {
 		return err
 	}
 
-	messenger, err := createNode(*p2pConfig, internalMarshalizer)
+	p2pKeyPemFileName := ctx.GlobalString(p2pKeyPemFile.Name)
+	messenger, err := createNode(*p2pCfg, internalMarshalizer, p2pKeyPemFileName)
 	if err != nil {
 		return err
 	}
@@ -240,18 +253,44 @@ func loadMainConfig(filepath string) (*config.Config, error) {
 	return cfg, nil
 }
 
-func createNode(p2pConfig config.P2PConfig, marshalizer marshal.Marshalizer) (p2p.Messenger, error) {
-	arg := libp2p.ArgsNetworkMessenger{
-		Marshalizer:          marshalizer,
-		ListenAddress:        libp2p.ListenAddrWithIp4AndTcp,
-		P2pConfig:            p2pConfig,
-		SyncTimer:            &libp2p.LocalSyncTimer{},
-		PreferredPeersHolder: disabled.NewPreferredPeersHolder(),
-		NodeOperationMode:    p2p.NormalOperation,
-		PeersRatingHandler:   disabled.NewDisabledPeersRatingHandler(),
+func createNode(
+	p2pConfig p2pConfig.P2PConfig,
+	marshalizer marshal.Marshalizer,
+	p2pKeyFileName string,
+) (p2p.Messenger, error) {
+	p2pSingleSigner := &secp256k1SinglerSig.Secp256k1Signer{}
+	p2pKeyGen := signing.NewKeyGenerator(secp256k1.NewSecp256k1())
+
+	p2pKey, _, err := cryptoFactory.CreateP2pKeyPair(p2pKeyFileName, p2pKeyGen, log)
+	if err != nil {
+		return nil, err
 	}
 
-	return libp2p.NewNetworkMessenger(arg)
+	arg := p2pFactory.ArgsNetworkMessenger{
+		Marshaller:            marshalizer,
+		P2pConfig:             p2pConfig,
+		SyncTimer:             &p2pFactory.LocalSyncTimer{},
+		PreferredPeersHolder:  disabled.NewPreferredPeersHolder(),
+		PeersRatingHandler:    disabled.NewDisabledPeersRatingHandler(),
+		ConnectionWatcherType: "disabled",
+		P2pPrivateKey:         p2pKey,
+		P2pSingleSigner:       p2pSingleSigner,
+		P2pKeyGenerator:       p2pKeyGen,
+		NetworkType:           p2p.MainNetwork,
+		Logger:                logger.GetOrCreate("seed/p2p"),
+	}
+
+	netMessenger, err := p2pFactory.NewNetworkMessenger(arg)
+	if err != nil {
+		return nil, err
+	}
+
+	err = netMessenger.SetDebugger(p2pDebug.NewP2PDebugger(netMessenger.ID()))
+	if err != nil {
+		return nil, err
+	}
+
+	return netMessenger, err
 }
 
 func displayMessengerInfo(messenger p2p.Messenger) {
@@ -270,12 +309,21 @@ func displayMessengerInfo(messenger p2p.Messenger) {
 		return strings.Compare(mesConnectedAddrs[i], mesConnectedAddrs[j]) < 0
 	})
 
-	log.Info("known peers", "num peers", len(messenger.Peers()))
-	headerConnectedAddresses := []string{fmt.Sprintf("Seednode is connected to %d peers:", len(mesConnectedAddrs))}
+	protocolIDString := "Valid protocol ID?"
+	log.Info("peers info", "num known peers", len(messenger.Peers()), "num connected peers", len(mesConnectedAddrs))
+	headerConnectedAddresses := []string{"Connected peers", protocolIDString}
 	connAddresses := make([]*display.LineData, len(mesConnectedAddrs))
 
+	yesMarker := "yes"
+	yesMarker = strings.Repeat(" ", (len(protocolIDString)-len(yesMarker))/2) + yesMarker // add padding
+	noMarker := "!!! no !!!"
+	noMarker = strings.Repeat(" ", (len(protocolIDString)-len(noMarker))/2) + noMarker // add padding
 	for idx, address := range mesConnectedAddrs {
-		connAddresses[idx] = display.NewLineData(false, []string{address})
+		marker := noMarker
+		if messenger.HasCompatibleProtocolID(address) {
+			marker = yesMarker
+		}
+		connAddresses[idx] = display.NewLineData(false, []string{address, marker})
 	}
 
 	tbl2, _ := display.CreateTableString(headerConnectedAddresses, connAddresses)
@@ -294,7 +342,7 @@ func getWorkingDir(log logger.Logger) string {
 	return workingDir
 }
 
-func checkExpectedPeerCount(p2pConfig config.P2PConfig) error {
+func checkExpectedPeerCount(p2pConfig p2pConfig.P2PConfig) error {
 	maxExpectedPeerCount := p2pConfig.Node.MaximumExpectedPeerCount
 
 	var rLimit syscall.Rlimit
@@ -319,14 +367,15 @@ func checkExpectedPeerCount(p2pConfig config.P2PConfig) error {
 func startRestServices(ctx *cli.Context, marshalizer marshal.Marshalizer) {
 	restApiInterface := ctx.GlobalString(restApiInterfaceFlag.Name)
 	if restApiInterface != facade.DefaultRestPortOff {
-		go startGinServer(restApiInterface, marshalizer)
+		p2pPrometheusMetricsEnabled := ctx.GlobalBool(p2pPrometheusMetrics.Name)
+		go startGinServer(restApiInterface, marshalizer, p2pPrometheusMetricsEnabled)
 	} else {
 		log.Info("rest api is disabled")
 	}
 }
 
-func startGinServer(restApiInterface string, marshalizer marshal.Marshalizer) {
-	err := api.Start(restApiInterface, marshalizer)
+func startGinServer(restApiInterface string, marshalizer marshal.Marshalizer, p2pPrometheusMetricsEnabled bool) {
+	err := api.Start(restApiInterface, marshalizer, p2pPrometheusMetricsEnabled)
 	if err != nil {
 		log.LogIfError(err)
 	}

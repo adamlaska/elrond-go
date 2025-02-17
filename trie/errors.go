@@ -52,9 +52,6 @@ var ErrNilLeafNode = errors.New("the leaf node is nil")
 // ErrNilNode is raised when we reach a nil node
 var ErrNilNode = errors.New("the node is nil")
 
-// ErrInvalidLength signals that length of the array is invalid
-var ErrInvalidLength = errors.New("invalid array length")
-
 // ErrWrongTypeAssertion signals that wrong type was provided
 var ErrWrongTypeAssertion = errors.New("wrong type assertion")
 
@@ -94,17 +91,35 @@ var ErrInvalidMaxHardCapForMissingNodes = errors.New("invalid max hardcap for mi
 // ErrInvalidTrieSyncerVersion signals that an invalid trie syncer version was provided
 var ErrInvalidTrieSyncerVersion = errors.New("invalid trie syncer version")
 
-// ErrNilCheckpointHashesHolder signals that a nil checkpoint hashes holder was provided
-var ErrNilCheckpointHashesHolder = errors.New("nil checkpoint hashes holder")
-
 // ErrTrieSyncTimeout signals that a timeout occurred while syncing the trie
 var ErrTrieSyncTimeout = errors.New("trie sync timeout")
 
 // ErrKeyNotFound is raised when a key is not found
 var ErrKeyNotFound = errors.New("key not found")
 
-// ErrNilEpochNotifier signals that the provided EpochNotifier is nil
-var ErrNilEpochNotifier = errors.New("nil EpochNotifier")
-
 // ErrNilIdleNodeProvider signals that a nil idle node provider was provided
 var ErrNilIdleNodeProvider = errors.New("nil idle node provider")
+
+// ErrNilRootHashHolder signals that a nil root hash holder was provided
+var ErrNilRootHashHolder = errors.New("nil root hash holder provided")
+
+// ErrNilTrieIteratorChannels signals that nil trie iterator channels has been provided
+var ErrNilTrieIteratorChannels = errors.New("nil trie iterator channels")
+
+// ErrNilTrieIteratorLeavesChannel signals that a nil trie iterator leaves channel has been provided
+var ErrNilTrieIteratorLeavesChannel = errors.New("nil trie iterator leaves channel")
+
+// ErrNilTrieIteratorErrChannel signals that a nil trie iterator error channel has been provided
+var ErrNilTrieIteratorErrChannel = errors.New("nil trie iterator error channel")
+
+// ErrInvalidIdentifier signals that an invalid identifier was provided
+var ErrInvalidIdentifier = errors.New("invalid identifier")
+
+// ErrNilKeyBuilder signals that a nil key builder has been provided
+var ErrNilKeyBuilder = errors.New("nil key builder")
+
+// ErrNilTrieLeafParser signals that a nil trie leaf parser has been provided
+var ErrNilTrieLeafParser = errors.New("nil trie leaf parser")
+
+// ErrInvalidNodeVersion signals that an invalid node version has been provided
+var ErrInvalidNodeVersion = errors.New("invalid node version provided")

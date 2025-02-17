@@ -1,7 +1,7 @@
 package cryptoMocks
 
 import (
-	"github.com/ElrondNetwork/elrond-go-crypto"
+	"github.com/multiversx/mx-chain-crypto-go"
 )
 
 // SignerStub -
@@ -17,7 +17,11 @@ func (s *SignerStub) Sign(private crypto.PrivateKey, msg []byte) ([]byte, error)
 
 // Verify -
 func (s *SignerStub) Verify(public crypto.PublicKey, msg []byte, sig []byte) error {
-	return s.VerifyCalled(public, msg, sig)
+	if s.VerifyCalled != nil {
+		return s.VerifyCalled(public, msg, sig)
+	}
+
+	return nil
 }
 
 // IsInterfaceNil returns true if there is no value under the interface

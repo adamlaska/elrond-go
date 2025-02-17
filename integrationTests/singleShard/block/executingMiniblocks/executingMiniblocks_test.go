@@ -7,15 +7,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ElrondNetwork/elrond-go-core/core"
-	"github.com/ElrondNetwork/elrond-go-core/data"
-	"github.com/ElrondNetwork/elrond-go-core/data/block"
-	"github.com/ElrondNetwork/elrond-go-crypto"
-	logger "github.com/ElrondNetwork/elrond-go-logger"
-	"github.com/ElrondNetwork/elrond-go/dataRetriever"
-	"github.com/ElrondNetwork/elrond-go/integrationTests"
-	testBlock "github.com/ElrondNetwork/elrond-go/integrationTests/singleShard/block"
-	"github.com/ElrondNetwork/elrond-go/process"
+	"github.com/multiversx/mx-chain-core-go/core"
+	"github.com/multiversx/mx-chain-core-go/data"
+	"github.com/multiversx/mx-chain-core-go/data/block"
+	"github.com/multiversx/mx-chain-crypto-go"
+	"github.com/multiversx/mx-chain-go/dataRetriever"
+	"github.com/multiversx/mx-chain-go/integrationTests"
+	testBlock "github.com/multiversx/mx-chain-go/integrationTests/singleShard/block"
+	"github.com/multiversx/mx-chain-go/process"
+	logger "github.com/multiversx/mx-chain-logger-go"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -32,7 +32,11 @@ func TestShardShouldNotProposeAndExecuteTwoBlocksInSameRound(t *testing.T) {
 	nodes := make([]*integrationTests.TestProcessorNode, numOfNodes)
 	connectableNodes := make([]integrationTests.Connectable, numOfNodes)
 	for i := 0; i < numOfNodes; i++ {
-		nodes[i] = integrationTests.NewTestProcessorNode(maxShards, 0, 0)
+		nodes[i] = integrationTests.NewTestProcessorNode(integrationTests.ArgTestProcessorNode{
+			MaxShards:            maxShards,
+			NodeShardId:          0,
+			TxSignPrivKeyShardId: 0,
+		})
 		connectableNodes[i] = nodes[i]
 	}
 
@@ -78,12 +82,11 @@ func TestShardShouldNotProposeAndExecuteTwoBlocksInSameRound(t *testing.T) {
 }
 
 // TestShardShouldProposeBlockContainingInvalidTransactions tests the following scenario:
-// 1. generate 3 move balance transactions: one that can be executed, one that can not be executed but the account has
-//    the balance for the fee and one that is completely invalid (no balance left for it)
+// 1. generate 3 move balance transactions: one that can be executed, one to be processed as invalid, and one that isn't executable (no balance left for fee).
 // 2. proposer will have those 3 transactions in its pools and will propose a block
 // 3. another node will be able to sync the proposed block (and request - receive) the 2 transactions that
 //    will end up in the block (one valid and one invalid)
-// 4. the unexecutable transaction will be removed from the proposer's pool
+// 4. the non-executable transaction will not be immediately removed from the proposer's pool. See MX-16200.
 func TestShardShouldProposeBlockContainingInvalidTransactions(t *testing.T) {
 	if testing.Short() {
 		t.Skip("this is not a short test")
@@ -95,7 +98,11 @@ func TestShardShouldProposeBlockContainingInvalidTransactions(t *testing.T) {
 	nodes := make([]*integrationTests.TestProcessorNode, numOfNodes)
 	connectableNodes := make([]integrationTests.Connectable, numOfNodes)
 	for i := 0; i < numOfNodes; i++ {
-		nodes[i] = integrationTests.NewTestProcessorNode(maxShards, 0, 0)
+		nodes[i] = integrationTests.NewTestProcessorNode(integrationTests.ArgTestProcessorNode{
+			MaxShards:            maxShards,
+			NodeShardId:          0,
+			TxSignPrivKeyShardId: 0,
+		})
 		connectableNodes[i] = nodes[i]
 	}
 
@@ -187,7 +194,18 @@ func testStateOnNodes(t *testing.T, nodes []*integrationTests.TestProcessorNode,
 	testTxIsInMiniblock(t, proposer, hashes[txValidIdx], block.TxBlock)
 	testTxIsInMiniblock(t, proposer, hashes[txInvalidIdx], block.InvalidBlock)
 	testTxIsInNotInBody(t, proposer, hashes[txDeletedIdx])
-	testTxHashNotPresentInPool(t, proposer, hashes[txDeletedIdx])
+
+	// Removed from mempool.
+	_, ok := proposer.DataPool.Transactions().SearchFirstData(hashes[txValidIdx])
+	assert.False(t, ok)
+
+	// Removed from mempool.
+	_, ok = proposer.DataPool.Transactions().SearchFirstData(hashes[txInvalidIdx])
+	assert.False(t, ok)
+
+	// Not removed from mempool (see MX-16200).
+	_, ok = proposer.DataPool.Transactions().SearchFirstData(hashes[txDeletedIdx])
+	assert.True(t, ok)
 }
 
 func testSameBlockHeight(t *testing.T, nodes []*integrationTests.TestProcessorNode, idxProposer int, expectedHeight uint64) {
@@ -200,11 +218,6 @@ func testSameBlockHeight(t *testing.T, nodes []*integrationTests.TestProcessorNo
 	}
 }
 
-func testTxHashNotPresentInPool(t *testing.T, proposer *integrationTests.TestProcessorNode, hash []byte) {
-	txCache := proposer.DataPool.Transactions()
-	_, ok := txCache.SearchFirstData(hash)
-	assert.False(t, ok)
-}
 
 func testTxIsInMiniblock(t *testing.T, proposer *integrationTests.TestProcessorNode, hash []byte, bt block.Type) {
 	hdrHandler := proposer.BlockChain.GetCurrentBlockHeader()
@@ -258,7 +271,8 @@ func proposeAndCommitBlock(node *integrationTests.TestProcessorNode, round uint6
 		return err
 	}
 
-	node.BroadcastBlock(body, hdr)
+	pk := node.NodeKeys.MainKey.Pk
+	node.BroadcastBlock(body, hdr, pk)
 	time.Sleep(testBlock.StepDelay)
 	return nil
 }

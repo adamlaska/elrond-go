@@ -6,10 +6,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ElrondNetwork/elrond-go-core/hashing/blake2b"
-	"github.com/ElrondNetwork/elrond-go-core/marshal"
-	"github.com/ElrondNetwork/elrond-go/integrationTests"
-	"github.com/ElrondNetwork/elrond-go/trie"
+	"github.com/multiversx/mx-chain-core-go/hashing/blake2b"
+	"github.com/multiversx/mx-chain-core-go/marshal"
+	"github.com/multiversx/mx-chain-go/integrationTests"
+	"github.com/multiversx/mx-chain-go/testscommon/enableEpochsHandlerMock"
+	"github.com/multiversx/mx-chain-go/testscommon/storage"
+	"github.com/multiversx/mx-chain-go/trie"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -104,11 +106,18 @@ func TestWriteContinuouslyInTree(t *testing.T) {
 	nbTxsWrite := 1000000
 	testStorage := integrationTests.NewTestStorage()
 	store := testStorage.CreateStorageLevelDB()
+	storageManagerArgs := storage.GetStorageManagerArgs()
+	storageManagerArgs.MainStorer = store
+	storageManagerArgs.Marshalizer = &marshal.JsonMarshalizer{}
+	storageManagerArgs.Hasher = blake2b.NewBlake2b()
 
-	trieStorage, _ := trie.NewTrieStorageManagerWithoutPruning(store)
+	options := storage.GetStorageManagerOptions()
+	options.PruningEnabled = false
+
+	trieStorage, _ := trie.CreateTrieStorageManager(storageManagerArgs, options)
 
 	maxTrieLevelInMemory := uint(5)
-	tr, _ := trie.NewTrie(trieStorage, &marshal.JsonMarshalizer{}, blake2b.NewBlake2b(), maxTrieLevelInMemory)
+	tr, _ := trie.NewTrie(trieStorage, &marshal.JsonMarshalizer{}, blake2b.NewBlake2b(), &enableEpochsHandlerMock.EnableEpochsHandlerStub{}, maxTrieLevelInMemory)
 
 	defer func() {
 		_ = store.DestroyUnit()

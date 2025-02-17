@@ -2,22 +2,26 @@ package preprocess
 
 import (
 	"bytes"
+	"fmt"
 	"math/big"
 	"testing"
 
-	"github.com/ElrondNetwork/elrond-go-core/core"
-	"github.com/ElrondNetwork/elrond-go-core/data"
-	"github.com/ElrondNetwork/elrond-go-core/data/block"
-	"github.com/ElrondNetwork/elrond-go-core/data/smartContractResult"
-	"github.com/ElrondNetwork/elrond-go-core/data/transaction"
-	"github.com/ElrondNetwork/elrond-go/process"
-	"github.com/ElrondNetwork/elrond-go/process/mock"
-	"github.com/ElrondNetwork/elrond-go/storage/txcache"
-	"github.com/ElrondNetwork/elrond-go/testscommon"
-	"github.com/ElrondNetwork/elrond-go/testscommon/epochNotifier"
-	"github.com/ElrondNetwork/elrond-go/testscommon/hashingMocks"
-	stateMock "github.com/ElrondNetwork/elrond-go/testscommon/state"
-	vmcommon "github.com/ElrondNetwork/elrond-vm-common"
+	"github.com/multiversx/mx-chain-core-go/core"
+	"github.com/multiversx/mx-chain-core-go/data"
+	"github.com/multiversx/mx-chain-core-go/data/block"
+	"github.com/multiversx/mx-chain-core-go/data/smartContractResult"
+	"github.com/multiversx/mx-chain-core-go/data/transaction"
+	"github.com/multiversx/mx-chain-go/process"
+	"github.com/multiversx/mx-chain-go/process/mock"
+	"github.com/multiversx/mx-chain-go/storage/txcache"
+	"github.com/multiversx/mx-chain-go/testscommon"
+	commonMocks "github.com/multiversx/mx-chain-go/testscommon/common"
+	"github.com/multiversx/mx-chain-go/testscommon/economicsmocks"
+	"github.com/multiversx/mx-chain-go/testscommon/enableEpochsHandlerMock"
+	"github.com/multiversx/mx-chain-go/testscommon/hashingMocks"
+	stateMock "github.com/multiversx/mx-chain-go/testscommon/state"
+	storageStubs "github.com/multiversx/mx-chain-go/testscommon/storage"
+	vmcommon "github.com/multiversx/mx-chain-vm-common-go"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -26,21 +30,21 @@ func createTransactionPreprocessor() *transactions {
 	requestTransaction := func(shardID uint32, txHashes [][]byte) {}
 	txPreProcArgs := ArgsTransactionPreProcessor{
 		TxDataPool:           dataPool.Transactions(),
-		Store:                &mock.ChainStorerMock{},
+		Store:                &storageStubs.ChainStorerStub{},
 		Hasher:               &hashingMocks.HasherMock{},
 		Marshalizer:          &mock.MarshalizerMock{},
 		TxProcessor:          &testscommon.TxProcessorMock{},
 		ShardCoordinator:     mock.NewMultiShardsCoordinatorMock(3),
 		Accounts:             &stateMock.AccountsStub{},
 		OnRequestTransaction: requestTransaction,
-		EconomicsFee: &mock.FeeHandlerStub{
+		EconomicsFee: &economicsmocks.EconomicsHandlerStub{
 			MaxGasLimitPerMiniBlockForSafeCrossShardCalled: func() uint64 {
 				return MaxGasLimitPerBlock
 			},
 			MaxGasLimitPerBlockForSafeCrossShardCalled: func() uint64 {
 				return MaxGasLimitPerBlock
 			},
-			MaxGasLimitPerBlockCalled: func() uint64 {
+			MaxGasLimitPerBlockCalled: func(_ uint32) uint64 {
 				return MaxGasLimitPerBlock
 			},
 			MaxGasLimitPerTxCalled: func() uint64 {
@@ -60,19 +64,18 @@ func createTransactionPreprocessor() *transactions {
 				return false
 			},
 		},
-		EpochNotifier: &epochNotifier.EpochNotifierStub{},
-		OptimizeGasUsedInCrossMiniBlocksEnableEpoch: 2,
-		FrontRunningProtectionEnableEpoch:           2,
-		ScheduledMiniBlocksEnableEpoch:              2,
+		EnableEpochsHandler: &enableEpochsHandlerMock.EnableEpochsHandlerStub{},
 		TxTypeHandler: &testscommon.TxTypeHandlerMock{
-			ComputeTransactionTypeCalled: func(tx data.TransactionHandler) (process.TransactionType, process.TransactionType) {
+			ComputeTransactionTypeCalled: func(tx data.TransactionHandler) (process.TransactionType, process.TransactionType, bool) {
 				if bytes.Equal(tx.GetRcvAddr(), []byte("smart contract address")) {
-					return process.MoveBalance, process.SCInvoking
+					return process.MoveBalance, process.SCInvoking, false
 				}
-				return process.MoveBalance, process.MoveBalance
+				return process.MoveBalance, process.MoveBalance, false
 			},
 		},
 		ScheduledTxsExecutionHandler: &testscommon.ScheduledTxsExecutionStub{},
+		ProcessedMiniBlocksTracker:   &testscommon.ProcessedMiniBlocksTrackerStub{},
+		TxExecutionOrderHandler:      &commonMocks.TxExecutionOrderHandlerStub{},
 	}
 
 	preprocessor, _ := NewTransactionPreprocessor(txPreProcArgs)
@@ -563,7 +566,8 @@ func TestTransactions_CreateScheduledMiniBlocksShouldWork(t *testing.T) {
 	tx := &txcache.WrappedTransaction{}
 	sortedTxs = append(sortedTxs, tx)
 
-	mbs := preprocessor.createScheduledMiniBlocks(haveTimeMethod, haveAdditionalTimeMethod, isShardStuckMethod, isMaxBlockSizeReachedMethod, sortedTxs, mapSCTxs)
+	mbs, err := preprocessor.createScheduledMiniBlocks(haveTimeMethod, haveAdditionalTimeMethod, isShardStuckMethod, isMaxBlockSizeReachedMethod, sortedTxs, mapSCTxs)
+	assert.Nil(t, err)
 	assert.Equal(t, 0, len(mbs))
 
 	// should not create scheduled mini blocks when max block size is reached
@@ -578,7 +582,8 @@ func TestTransactions_CreateScheduledMiniBlocksShouldWork(t *testing.T) {
 	}
 	sortedTxs = append(sortedTxs, tx)
 
-	mbs = preprocessor.createScheduledMiniBlocks(haveTimeMethod, haveAdditionalTimeMethod, isShardStuckMethod, isMaxBlockSizeReachedMethod, sortedTxs, mapSCTxs)
+	mbs, err = preprocessor.createScheduledMiniBlocks(haveTimeMethod, haveAdditionalTimeMethod, isShardStuckMethod, isMaxBlockSizeReachedMethod, sortedTxs, mapSCTxs)
+	assert.Nil(t, err)
 	assert.Equal(t, 0, len(mbs))
 
 	// should not create scheduled mini blocks when verifyTransaction returns error
@@ -594,7 +599,8 @@ func TestTransactions_CreateScheduledMiniBlocksShouldWork(t *testing.T) {
 	}
 	sortedTxs = append(sortedTxs, tx)
 
-	mbs = preprocessor.createScheduledMiniBlocks(haveTimeMethod, haveAdditionalTimeMethod, isShardStuckMethod, isMaxBlockSizeReachedMethod, sortedTxs, mapSCTxs)
+	mbs, err = preprocessor.createScheduledMiniBlocks(haveTimeMethod, haveAdditionalTimeMethod, isShardStuckMethod, isMaxBlockSizeReachedMethod, sortedTxs, mapSCTxs)
+	assert.Nil(t, err)
 	assert.Equal(t, 0, len(mbs))
 
 	// should create two scheduled mini blocks
@@ -625,7 +631,8 @@ func TestTransactions_CreateScheduledMiniBlocksShouldWork(t *testing.T) {
 	sortedTxs = append(sortedTxs, tx3)
 	mapSCTxs["hash1"] = struct{}{}
 
-	mbs = preprocessor.createScheduledMiniBlocks(haveTimeMethod, haveAdditionalTimeMethod, isShardStuckMethod, isMaxBlockSizeReachedMethod, sortedTxs, mapSCTxs)
+	mbs, err = preprocessor.createScheduledMiniBlocks(haveTimeMethod, haveAdditionalTimeMethod, isShardStuckMethod, isMaxBlockSizeReachedMethod, sortedTxs, mapSCTxs)
+	assert.Nil(t, err)
 	assert.Equal(t, 2, len(mbs))
 }
 
@@ -748,6 +755,56 @@ func TestTransactions_CreateAndProcessMiniBlocksFromMeV2ShouldWork(t *testing.T)
 	mbs, _, mapSCTxs, _ = preprocessor.createAndProcessMiniBlocksFromMeV2(haveTimeMethod, isShardStuckMethod, isMaxBlockSizeReachedMethod, sortedTxs)
 	assert.Equal(t, 3, len(mbs))
 	assert.Equal(t, 2, len(mapSCTxs))
+}
+
+func TestTransactions_CreateAndProcessMiniBlocksFromMeV2MissingTrieNode(t *testing.T) {
+	t.Parallel()
+
+	missingNodeErr := fmt.Errorf(core.GetNodeFromDBErrorString)
+	preprocessor := createTransactionPreprocessor()
+	preprocessor.txProcessor = &testscommon.TxProcessorMock{
+		ProcessTransactionCalled: func(transaction *transaction.Transaction) (vmcommon.ReturnCode, error) {
+			return vmcommon.ExecutionFailed, missingNodeErr
+		},
+	}
+
+	haveTimeMethodReturn := true
+	isShardStuckMethodReturn := false
+	isMaxBlockSizeReachedMethodReturn := false
+	sortedTxs := make([]*txcache.WrappedTransaction, 0)
+	mapSCTxs := make(map[string]struct{})
+	tx1 := &txcache.WrappedTransaction{
+		ReceiverShardID: 0,
+		Tx:              &transaction.Transaction{Nonce: 1},
+		TxHash:          []byte("hash1"),
+	}
+	tx2 := &txcache.WrappedTransaction{
+		ReceiverShardID: 1,
+		Tx:              &transaction.Transaction{Nonce: 2, RcvAddr: []byte("smart contract address")},
+		TxHash:          []byte("hash2"),
+	}
+	tx3 := &txcache.WrappedTransaction{
+		ReceiverShardID: 2,
+		Tx:              &transaction.Transaction{Nonce: 3, RcvAddr: []byte("smart contract address")},
+		TxHash:          []byte("hash3"),
+	}
+	sortedTxs = append(sortedTxs, tx1)
+	sortedTxs = append(sortedTxs, tx2)
+	sortedTxs = append(sortedTxs, tx3)
+	mapSCTxs["hash1"] = struct{}{}
+
+	haveTimeMethod := func() bool {
+		return haveTimeMethodReturn
+	}
+	isShardStuckMethod := func(uint32) bool {
+		return isShardStuckMethodReturn
+	}
+	isMaxBlockSizeReachedMethod := func(int, int) bool {
+		return isMaxBlockSizeReachedMethodReturn
+	}
+
+	_, _, _, err := preprocessor.createAndProcessMiniBlocksFromMeV2(haveTimeMethod, isShardStuckMethod, isMaxBlockSizeReachedMethod, sortedTxs)
+	assert.Equal(t, missingNodeErr, err)
 }
 
 func TestTransactions_ProcessTransactionShouldWork(t *testing.T) {

@@ -7,12 +7,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ElrondNetwork/elrond-go-core/core/check"
-	"github.com/ElrondNetwork/elrond-go-core/data"
-	"github.com/ElrondNetwork/elrond-go-core/data/transaction"
-	"github.com/ElrondNetwork/elrond-go/dataRetriever"
-	"github.com/ElrondNetwork/elrond-go/storage/storageUnit"
-	"github.com/ElrondNetwork/elrond-go/testscommon/txcachemocks"
+	"github.com/multiversx/mx-chain-core-go/core/check"
+	"github.com/multiversx/mx-chain-core-go/data"
+	"github.com/multiversx/mx-chain-core-go/data/transaction"
+	"github.com/multiversx/mx-chain-core-go/marshal"
+	"github.com/multiversx/mx-chain-go/dataRetriever"
+	"github.com/multiversx/mx-chain-go/storage/storageunit"
+	"github.com/multiversx/mx-chain-go/testscommon/txcachemocks"
 	"github.com/stretchr/testify/require"
 )
 
@@ -26,18 +27,15 @@ func Test_NewShardedTxPool(t *testing.T) {
 
 func Test_NewShardedTxPool_WhenBadConfig(t *testing.T) {
 	goodArgs := ArgShardedTxPool{
-		Config: storageUnit.CacheConfig{
+		Config: storageunit.CacheConfig{
 			Capacity:             100,
 			SizePerSender:        10,
 			SizeInBytes:          409600,
 			SizeInBytesPerSender: 40960,
 			Shards:               16,
 		},
-		TxGasHandler: &txcachemocks.TxGasHandlerMock{
-			MinimumGasMove:       50000,
-			MinimumGasPrice:      1000000000,
-			GasProcessingDivisor: 100,
-		},
+		TxGasHandler:   txcachemocks.NewTxGasHandlerMock(),
+		Marshalizer:    &marshal.GogoProtoMarshalizer{},
 		NumberOfShards: 1,
 	}
 
@@ -77,15 +75,18 @@ func Test_NewShardedTxPool_WhenBadConfig(t *testing.T) {
 	require.Errorf(t, err, dataRetriever.ErrCacheConfigInvalidShards.Error())
 
 	args = goodArgs
-	args.TxGasHandler = &txcachemocks.TxGasHandlerMock{
-		MinimumGasMove:       50000,
-		MinimumGasPrice:      0,
-		GasProcessingDivisor: 1,
-	}
+	args.TxGasHandler = nil
 	pool, err = NewShardedTxPool(args)
 	require.Nil(t, pool)
 	require.NotNil(t, err)
-	require.Errorf(t, err, dataRetriever.ErrCacheConfigInvalidEconomics.Error())
+	require.Errorf(t, err, dataRetriever.ErrNilTxGasHandler.Error())
+
+	args = goodArgs
+	args.Marshalizer = nil
+	pool, err = NewShardedTxPool(args)
+	require.Nil(t, pool)
+	require.NotNil(t, err)
+	require.Errorf(t, err, dataRetriever.ErrNilMarshalizer.Error())
 
 	args = goodArgs
 	args.NumberOfShards = 0
@@ -96,14 +97,11 @@ func Test_NewShardedTxPool_WhenBadConfig(t *testing.T) {
 }
 
 func Test_NewShardedTxPool_ComputesCacheConfig(t *testing.T) {
-	config := storageUnit.CacheConfig{SizeInBytes: 419430400, SizeInBytesPerSender: 614400, Capacity: 600000, SizePerSender: 1000, Shards: 1}
+	config := storageunit.CacheConfig{SizeInBytes: 419430400, SizeInBytesPerSender: 614400, Capacity: 600000, SizePerSender: 1000, Shards: 1}
 	args := ArgShardedTxPool{
-		Config: config,
-		TxGasHandler: &txcachemocks.TxGasHandlerMock{
-			MinimumGasMove:       50000,
-			MinimumGasPrice:      1000000000,
-			GasProcessingDivisor: 1,
-		},
+		Config:         config,
+		TxGasHandler:   txcachemocks.NewTxGasHandlerMock(),
+		Marshalizer:    &marshal.GogoProtoMarshalizer{},
 		NumberOfShards: 2,
 	}
 
@@ -114,7 +112,6 @@ func Test_NewShardedTxPool_ComputesCacheConfig(t *testing.T) {
 	require.Equal(t, 209715200, int(pool.configPrototypeSourceMe.NumBytesThreshold))
 	require.Equal(t, 614400, int(pool.configPrototypeSourceMe.NumBytesPerSenderThreshold))
 	require.Equal(t, 1000, int(pool.configPrototypeSourceMe.CountPerSenderThreshold))
-	require.Equal(t, 100, int(pool.configPrototypeSourceMe.NumSendersToPreemptivelyEvict))
 	require.Equal(t, 300000, int(pool.configPrototypeSourceMe.CountThreshold))
 
 	require.Equal(t, 300000, int(pool.configPrototypeDestinationMe.MaxNumItems))
@@ -167,6 +164,7 @@ func Test_AddData(t *testing.T) {
 	pool := poolAsInterface.(*shardedTxPool)
 	cache := pool.getTxCache("0")
 
+	pool.AddData([]byte("hash-invalid-cache"), createTx("alice", 0), 0, "invalid-cache-id")
 	pool.AddData([]byte("hash-x"), createTx("alice", 42), 0, "0")
 	pool.AddData([]byte("hash-y"), createTx("alice", 43), 0, "0")
 	require.Equal(t, 2, cache.Len())
@@ -346,6 +344,23 @@ func Test_Keys(t *testing.T) {
 	require.ElementsMatch(t, txsHashes, pool.Keys())
 }
 
+func TestShardedTxPool_Diagnose(t *testing.T) {
+	t.Parallel()
+
+	poolAsInterface, _ := newTxPoolToTest()
+	pool := poolAsInterface.(*shardedTxPool)
+	pool.AddData([]byte("hash"), createTx("alice", 10), 0, "0")
+	pool.Diagnose(true)
+}
+
+func TestShardedTxPool_ImmunizeSetOfDataAgainstEviction(t *testing.T) {
+	t.Parallel()
+
+	poolAsInterface, _ := newTxPoolToTest()
+	pool := poolAsInterface.(*shardedTxPool)
+	pool.ImmunizeSetOfDataAgainstEviction([][]byte{[]byte("hash")}, "0")
+}
+
 func Test_IsInterfaceNil(t *testing.T) {
 	poolAsInterface, _ := newTxPoolToTest()
 	require.False(t, check.IfNil(poolAsInterface))
@@ -359,7 +374,7 @@ func Test_IsInterfaceNil(t *testing.T) {
 }
 
 func Test_routeToCacheUnions(t *testing.T) {
-	config := storageUnit.CacheConfig{
+	config := storageunit.CacheConfig{
 		Capacity:             100,
 		SizePerSender:        10,
 		SizeInBytes:          409600,
@@ -367,12 +382,9 @@ func Test_routeToCacheUnions(t *testing.T) {
 		Shards:               1,
 	}
 	args := ArgShardedTxPool{
-		Config: config,
-		TxGasHandler: &txcachemocks.TxGasHandlerMock{
-			MinimumGasMove:       50000,
-			MinimumGasPrice:      200000000000,
-			GasProcessingDivisor: 100,
-		},
+		Config:         config,
+		TxGasHandler:   txcachemocks.NewTxGasHandlerMock(),
+		Marshalizer:    &marshal.GogoProtoMarshalizer{},
 		NumberOfShards: 4,
 		SelfShardID:    42,
 	}
@@ -389,8 +401,9 @@ func Test_routeToCacheUnions(t *testing.T) {
 
 func createTx(sender string, nonce uint64) data.TransactionHandler {
 	return &transaction.Transaction{
-		SndAddr: []byte(sender),
-		Nonce:   nonce,
+		SndAddr:  []byte(sender),
+		Nonce:    nonce,
+		GasLimit: 50000,
 	}
 }
 
@@ -402,7 +415,7 @@ type thisIsNotATransaction struct {
 }
 
 func newTxPoolToTest() (dataRetriever.ShardedDataCacherNotifier, error) {
-	config := storageUnit.CacheConfig{
+	config := storageunit.CacheConfig{
 		Capacity:             100,
 		SizePerSender:        10,
 		SizeInBytes:          409600,
@@ -410,16 +423,11 @@ func newTxPoolToTest() (dataRetriever.ShardedDataCacherNotifier, error) {
 		Shards:               1,
 	}
 	args := ArgShardedTxPool{
-		Config: config,
-		TxGasHandler: &txcachemocks.TxGasHandlerMock{
-			MinimumGasMove:       50000,
-			MinimumGasPrice:      200000000000,
-			GasProcessingDivisor: 100,
-		},
+		Config:         config,
+		TxGasHandler:   txcachemocks.NewTxGasHandlerMock(),
+		Marshalizer:    &marshal.GogoProtoMarshalizer{},
 		NumberOfShards: 4,
 		SelfShardID:    0,
 	}
 	return NewShardedTxPool(args)
 }
-
-// TODO: Add high load test, reach maximum capacity and inspect RAM usage. EN-6735.
